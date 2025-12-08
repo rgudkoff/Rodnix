@@ -26,3 +26,44 @@ void pic_send_eoi(uint8_t irq)
     outb(PIC1_COMMAND, PIC_EOI);
 }
 
+void pic_mask(uint8_t irq)
+{
+    uint16_t port;
+    uint8_t value;
+
+    if (irq < 8)
+    {
+        port = PIC1_DATA;
+    }
+    else
+    {
+        port = PIC2_DATA;
+        irq -= 8;
+    }
+    value = inb(port) | (1 << irq);
+    outb(port, value);
+}
+
+void pic_unmask(uint8_t irq)
+{
+    uint16_t port;
+    uint8_t value;
+
+    if (irq < 8)
+    {
+        port = PIC1_DATA;
+    }
+    else
+    {
+        port = PIC2_DATA;
+        irq -= 8;
+    }
+    value = inb(port) & ~(1 << irq);
+    outb(port, value);
+}
+
+uint16_t pic_get_mask(void)
+{
+    return ((uint16_t)inb(PIC2_DATA) << 8) | inb(PIC1_DATA);
+}
+

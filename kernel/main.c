@@ -4,6 +4,8 @@
 #include "irq.h"
 #include "pit.h"
 #include "keyboard.h"
+#include "debug.h"
+#include "shell.h"
 
 static void banner(void)
 {
@@ -20,9 +22,9 @@ void kmain(void)
     irq_init();
     pit_init(100);
     keyboard_init();
-
     kputs("Init done. Interrupts on.\n");
     __asm__ volatile ("sti");
+    shell_init(); /* приглашение после включения IRQ */
 
     for (;;)
         __asm__ volatile ("hlt");

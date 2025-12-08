@@ -14,6 +14,9 @@
 
 void pic_remap(uint8_t offset1, uint8_t offset2);
 void pic_send_eoi(uint8_t irq);
+void pic_mask(uint8_t irq);
+void pic_unmask(uint8_t irq);
+uint16_t pic_get_mask(void);
 
 #endif
 

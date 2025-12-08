@@ -3,6 +3,7 @@
 #include "console.h"
 #include "ports.h"
 #include "pic.h"
+#include "debug.h"
 
 extern void isr0();  extern void isr1();  extern void isr2();  extern void isr3();
 extern void isr4();  extern void isr5();  extern void isr6();  extern void isr7();
@@ -19,6 +20,7 @@ extern void irq8();  extern void irq9();  extern void irq10(); extern void irq11
 extern void irq12(); extern void irq13(); extern void irq14(); extern void irq15();
 
 static isr_handler_t handlers[256];
+static uint32_t irq_counts[16];
 
 static const char* exc_msg[32] = {
     "Divide-by-zero", "Debug", "NMI", "Breakpoint", "Overflow", "BOUND",
@@ -101,21 +103,19 @@ void isr_handler(registers_t* r)
 {
     if (r->int_no < 32)
     {
-        kputs("[EXC] ");
-        kputs(exc_msg[r->int_no]);
-        kputs(" err=");
-        kprint_hex(r->err_code);
-        kputs(" eip=");
-        kprint_hex(r->eip);
-        kputc('\n');
-        for (;;) { __asm__ volatile ("cli; hlt"); }
+        panic(exc_msg[r->int_no], r);
     }
 
     if (handlers[r->int_no])
         handlers[r->int_no](r);
 
     if (r->int_no >= 32 && r->int_no <= 47)
+    {
+        uint8_t irq = (uint8_t)(r->int_no - 32);
+        if (irq < 16)
+            irq_counts[irq]++;
         pic_send_eoi((uint8_t)(r->int_no - 32));
+    }
 }
 
 extern void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags);

@@ -20,6 +20,8 @@ KERNEL_C_SRCS = \
 	kernel/pic.c \
 	kernel/pit.c \
 	kernel/keyboard.c \
+	kernel/shell.c \
+	kernel/debug.c \
 	drivers/console.c \
 	drivers/ports.c
 
