@@ -1,7 +1,7 @@
 #ifndef _RODNIX_CONSOLE_H
 #define _RODNIX_CONSOLE_H
 
-#include "types.h"
+#include "../include/types.h"
 
 void console_init(void);
 void kputc(char c);

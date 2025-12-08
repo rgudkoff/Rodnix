@@ -1,8 +1,8 @@
+; Загрузка IDT
 global idt_load
+extern idt_ptr
 
-; void idt_load(uint32_t idt_ptr);
 idt_load:
-    mov eax, [esp + 4]
-    lidt [eax]
+    lidt [idt_ptr]
     ret
 

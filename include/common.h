@@ -1,7 +1,7 @@
 #ifndef _RODNIX_COMMON_H
 #define _RODNIX_COMMON_H
 
-#include "types.h"
+#include "../include/types.h"
 
 #define NULL ((void*)0)
 

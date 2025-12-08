@@ -11,17 +11,21 @@ LDFLAGS = -m elf_i386 -T link.ld
 BUILD_DIR = build
 ISO_DIR   = iso
 
+# Минимальная сборка - загрузка, GDT, IDT, PIC, IRQ, PIT
 KERNEL_C_SRCS = \
 	kernel/main.c \
 	kernel/gdt.c \
 	kernel/idt.c \
 	kernel/isr.c \
-	kernel/irq.c \
 	kernel/pic.c \
 	kernel/pit.c \
-	kernel/keyboard.c \
-	kernel/shell.c \
-	kernel/debug.c \
+	kernel/device.c \
+	kernel/vfs.c \
+	kernel/ata.c \
+	kernel/pmm.c \
+	kernel/paging.c \
+	kernel/vmm.c \
+	kernel/heap.c \
 	drivers/console.c \
 	drivers/ports.c
 
@@ -53,8 +57,11 @@ XORRISO ?= $(shell command -v xorriso 2>/dev/null || true)
 MTOOLS  ?= $(shell command -v mtools 2>/dev/null || true)
 
 # Try to guess GRUB modules directory (used on macOS Homebrew cross build)
-# It’s typically <brew_prefix>/opt/i686-elf-grub/lib/grub/i386-pc
+# Typically: <brew_prefix>/Cellar/i686-elf-grub/*/lib/i686-elf/grub/i386-pc
 GRUB_MODDIR ?= $(shell d="$$(dirname $$(dirname $(GRUB_MKRESCUE)))"/lib/grub/i386-pc; [ -d "$$d" ] && echo "$$d" || true)
+ifeq ($(GRUB_MODDIR),)
+  GRUB_MODDIR := $(shell d="$$(dirname $$(dirname $(GRUB_MKRESCUE)))"/lib/i686-elf/grub/i386-pc; [ -d "$$d" ] && echo "$$d" || true)
+endif
 
 define need_tools
 	@{ ok=1; \
@@ -73,6 +80,13 @@ define need_tools
 	  fi; \
 	  if [ $$ok -eq 0 ]; then exit 1; fi; }
 endef
+
+# ---- Debugger & QEMU flags -------------------------------------------------
+# Debugger autodetect: i686-elf-gdb -> gdb -> lldb
+DEBUGGER ?= $(shell command -v i686-elf-gdb 2>/dev/null || command -v gdb 2>/dev/null || command -v lldb 2>/dev/null)
+
+QEMU_FLAGS       = -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown
+QEMU_DEBUG_FLAGS = -s -S
 
 .PHONY: all clean run iso debug check docker-iso
 
@@ -105,14 +119,24 @@ iso: $(KERNEL_BIN)
 	@echo "[+] Built ISO: rodnix.iso"
 
 run: iso
-	# On Intel macOS you can try hvf; otherwise TCG will be used.
-	qemu-system-i386 -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown -accel hvf:tcg || \
-	qemu-system-i386 -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown
+	# Try HVF (macOS); on failure fallback to default (TCG)
+	qemu-system-i386 $(QEMU_FLAGS) -accel hvf || \
+	qemu-system-i386 $(QEMU_FLAGS)
 
 debug: iso
-	# GDB: target remote :1234, symbol-file $(KERNEL_BIN), b kmain, c
-	qemu-system-i386 -m 64M -boot d -cdrom rodnix.iso -s -S -serial stdio -accel hvf:tcg & \
-	sleep 1 && gdb $(KERNEL_BIN)
+	# Start QEMU waiting for debugger on :1234; try HVF, else fallback
+	( qemu-system-i386 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) -accel hvf & ) || \
+	( qemu-system-i386 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
+	# Give QEMU time to open the port
+	sleep 1
+	# Attach debugger (GDB preferred; LLDB fallback)
+	@if echo "$(DEBUGGER)" | grep -q lldb; then \
+	  echo "[*] Using LLDB"; \
+	  lldb -o "target create $(KERNEL_BIN)" -o "gdb-remote 1234"; \
+	else \
+	  echo "[*] Using GDB: $(DEBUGGER)"; \
+	  $(DEBUGGER) -ex "target remote :1234" -ex "symbol-file $(KERNEL_BIN)"; \
+	fi
 
 check: $(KERNEL_BIN)
 	@{ \

@@ -25,6 +25,7 @@ header_end:
         align 16
 stack_bottom:
         resb 32768
+        global stack_top
 stack_top:
 
         section .text
