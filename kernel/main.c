@@ -4,14 +4,50 @@
 #include "../include/idt.h"
 #include "../include/isr.h"
 #include "../include/pic.h"
+#include "../include/pit.h"
+#include "../include/device.h"
+#include "../include/vfs.h"
+#include "../include/ata.h"
+#include "../include/pmm.h"
+#include "../include/paging.h"
+#include "../include/vmm.h"
+#include "../include/heap.h"
 
-/* Счётчик тиков таймера */
-static uint32_t timer_count = 0;
 
 /* Состояние модификаторов */
 static uint8_t shift_pressed = 0;
 static uint8_t ctrl_pressed = 0;
 static uint8_t alt_pressed = 0;
+
+/* Shell: буфер ввода */
+#define SHELL_BUFFER_SIZE 256
+static char shell_buffer[SHELL_BUFFER_SIZE];
+static uint32_t shell_buffer_pos = 0;
+static uint8_t shell_ready = 0;  /* 1 = команда готова к обработке */
+
+/* Вспомогательные функции для shell */
+static int strcmp(const char* s1, const char* s2)
+{
+    while (*s1 && *s2 && *s1 == *s2)
+    {
+        s1++;
+        s2++;
+    }
+    return (int)(*s1) - (int)(*s2);
+}
+
+static int strncmp(const char* s1, const char* s2, size_t n)
+{
+    while (n > 0 && *s1 && *s2 && *s1 == *s2)
+    {
+        s1++;
+        s2++;
+        n--;
+    }
+    if (n == 0)
+        return 0;
+    return (int)(*s1) - (int)(*s2);
+}
 
 /* Таблица преобразования scan-кодов в символы (US QWERTY) */
 static const char scancode_to_char_normal[128] = {
@@ -50,12 +86,11 @@ static const char scancode_to_char_shift[128] = {
     0,   0,   0,   0,   0,   0,   0,   0,    /* 0x78-0x7F */
 };
 
-/* IRQ-обработчик таймера (IRQ0) */
+/* IRQ-обработчик таймера (IRQ0) - вызывает PIT handler */
 static void timer_handler(struct registers* regs)
 {
     (void)regs;
-    timer_count++;
-    /* Убрал вывод таймера - он мешает */
+    pit_handler();
 }
 
 /* IRQ-обработчик клавиатуры */
@@ -98,19 +133,36 @@ static void keyboard_handler(struct registers* regs)
     if (sc_code == 0x1C)  /* Enter */
     {
         kputc('\n');
+        if (shell_buffer_pos > 0)
+        {
+            shell_buffer[shell_buffer_pos] = '\0';
+            shell_ready = 1;
+        }
+        else
+        {
+            /* Пустая строка - показать приглашение */
+            kputs("rodnix> ");
+        }
         return;
     }
     if (sc_code == 0x0E)  /* Backspace */
     {
-        kputc('\b');
-        kputc(' ');
-        kputc('\b');
+        if (shell_buffer_pos > 0)
+        {
+            shell_buffer_pos--;
+            kputc('\b');
+            kputc(' ');
+            kputc('\b');
+        }
         return;
     }
     
-    /* Вывод символа */
-    if (ch != 0)
+    /* Добавление символа в буфер */
+    if (ch != 0 && shell_buffer_pos < SHELL_BUFFER_SIZE - 1)
+    {
+        shell_buffer[shell_buffer_pos++] = ch;
         kputc(ch);
+    }
 }
 
 /* Инициализация PS/2 контроллера клавиатуры */
@@ -171,11 +223,16 @@ void kmain(void)
     pic_remap(0x20, 0x28);
     kputs("[INIT] PIC remapped (IRQ 0-7 -> 0x20-0x27, IRQ 8-15 -> 0x28-0x2F).\n\n");
     
-    kbd_init();
+    /* Инициализация PIT (100 Hz) */
+    kputs("[INIT] Initializing PIT (100 Hz)...\n");
+    pit_init(100);
+    kputs("[INIT] PIT initialized.\n\n");
     
-    /* Тестовый обработчик для IRQ0 (таймер) - для проверки работы прерываний */
+    /* Регистрация обработчика IRQ0 (PIT) */
     kputs("[INIT] Registering timer IRQ handler (IRQ0)...\n");
     register_interrupt_handler(32, timer_handler);
+    
+    kbd_init();
     
     /* Регистрация IRQ-обработчика для клавиатуры (IRQ1 -> IDT 33) */
     kputs("[INIT] Registering keyboard IRQ handler (IRQ1)...\n");
@@ -193,13 +250,204 @@ void kmain(void)
     kputs("[INIT] Interrupts enabled. Keyboard ready!\n");
     kputs("Press keys in QEMU window.\n\n");
     
-    kputs("[INIT] System ready. Interrupts enabled.\n");
-    kputs("Press keys in QEMU window.\n\n");
+    /* Инициализация системы устройств */
+    kputs("[INIT] Initializing device manager...\n");
+    kputs("[INIT] Device manager initialized.\n\n");
     
-    /* Основной цикл - hlt пробуждается прерываниями */
+    /* Регистрация ATA устройств */
+    kputs("[INIT] Registering ATA devices...\n");
+    ata_register_devices();
+    kputs("[INIT] ATA devices registered.\n\n");
+    
+    /* Инициализация менеджера памяти */
+    kputs("[INIT] Initializing memory manager...\n");
+    
+    /* Инициализация PMM (предполагаем 64MB памяти, начиная с 1MB) */
+    kputs("[INIT] Initializing PMM...\n");
+    if (pmm_init(0x100000, 0x4000000) != 0) /* 1MB - 64MB */
+    {
+        kputs("[INIT] PMM initialization failed!\n");
+    }
+    else
+    {
+        kputs("[INIT] PMM initialized.\n");
+    }
+    
+    /* Инициализация paging */
+    kputs("[INIT] Initializing paging...\n");
+    if (paging_init() != 0)
+    {
+        kputs("[INIT] Paging initialization failed!\n");
+    }
+    else
+    {
+        kputs("[INIT] Paging initialized.\n");
+        
+        /* Identity mapping для первых 4MB (чтобы код продолжал работать после включения paging) */
+        kputs("[INIT] Creating identity mapping...\n");
+        for (uint32_t i = 0; i < 1024; i++) /* 1024 страницы = 4MB */
+        {
+            uint32_t addr = i * PAGE_SIZE;
+            paging_map_page(addr, addr, PAGE_KERNEL);
+        }
+        kputs("[INIT] Identity mapping created.\n");
+        
+        /* Отображаем ядро в виртуальную память (0xC0000000) */
+        /* Ядро загружено по адресу 1MB, отображаем его в 0xC0100000 */
+        kputs("[INIT] Mapping kernel to virtual memory...\n");
+        for (uint32_t i = 0; i < 1024; i++) /* 1024 страницы = 4MB */
+        {
+            uint32_t virt = 0xC0100000 + i * PAGE_SIZE; /* Kernel virtual base (3GB + 1MB) */
+            uint32_t phys = 0x100000 + i * PAGE_SIZE;   /* Физический адрес ядра (1MB) */
+            paging_map_page(virt, phys, PAGE_KERNEL);
+        }
+        kputs("[INIT] Kernel memory mapped.\n");
+        
+        /* Включаем paging */
+        paging_enable();
+        
+        /* Инициализация VMM */
+        kputs("[INIT] Initializing VMM...\n");
+        vmm_init();
+        kputs("[INIT] VMM initialized.\n");
+        
+        /* Инициализация heap ядра */
+        kputs("[INIT] Initializing kernel heap...\n");
+        if (kernel_heap_init() != 0)
+        {
+            kputs("[INIT] Kernel heap initialization failed!\n");
+        }
+        else
+        {
+            kputs("[INIT] Kernel heap initialized.\n");
+        }
+    }
+    kputs("\n");
+    
+    /* Инициализация VFS */
+    kputs("[INIT] Initializing VFS...\n");
+    vfs_init();
+    kputs("[INIT] VFS initialized.\n\n");
+    
+    kputs("[INIT] System ready. Interrupts enabled.\n");
+    kputs("RodNIX Shell v0.2\n");
+    kputs("Type 'help' for available commands.\n\n");
+    kputs("rodnix> ");
+    
+    /* Основной цикл - обработка команд shell */
     for (;;)
     {
         __asm__ volatile ("hlt");
+        
+        /* Обработка готовой команды */
+        if (shell_ready)
+        {
+            shell_ready = 0;
+            
+            /* Парсинг команды */
+            if (shell_buffer[0] == '\0')
+            {
+                /* Пустая команда */
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "help") == 0)
+            {
+                kputs("Available commands:\n");
+                kputs("  help     - Show this help message\n");
+                kputs("  clear    - Clear the screen\n");
+                kputs("  echo     - Echo arguments\n");
+                kputs("  info     - Show system information\n");
+                kputs("  time     - Show system uptime\n");
+                kputs("  devices  - List all registered devices\n");
+                kputs("  meminfo  - Show memory information\n");
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "clear") == 0)
+            {
+                console_init();
+                kputs("rodnix> ");
+            }
+            else if (strncmp(shell_buffer, "echo ", 5) == 0)
+            {
+                kputs(shell_buffer + 5);
+                kputc('\n');
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "info") == 0)
+            {
+                kputs("RodNIX Kernel v0.1\n");
+                kputs("Architecture: i386\n");
+                kputs("Interrupts: Enabled\n");
+                kputs("PIT frequency: 100 Hz\n");
+                kputs("Timer ticks: ");
+                kprint_dec(pit_get_ticks());
+                kputs("\nUptime: ");
+                kprint_dec(pit_get_time_ms());
+                kputs(" ms\n");
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "time") == 0)
+            {
+                kputs("Uptime: ");
+                kprint_dec(pit_get_time_ms());
+                kputs(" ms (");
+                kprint_dec(pit_get_ticks());
+                kputs(" ticks)\n");
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "devices") == 0)
+            {
+                device_list_all();
+                kputs("rodnix> ");
+            }
+            else if (strcmp(shell_buffer, "meminfo") == 0)
+            {
+                kputs("Memory Information:\n");
+                kputs("==================\n");
+                kputs("Physical Memory:\n");
+                kputs("  Total pages: ");
+                kprint_dec(pmm_get_total_pages());
+                kputs("\n  Free pages: ");
+                kprint_dec(pmm_get_free_pages());
+                kputs("\n  Used pages: ");
+                kprint_dec(pmm_get_used_pages());
+                kputs("\n  Total: ");
+                kprint_dec((pmm_get_total_pages() * PAGE_SIZE) / 1024);
+                kputs(" KB\n  Free: ");
+                kprint_dec((pmm_get_free_pages() * PAGE_SIZE) / 1024);
+                kputs(" KB\n  Used: ");
+                kprint_dec((pmm_get_used_pages() * PAGE_SIZE) / 1024);
+                kputs(" KB\n");
+                kputs("Virtual Memory:\n");
+                kputs("  Total: ");
+                kprint_dec(vmm_get_total_memory() / 1024);
+                kputs(" KB\n  Free: ");
+                kprint_dec(vmm_get_free_memory() / 1024);
+                kputs(" KB\n  Used: ");
+                kprint_dec(vmm_get_used_memory() / 1024);
+                kputs(" KB\n");
+                kputs("Kernel Heap:\n");
+                kputs("  Total: ");
+                kprint_dec(heap_get_total_size(&kernel_heap) / 1024);
+                kputs(" KB\n  Free: ");
+                kprint_dec(heap_get_free_size(&kernel_heap) / 1024);
+                kputs(" KB\n  Used: ");
+                kprint_dec(heap_get_used_size(&kernel_heap) / 1024);
+                kputs(" KB\n");
+                kputs("rodnix> ");
+            }
+            else
+            {
+                kputs("Unknown command: ");
+                kputs(shell_buffer);
+                kputs("\nType 'help' for available commands.\n");
+                kputs("rodnix> ");
+            }
+            
+            /* Очистить буфер */
+            shell_buffer_pos = 0;
+            shell_buffer[0] = '\0';
+        }
     }
 }
 

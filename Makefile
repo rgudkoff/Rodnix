@@ -11,13 +11,21 @@ LDFLAGS = -m elf_i386 -T link.ld
 BUILD_DIR = build
 ISO_DIR   = iso
 
-# Минимальная сборка - загрузка, GDT, IDT, PIC, IRQ
+# Минимальная сборка - загрузка, GDT, IDT, PIC, IRQ, PIT
 KERNEL_C_SRCS = \
 	kernel/main.c \
 	kernel/gdt.c \
 	kernel/idt.c \
 	kernel/isr.c \
 	kernel/pic.c \
+	kernel/pit.c \
+	kernel/device.c \
+	kernel/vfs.c \
+	kernel/ata.c \
+	kernel/pmm.c \
+	kernel/paging.c \
+	kernel/vmm.c \
+	kernel/heap.c \
 	drivers/console.c \
 	drivers/ports.c
 
