@@ -21,13 +21,14 @@ KERNEL_C_SRCS = \
 	kernel/pit.c \
 	kernel/device.c \
 	kernel/vfs.c \
-	kernel/ata.c \
 	kernel/pmm.c \
 	kernel/paging.c \
 	kernel/vmm.c \
 	kernel/heap.c \
+	kernel/driver.c \
 	drivers/console.c \
-	drivers/ports.c
+	drivers/ports.c \
+	drivers/ata_driver.c
 
 KERNEL_ASM_SRCS = \
 	boot/boot.S \

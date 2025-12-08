@@ -1,74 +1,83 @@
 # RodNIX
 
-Минимальная учебная ОС под i386 (GRUB2 multiboot2). Цель — пошагово собрать микрокернел: GDT/IDT, обработчики прерываний, таймер PIT, клавиатура, менеджер памяти и т.д.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Структура
-- `boot/` — точка входа, multiboot2, стеки, stubs GDT/IDT/ISR.
-- `kernel/` — ядро: GDT/IDT/ISR/IRQ/PIC/PIT/keyboard, kmain.
-- `drivers/` — простые драйверы VGA-консоли и портов ввода-вывода.
-- `include/` — заголовки.
-- `link.ld` — линковка под `elf32-i386`, загрузка по 1 МиБ.
-- `grub.cfg` — меню для ISO.
-- `Makefile` — сборка ядра, ISO, запуск в QEMU.
+A minimal educational OS for i386 (GRUB2 multiboot2). The goal is to step-by-step build a microkernel: GDT/IDT, interrupt handlers, PIT timer, keyboard, memory manager, etc.
 
-## Требования
+## Structure
+- `boot/` — entry point, multiboot2, stacks, GDT/IDT/ISR stubs.
+- `kernel/` — kernel: GDT/IDT/ISR/IRQ/PIC/PIT/keyboard, kmain.
+- `drivers/` — simple drivers for VGA console and I/O ports.
+- `include/` — headers.
+- `link.ld` — linking for `elf32-i386`, loading at 1 MiB.
+- `grub.cfg` — ISO menu.
+- `Makefile` — kernel build, ISO, QEMU launch.
+
+## Requirements
 - `i686-elf-gcc`, `i686-elf-ld`
 - `nasm`
 - `grub-mkrescue`, `xorriso`
 - `qemu-system-i386`
 
-Убедитесь, что инструменты доступны в PATH. На macOS удобно ставить через `brew install i686-elf-gcc nasm xorriso qemu` и `brew install --cask gcc@<верс>`, затем добавить `i686-elf-*` в PATH.
+Make sure the tools are available in PATH. On macOS, it's convenient to install via `brew install i686-elf-gcc nasm xorriso qemu` and `brew install --cask gcc@<version>`, then add `i686-elf-*` to PATH.
 
-## Сборка
+## Building
 ```sh
 cd /Users/romangudkov/Rodnix
 make
 ```
-Результат: `build/rodnix.kernel`.
+Result: `build/rodnix.kernel`.
 
-## ISO и запуск
+## ISO and Running
 ```sh
-make run          # собирает ISO и запускает QEMU (-serial stdio)
+make run          # builds ISO and launches QEMU (-serial stdio)
 ```
-Файл ISO: `rodnix.iso`, размещение ядра в `iso/boot/rodnix.kernel`.
+ISO file: `rodnix.iso`, kernel placement in `iso/boot/rodnix.kernel`.
 
-## Отладка
+## Debugging
 ```sh
-make debug        # QEMU -s -S, далее
+make debug        # QEMU -s -S, then
 gdb build/rodnix.kernel
 ```
 
-## Текущее состояние
-- Multiboot2 заголовок, freestanding 32-bit.
-- GDT/IDT/ISR/IRQ, PIC ремап на 0x20/0x28.
-- PIT 100 Гц (счётчик тиков).
-- Обработчик клавиатуры (keymap, вывод символов).
-- VGA-консоль 80x25.
-- **Система управления устройствами (Device Manager)**:
-  - Регистрация и поиск устройств по имени/типу
-  - Унифицированный интерфейс для работы с устройствами
-  - Состояния устройств (uninitialized, initialized, ready, error, offline)
-- **Драйвер ATA/IDE**:
-  - Поддержка чтения/записи секторов
-  - Инициализация и определение дисков
-  - Работа с PRIMARY каналом (master/slave)
+## Current Status
+- Multiboot2 header, freestanding 32-bit.
+- GDT/IDT/ISR/IRQ, PIC remap to 0x20/0x28.
+- PIT 100 Hz (tick counter).
+- Keyboard handler (keymap, character output).
+- VGA console 80x25.
+- **Device Management System (Device Manager)**:
+  - Device registration and search by name/type
+  - Unified interface for working with devices
+  - Device states (uninitialized, initialized, ready, error, offline)
+- **ATA/IDE Driver**:
+  - Sector read/write support
+  - Disk initialization and detection
+  - Working with PRIMARY channel (master/slave)
 - **VFS (Virtual File System)**:
-  - Абстракция файловой системы
-  - Поддержка монтирования/размонтирования
-  - Интерфейсы для работы с файлами и директориями
-- **Shell команды**:
-  - `devices` - список зарегистрированных устройств
-  - `meminfo` - информация о памяти (физическая, виртуальная, heap)
-- **Менеджер памяти**:
-  - **PMM (Physical Memory Manager)**: управление физическими страницами через bitmap
-  - **Paging**: страничная адресация с поддержкой page directory и page tables
-  - **VMM (Virtual Memory Manager)**: управление виртуальными адресами
-  - **Heap Allocator**: динамическое выделение памяти для ядра (kmalloc/kfree/krealloc)
-  - Отображение ядра в виртуальную память по адресу 0xC0000000
+  - File system abstraction
+  - Mount/unmount support
+  - Interfaces for working with files and directories
+- **Shell Commands**:
+  - `devices` - list of registered devices
+  - `meminfo` - memory information (physical, virtual, heap)
+- **Memory Manager**:
+  - **PMM (Physical Memory Manager)**: physical page management via bitmap
+  - **Paging**: paged addressing with support for page directory and page tables
+  - **VMM (Virtual Memory Manager)**: virtual address management
+  - **Heap Allocator**: dynamic memory allocation for kernel (kmalloc/kfree/krealloc)
+  - Kernel mapping to virtual memory at address 0xC0000000
 
-## Планы
-- Реализация простой файловой системы (initrd или простой формат)
-- Получение информации о памяти из Multiboot2
-- Расширение VMM для поддержки процессов
-- Расширение VFS для работы с реальными файловыми системами
+## Plans
+- Implementation of a simple file system (initrd or simple format)
+- Getting memory information from Multiboot2
+- Extending VMM for process support
+- Extending VFS for working with real file systems
 
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+The MIT License allows anyone to use, modify, and distribute this software, including for commercial purposes. However, the copyright holder (the original author) maintains control over the main repository and has the final say on what changes are accepted into the official codebase.
+
+For more details, see the [LICENSE](LICENSE) file.

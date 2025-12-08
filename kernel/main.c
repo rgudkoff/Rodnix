@@ -6,8 +6,8 @@
 #include "../include/pic.h"
 #include "../include/pit.h"
 #include "../include/device.h"
+#include "../include/driver.h"
 #include "../include/vfs.h"
-#include "../include/ata.h"
 #include "../include/pmm.h"
 #include "../include/paging.h"
 #include "../include/vmm.h"
@@ -254,10 +254,15 @@ void kmain(void)
     kputs("[INIT] Initializing device manager...\n");
     kputs("[INIT] Device manager initialized.\n\n");
     
-    /* Регистрация ATA устройств */
-    kputs("[INIT] Registering ATA devices...\n");
-    ata_register_devices();
-    kputs("[INIT] ATA devices registered.\n\n");
+    /* Инициализация системы драйверов */
+    kputs("[INIT] Initializing driver system...\n");
+    driver_system_init();
+    kputs("[INIT] Driver system initialized.\n\n");
+    
+    /* Загрузка всех драйверов */
+    kputs("[INIT] Loading drivers...\n");
+    driver_load_all();
+    kputs("[INIT] Drivers loaded.\n\n");
     
     /* Инициализация менеджера памяти */
     kputs("[INIT] Initializing memory manager...\n");

@@ -2,6 +2,8 @@
 #include "../include/ports.h"
 #include "../include/console.h"
 #include "../include/common.h"
+#include "../include/device.h"
+#include "../include/driver.h"
 
 /* Ожидание готовности ATA устройства с таймаутом */
 static int ata_wait_ready(uint16_t base_port)
@@ -364,5 +366,23 @@ int ata_register_devices(void)
     }
     
     return 0;
+}
+
+/* Драйвер ATA */
+static struct driver ata_driver = {
+    .name = "ata",
+    .version = 1,
+    .device_type = DEVICE_DISK,
+    .init = NULL,
+    .exit = NULL,
+    .probe = ata_register_devices,
+    .next = NULL
+};
+
+/* Регистрация драйвера при загрузке (используем конструктор GCC) */
+__attribute__((constructor))
+static void ata_driver_register(void)
+{
+    driver_register(&ata_driver);
 }
 
