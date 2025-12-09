@@ -1,0 +1,11 @@
+[package]
+name = "rodnix-lib"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "rodnix_lib"
+crate-type = ["lib"]
+
+[dependencies]
+

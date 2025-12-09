@@ -80,5 +80,7 @@ void paging_disable(void);
 uint32_t* paging_alloc_page_table(void);
 void paging_free_page_table(uint32_t* table);
 
-#endif
+/* Отладка paging */
+void paging_debug_init(void);
 
+#endif

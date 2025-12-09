@@ -2,7 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A minimal educational OS for i386 (GRUB2 multiboot2). The goal is to step-by-step build a microkernel: GDT/IDT, interrupt handlers, PIT timer, keyboard, memory manager, etc.
+A microkernel-based OS for i386 (GRUB2 multiboot2) with strict separation between kernel and userspace.
+
+**Architecture:**
+- **Kernel**: C11, no stdio, minimal dependencies - provides scheduler, VM, IPC, capabilities, IRQ routing, bus enumeration
+- **Userspace**: Rust 1.75+ - drivers (no_std) and daemons (std)
+- **Security**: W^X, NX bit, KPTI-like address space separation
 
 ## Structure
 - `boot/` — entry point, multiboot2, stacks, GDT/IDT/ISR stubs.

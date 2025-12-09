@@ -4,7 +4,7 @@ CC = i686-elf-gcc
 AS = nasm
 LD = i686-elf-ld
 
-CFLAGS  = -m32 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -O2 -g -Wall -Wextra -I./include
+CFLAGS  = -m32 -std=c11 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -O2 -g -Wall -Wextra -I./include
 ASFLAGS = -f elf32
 LDFLAGS = -m elf_i386 -T link.ld
 
@@ -19,16 +19,18 @@ KERNEL_C_SRCS = \
 	kernel/isr.c \
 	kernel/pic.c \
 	kernel/pit.c \
-	kernel/device.c \
-	kernel/vfs.c \
 	kernel/pmm.c \
 	kernel/paging.c \
 	kernel/vmm.c \
 	kernel/heap.c \
-	kernel/driver.c \
+	kernel/memory.c \
+	kernel/ipc.c \
+	kernel/capability.c \
+	kernel/scheduler.c \
+	kernel/pci.c \
+	kernel/paging_debug.c \
 	drivers/console.c \
-	drivers/ports.c \
-	drivers/ata_driver.c
+	drivers/ports.c
 
 KERNEL_ASM_SRCS = \
 	boot/boot.S \

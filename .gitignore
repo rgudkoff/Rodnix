@@ -1,16 +1,22 @@
-# артефакты сборки
+# Build artifacts
 build/
 iso/
-rodnix.iso
-
-# объектные файлы и бинарники
-*.o
-*.bin
-*.img
 *.iso
+*.o
+*.kernel
 
-# логи/дампы
-*.log
-*.tmp
-*.core
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
 
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,21 @@
+[package]
+name = "rodnix-drivers"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "rodnix_drivers"
+crate-type = ["staticlib", "cdylib"]
+
+[dependencies]
+rodnix-lib = { path = "../lib" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
+

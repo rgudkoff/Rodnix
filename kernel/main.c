@@ -5,9 +5,12 @@
 #include "../include/isr.h"
 #include "../include/pic.h"
 #include "../include/pit.h"
-#include "../include/device.h"
-#include "../include/driver.h"
-#include "../include/vfs.h"
+#include "../include/memory.h"
+#include "../include/ipc.h"
+#include "../include/capability.h"
+#include "../include/scheduler.h"
+#include "../include/pci.h"
+#include "../include/paging.h"
 #include "../include/pmm.h"
 #include "../include/paging.h"
 #include "../include/vmm.h"
@@ -250,19 +253,30 @@ void kmain(void)
     kputs("[INIT] Interrupts enabled. Keyboard ready!\n");
     kputs("Press keys in QEMU window.\n\n");
     
-    /* Инициализация системы устройств */
-    kputs("[INIT] Initializing device manager...\n");
-    kputs("[INIT] Device manager initialized.\n\n");
+    /* Инициализация системы IPC */
+    kputs("[INIT] Initializing IPC system...\n");
+    ipc_init();
+    kputs("[INIT] IPC system initialized.\n\n");
     
-    /* Инициализация системы драйверов */
-    kputs("[INIT] Initializing driver system...\n");
-    driver_system_init();
-    kputs("[INIT] Driver system initialized.\n\n");
+    /* Инициализация системы capabilities */
+    kputs("[INIT] Initializing capability system...\n");
+    capability_init();
+    kputs("[INIT] Capability system initialized.\n\n");
     
-    /* Загрузка всех драйверов */
-    kputs("[INIT] Loading drivers...\n");
-    driver_load_all();
-    kputs("[INIT] Drivers loaded.\n\n");
+    /* Инициализация планировщика */
+    kputs("[INIT] Initializing scheduler...\n");
+    scheduler_init();
+    kputs("[INIT] Scheduler initialized.\n\n");
+    
+    /* Инициализация PCI */
+    kputs("[INIT] Initializing PCI...\n");
+    pci_init();
+    kputs("[INIT] PCI initialized.\n\n");
+    
+    /* Включение NX бита для защиты от выполнения данных */
+    kputs("[INIT] Enabling NX bit...\n");
+    enable_nx_bit();
+    kputs("[INIT] NX bit enabled.\n\n");
     
     /* Инициализация менеджера памяти */
     kputs("[INIT] Initializing memory manager...\n");
@@ -278,6 +292,10 @@ void kmain(void)
         kputs("[INIT] PMM initialized.\n");
     }
     
+    /* Регистрация обработчика page fault для отладки */
+    paging_debug_init();
+    kputs("[INIT] Page fault handler registered.\n\n");
+    
     /* Инициализация paging */
     kputs("[INIT] Initializing paging...\n");
     if (paging_init() != 0)
@@ -289,27 +307,249 @@ void kmain(void)
         kputs("[INIT] Paging initialized.\n");
         
         /* Identity mapping для первых 4MB (чтобы код продолжал работать после включения paging) */
-        kputs("[INIT] Creating identity mapping...\n");
+        kputs("[INIT] Creating identity mapping for first 4MB...\n");
+        kputs("[INIT] This will map virtual addresses 0x0-0x3FFFFF to physical 0x0-0x3FFFFF\n");
+        uint32_t mapped_count = 0;
+        uint32_t failed_count = 0;
         for (uint32_t i = 0; i < 1024; i++) /* 1024 страницы = 4MB */
         {
             uint32_t addr = i * PAGE_SIZE;
-            paging_map_page(addr, addr, PAGE_KERNEL);
+            if (paging_map_page(addr, addr, PAGE_KERNEL) != 0)
+            {
+                kputs("[INIT] ERROR: Failed to map page at 0x");
+                kprint_hex(addr);
+                kputs("\n");
+                failed_count++;
+            }
+            else
+            {
+                mapped_count++;
+            }
+            
+            /* Выводим прогресс каждые 256 страниц */
+            if ((i + 1) % 256 == 0)
+            {
+                kputs("[INIT] Mapped ");
+                kprint_dec(i + 1);
+                kputs(" / 1024 pages...\n");
+            }
         }
-        kputs("[INIT] Identity mapping created.\n");
+        kputs("[INIT] Identity mapping complete: ");
+        kprint_dec(mapped_count);
+        kputs(" pages mapped, ");
+        kprint_dec(failed_count);
+        kputs(" failed\n");
+        
+        /* Убеждаемся, что IDT отображен в identity mapping */
+        kputs("[INIT] Ensuring IDT is identity mapped...\n");
+        extern struct idt_entry idt[];
+        uint32_t idt_addr = (uint32_t)&idt;
+        uint32_t idt_phys = paging_get_physical(idt_addr);
+        if (idt_phys != idt_addr && idt_addr < 0x400000)
+        {
+            kputs("[INIT] Mapping IDT to identity...\n");
+            paging_map_page(idt_addr, idt_addr, PAGE_KERNEL);
+        }
+        
+        /* Убеждаемся, что обработчики прерываний отображены */
+        kputs("[INIT] Ensuring interrupt handlers are identity mapped...\n");
+        extern void isr14();
+        uint32_t isr14_addr = (uint32_t)isr14;
+        uint32_t isr14_phys = paging_get_physical(isr14_addr);
+        if (isr14_phys != isr14_addr && isr14_addr < 0x400000)
+        {
+            kputs("[INIT] Mapping ISR14 to identity...\n");
+            paging_map_page(isr14_addr, isr14_addr, PAGE_KERNEL);
+        }
+        
+        /* Убеждаемся, что GDT отображен в identity mapping */
+        kputs("[INIT] Ensuring GDT is identity mapped...\n");
+        extern struct gdt_entry gdt[];
+        uint32_t gdt_addr = (uint32_t)&gdt;
+        uint32_t gdt_phys = paging_get_physical(gdt_addr);
+        if (gdt_phys != gdt_addr && gdt_addr < 0x400000)
+        {
+            kputs("[INIT] Mapping GDT to identity...\n");
+            paging_map_page(gdt_addr, gdt_addr, PAGE_KERNEL);
+        }
+        
+        /* Убеждаемся, что функции console отображены в identity mapping */
+        kputs("[INIT] Ensuring console functions are identity mapped...\n");
+        extern void kputs(const char* s);
+        extern void kprint_hex(uint32_t v);
+        uint32_t kputs_addr = (uint32_t)kputs;
+        uint32_t kprint_hex_addr = (uint32_t)kprint_hex;
+        
+        uint32_t kputs_phys = paging_get_physical(kputs_addr);
+        if (kputs_phys != kputs_addr && kputs_addr < 0x400000)
+        {
+            kputs("[INIT] Mapping kputs to identity...\n");
+            paging_map_page(kputs_addr, kputs_addr, PAGE_KERNEL);
+        }
+        
+        uint32_t kprint_hex_phys = paging_get_physical(kprint_hex_addr);
+        if (kprint_hex_phys != kprint_hex_addr && kprint_hex_addr < 0x400000)
+        {
+            kputs("[INIT] Mapping kprint_hex to identity...\n");
+            paging_map_page(kprint_hex_addr, kprint_hex_addr, PAGE_KERNEL);
+        }
+        
+        /* КРИТИЧЕСКИ ВАЖНО: Убеждаемся, что все page tables отображены в identity mapping */
+        /* После включения пейджинга процессор должен иметь доступ к page tables */
+        kputs("[INIT] Ensuring all page tables are identity mapped...\n");
+        uint32_t* page_dir = paging_get_directory();
+        uint32_t page_tables_mapped = 0;
+        for (uint32_t i = 0; i < 1024; i++)
+        {
+            pde_t* pde = (pde_t*)&page_dir[i];
+            if (pde->present)
+            {
+                uint32_t table_phys = FRAME_ADDR(pde->frame);
+                /* Если page table находится в первых 4MB, отображаем ее в identity mapping */
+                if (table_phys < 0x400000)
+                {
+                    uint32_t table_virt = table_phys;
+                    uint32_t mapped_phys = paging_get_physical(table_virt);
+                    if (mapped_phys != table_phys)
+                    {
+                        kputs("[INIT] Mapping page table at 0x");
+                        kprint_hex(table_phys);
+                        kputs(" to identity...\n");
+                        paging_map_page(table_virt, table_phys, PAGE_KERNEL);
+                        page_tables_mapped++;
+                    }
+                }
+            }
+        }
+        kputs("[INIT] Page tables mapping complete: ");
+        kprint_dec(page_tables_mapped);
+        kputs(" page tables mapped to identity\n");
         
         /* Отображаем ядро в виртуальную память (0xC0000000) */
         /* Ядро загружено по адресу 1MB, отображаем его в 0xC0100000 */
         kputs("[INIT] Mapping kernel to virtual memory...\n");
+        kputs("[INIT] Mapping physical 0x100000-0x4FFFFF to virtual 0xC0100000-0xC04FFFFF\n");
+        uint32_t kernel_mapped = 0;
+        uint32_t kernel_failed = 0;
         for (uint32_t i = 0; i < 1024; i++) /* 1024 страницы = 4MB */
         {
             uint32_t virt = 0xC0100000 + i * PAGE_SIZE; /* Kernel virtual base (3GB + 1MB) */
             uint32_t phys = 0x100000 + i * PAGE_SIZE;   /* Физический адрес ядра (1MB) */
-            paging_map_page(virt, phys, PAGE_KERNEL);
+            if (paging_map_page(virt, phys, PAGE_KERNEL) != 0)
+            {
+                kputs("[INIT] ERROR: Failed to map kernel page virt=0x");
+                kprint_hex(virt);
+                kputs(" phys=0x");
+                kprint_hex(phys);
+                kputs("\n");
+                kernel_failed++;
+            }
+            else
+            {
+                kernel_mapped++;
+            }
         }
-        kputs("[INIT] Kernel memory mapped.\n");
+        kputs("[INIT] Kernel mapping complete: ");
+        kprint_dec(kernel_mapped);
+        kputs(" pages mapped, ");
+        kprint_dec(kernel_failed);
+        kputs(" failed\n");
         
         /* Включаем paging */
+        kputs("[INIT] Enabling paging...\n");
+        kputs("[INIT] Current page directory: 0x");
+        kprint_hex((uint32_t)paging_get_directory());
+        kputs("\n");
+        
+        /* Проверяем identity mapping перед включением */
+        kputs("[INIT] Testing identity mapping...\n");
+        uint32_t test_addrs[] = {0x0, 0x1000, 0xB8000, 0x100000};
+        for (int i = 0; i < 4; i++)
+        {
+            uint32_t phys = paging_get_physical(test_addrs[i]);
+            kputs("  Addr 0x");
+            kprint_hex(test_addrs[i]);
+            kputs(" -> Phys 0x");
+            kprint_hex(phys);
+            kputs(phys == test_addrs[i] ? " [OK]\n" : " [FAIL]\n");
+        }
+        
+        /* Проверяем, что page directory отображен в identity mapping */
+        uint32_t page_dir_addr = (uint32_t)paging_get_directory();
+        uint32_t page_dir_phys;
+        if (page_dir_addr >= 0xC0000000)
+        {
+            page_dir_phys = VIRT_TO_PHYS(page_dir_addr);
+        }
+        else
+        {
+            page_dir_phys = page_dir_addr;
+        }
+        kputs("[INIT] Page directory virtual: 0x");
+        kprint_hex(page_dir_addr);
+        kputs(", physical: 0x");
+        kprint_hex(page_dir_phys);
+        kputs("\n");
+        
+        /* Убеждаемся, что page directory отображен в identity mapping */
+        /* Это нужно для того, чтобы к нему можно было обращаться после включения пейджинга */
+        if (page_dir_phys >= 0x400000)
+        {
+            kputs("[INIT] WARNING: Page directory is above 4MB, may cause issues!\n");
+        }
+        else
+        {
+            /* Проверяем, что page directory отображен */
+            uint32_t mapped_phys = paging_get_physical(page_dir_phys);
+            if (mapped_phys != page_dir_phys)
+            {
+                kputs("[INIT] Mapping page directory to identity...\n");
+                paging_map_page(page_dir_phys, page_dir_phys, PAGE_KERNEL);
+            }
+        }
+        
+        kputs("[INIT] ========================================\n");
+        kputs("[INIT] About to enable paging...\n");
+        kputs("[INIT] ========================================\n");
+        
+        /* Получаем текущий EIP для отладки */
+        uint32_t current_eip;
+        __asm__ volatile ("call 1f\n\t"
+                         "1: pop %0"
+                         : "=r"(current_eip));
+        kputs("[INIT] Current code location (EIP): 0x");
+        kprint_hex(current_eip);
+        kputs("\n");
+        
+        /* Проверяем, что текущий код отображен */
+        uint32_t code_phys = paging_get_physical(current_eip);
+        kputs("[INIT] Code physical address: 0x");
+        kprint_hex(code_phys);
+        kputs(code_phys == current_eip ? " [OK - identity mapped]\n" : " [WARNING - not identity mapped]\n");
+        
+        /* Получаем текущий ESP для отладки */
+        uint32_t current_esp;
+        __asm__ volatile ("mov %%esp, %0" : "=r"(current_esp));
+        kputs("[INIT] Current stack pointer (ESP): 0x");
+        kprint_hex(current_esp);
+        kputs("\n");
+        
+        /* Проверяем, что стек отображен */
+        uint32_t stack_phys = paging_get_physical(current_esp);
+        kputs("[INIT] Stack physical address: 0x");
+        kprint_hex(stack_phys);
+        kputs(stack_phys == current_esp ? " [OK - identity mapped]\n" : " [WARNING - not identity mapped]\n");
+        
+        kputs("[INIT] Calling paging_enable()...\n");
         paging_enable();
+        
+        kputs("[INIT] ========================================\n");
+        kputs("[INIT] Returned from paging_enable()!\n");
+        kputs("[INIT] ========================================\n");
+        
+        /* После включения paging, kputs должен работать через identity mapping */
+        /* Если произойдет page fault, обработчик выведет информацию */
+        kputs("[INIT] Paging enabled successfully.\n");
         
         /* Инициализация VMM */
         kputs("[INIT] Initializing VMM...\n");
@@ -329,10 +569,6 @@ void kmain(void)
     }
     kputs("\n");
     
-    /* Инициализация VFS */
-    kputs("[INIT] Initializing VFS...\n");
-    vfs_init();
-    kputs("[INIT] VFS initialized.\n\n");
     
     kputs("[INIT] System ready. Interrupts enabled.\n");
     kputs("RodNIX Shell v0.2\n");
@@ -363,7 +599,6 @@ void kmain(void)
                 kputs("  echo     - Echo arguments\n");
                 kputs("  info     - Show system information\n");
                 kputs("  time     - Show system uptime\n");
-                kputs("  devices  - List all registered devices\n");
                 kputs("  meminfo  - Show memory information\n");
                 kputs("rodnix> ");
             }
@@ -398,11 +633,6 @@ void kmain(void)
                 kputs(" ms (");
                 kprint_dec(pit_get_ticks());
                 kputs(" ticks)\n");
-                kputs("rodnix> ");
-            }
-            else if (strcmp(shell_buffer, "devices") == 0)
-            {
-                device_list_all();
                 kputs("rodnix> ");
             }
             else if (strcmp(shell_buffer, "meminfo") == 0)

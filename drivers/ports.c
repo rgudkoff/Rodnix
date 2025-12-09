@@ -41,6 +41,22 @@ void outw(uint16_t port, uint16_t value)
                       : "a"(value), "dN"(port));
 }
 
+uint32_t inl(uint16_t port)
+{
+    uint32_t ret;
+    __asm__ volatile ("inl %1, %0"
+                      : "=a"(ret)
+                      : "dN"(port));
+    return ret;
+}
+
+void outl(uint16_t port, uint32_t value)
+{
+    __asm__ volatile ("outl %0, %1"
+                      :
+                      : "a"(value), "dN"(port));
+}
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
