@@ -1,6 +1,5 @@
 # RodNIX
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A microkernel-based OS for i386 (GRUB2 multiboot2) with strict separation between kernel and userspace.
 
@@ -79,9 +78,7 @@ gdb build/rodnix.kernel
 - Extending VMM for process support
 - Extending VFS for working with real file systems
 
-## License
 
-This project is licensed under the [MIT License](LICENSE).
 
 The MIT License allows anyone to use, modify, and distribute this software, including for commercial purposes. However, the copyright holder (the original author) maintains control over the main repository and has the final say on what changes are accepted into the official codebase.
 
