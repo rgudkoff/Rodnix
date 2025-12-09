@@ -1,22 +1,112 @@
-MIT License
+# RodNIX Public License v1.0 (RPL-1.0)
 
-Copyright (c) 2025 Roman Gudkov
+Based on GNU AGPLv3 with additional commercial-use terms.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+---
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## PREAMBLE
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+RodNIX is free and open for the community to study, modify, improve, and build
+upon. All non-commercial use is free. Community developers may use RodNIX for
+personal, educational, research, artistic, hobby, and independent commercial
+projects.
+
+Enterprise use, however, requires purchasing a RodNIX Enterprise License
+(REL-1.0). Revenue from enterprise licensing supports the RodNIX Foundation and
+is distributed to contributors.
+
+---
+
+## 0. Definitions
+
+**“Non-commercial use”** means any use by:
+- individuals,
+- educational institutions,
+- researchers,
+- hobbyists,
+- open-source developers,
+- commercial entities smaller than 50 employees,
+provided they are not selling RodNIX-based solutions to enterprise customers.
+
+**“Enterprise use”** includes:
+1. Use by an organization with 50+ employees;  
+2. Any deployment serving 1,000+ end-users;  
+3. Use in systems generating > $500k/year in revenue;  
+4. Incorporation into products or services sold to enterprise customers.
+
+**“Community Developer”** means a user or contributor who does not fall under
+Enterprise Use.
+
+**“RodNIX Foundation”** is the non-profit entity governing development and
+licensing of RodNIX.
+
+---
+
+## 1. Copyleft and Source Availability
+
+RodNIX is licensed under AGPLv3 plus the terms here. All AGPL obligations
+apply, including sharing source code of modified versions used over a network.
+
+---
+
+## 2. Free Non-Commercial Use
+
+All Non-commercial users may:
+- run RodNIX,
+- study and modify the source,
+- distribute unmodified or modified versions,
+- sell indie / small-scale products built on RodNIX,
+without paying fees or notifying the Foundation.
+
+---
+
+## 3. Mandatory Enterprise License
+
+Any Enterprise Use requires a RodNIX Enterprise License (REL-1.0).
+
+Using RodNIX in an enterprise environment without a valid REL license is a
+violation of copyright law.
+
+---
+
+## 4. Network Use / SaaS Obligation
+
+As per AGPL:
+If modified RodNIX is used to provide a network service, source code of the
+modified version must be made available to all users interacting with it.
+
+---
+
+## 5. Community Earnings
+
+Community Developers may develop and sell RodNIX-based products, so long as
+they do not sell to enterprise customers.  
+Enterprise customers must obtain REL licenses directly from the Foundation.
+
+---
+
+## 6. Trademark Exclusion
+
+This license does **not** grant rights to use the “RodNIX” name or logos.
+See `TRADEMARK_POLICY.md`.
+
+---
+
+## 7. Contributor License Agreement Required
+
+All contributions require signing the RodNIX Contributor License Agreement
+(CLA-1.0).  
+Contributors retain copyright.
+
+---
+
+## 8. Conflicts
+
+If AGPLv3 and RPL-1.0 conflict, the stricter term regarding enterprise use
+controls.
+
+---
+
+END OF TERMS
+
 
