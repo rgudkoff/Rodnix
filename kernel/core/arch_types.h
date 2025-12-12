@@ -69,21 +69,7 @@ typedef struct {
  * Макросы для определения архитектуры
  * ============================================================================ */
 
-#ifndef ARCH_NAME
-#error "ARCH_NAME must be defined (e.g., x86_64, arm64, riscv64)"
-#endif
-
-#ifndef ARCH_FAMILY
-#error "ARCH_FAMILY must be defined"
-#endif
-
-#ifndef ARCH_PTR_SIZE
-#error "ARCH_PTR_SIZE must be defined (32 or 64)"
-#endif
-
-#ifndef ARCH_ISA_TYPE
-#error "ARCH_ISA_TYPE must be defined (ARCH_TYPE_CISC or ARCH_TYPE_RISC)"
-#endif
+/* These are checked after config.h is included */
 
 #endif /* _RODNIX_CORE_ARCH_TYPES_H */
 
