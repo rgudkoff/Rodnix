@@ -58,19 +58,19 @@ void kmain(uint32_t magic, void* mbi)
     }
     
     DEBUG_INFO("Interrupts initialized");
-    
+        
     /* Initialize memory */
     if (memory_init() != 0) {
         panic("Failed to initialize memory");
-    }
-    
+        }
+        
     DEBUG_INFO("Memory initialized");
     
     /* Initialize scheduler */
     if (scheduler_init() != 0) {
         panic("Failed to initialize scheduler");
-    }
-    
+        }
+        
     DEBUG_INFO("Scheduler initialized");
     
     /* Initialize IPC */
@@ -79,7 +79,7 @@ void kmain(uint32_t magic, void* mbi)
     }
     
     DEBUG_INFO("IPC initialized");
-    
+            
     /* Initialize device manager */
     if (device_manager_init() != 0) {
         panic("Failed to initialize device manager");
@@ -96,5 +96,5 @@ void kmain(uint32_t magic, void* mbi)
         interrupt_wait();
         
         /* TODO: Handle events, schedule tasks, etc. */
+        }
     }
-}

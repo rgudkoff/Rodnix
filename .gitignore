@@ -6,6 +6,7 @@ build/
 *.iso
 *.bin
 *.elf
+*.img
 
 # IDE
 .idea/
@@ -13,11 +14,59 @@ build/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
 # Temporary files
 *.tmp
 *.log
+*.d
+*.dSYM/
+
+# ISO and boot files
+iso/
+rodnix.iso
+
+# Object files (keep source, ignore compiled)
+**/*.o
+**/*.a
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# OS specific
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Editor specific
+*.sublime-project
+*.sublime-workspace
+.project
+.classpath
+.settings/
+
+# Debug files
+*.gdb
+*.gdbsession
+core
+core.*
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+
+# Python (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Rust (if userspace uses Rust)
+target/
+Cargo.lock
+
+# Test artifacts
+*.test
+test_results/

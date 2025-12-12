@@ -1,0 +1,75 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Source files
+*.c text eol=lf
+*.h text eol=lf
+*.S text eol=lf
+*.s text eol=lf
+*.ld text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Makefiles
+Makefile text eol=lf
+makefile text eol=lf
+*.mk text eol=lf
+
+# Scripts
+*.sh text eol=lf
+*.py text eol=lf
+
+# Configuration files
+*.cfg text eol=lf
+*.conf text eol=lf
+*.ini text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Documentation
+*.md text eol=lf
+*.rst text eol=lf
+*.tex text eol=lf
+
+# Binary files
+*.o binary
+*.a binary
+*.so binary
+*.bin binary
+*.elf binary
+*.iso binary
+*.img binary
+
+# Archives
+*.zip binary
+*.tar binary
+*.tar.gz binary
+*.tar.bz2 binary
+*.tgz binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text eol=lf
+
+# Fonts
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+
+# Exclude from diff
+*.pdf binary
+*.ps binary
+
+# Linguist attributes (for GitHub language stats)
+kernel/** linguist-language=C
+boot/** linguist-language=Assembly
+include/** linguist-language=C
+*.S linguist-language=Assembly
+*.s linguist-language=Assembly
