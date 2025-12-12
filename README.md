@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A microkernel-based OS for i386 (GRUB2 multiboot2) with strict separation between kernel and userspace.
+A microkernel-based OS for x86_64 (GRUB2 multiboot2) with strict separation between kernel and userspace.
 
 **Architecture:**
 - **Kernel**: C11, no stdio, minimal dependencies - provides scheduler, VM, IPC, capabilities, IRQ routing, bus enumeration
@@ -19,12 +19,12 @@ A microkernel-based OS for i386 (GRUB2 multiboot2) with strict separation betwee
 - `Makefile` — kernel build, ISO, QEMU launch.
 
 ## Requirements
-- `i686-elf-gcc`, `i686-elf-ld`
+- `x86_64-elf-gcc`, `x86_64-elf-ld`
 - `nasm`
 - `grub-mkrescue`, `xorriso`
-- `qemu-system-i386`
+- `qemu-system-x86_64`
 
-Make sure the tools are available in PATH. On macOS, it's convenient to install via `brew install i686-elf-gcc nasm xorriso qemu` and `brew install --cask gcc@<version>`, then add `i686-elf-*` to PATH.
+Make sure the tools are available in PATH. On macOS, it's convenient to install via `brew install x86_64-elf-gcc nasm xorriso qemu` and `brew install --cask gcc@<version>`, then add `x86_64-elf-*` to PATH.
 
 ## Building
 ```sh
@@ -46,7 +46,7 @@ gdb build/rodnix.kernel
 ```
 
 ## Current Status
-- Multiboot2 header, freestanding 32-bit.
+- Multiboot2 header, freestanding 64-bit (x86_64).
 - GDT/IDT/ISR/IRQ, PIC remap to 0x20/0x28.
 - PIT 100 Hz (tick counter).
 - Keyboard handler (keymap, character output).
@@ -67,13 +67,41 @@ gdb build/rodnix.kernel
   - `devices` - list of registered devices
   - `meminfo` - memory information (physical, virtual, heap)
 - **Memory Manager**:
-  - **PMM (Physical Memory Manager)**: physical page management via bitmap
-  - **Paging**: paged addressing with support for page directory and page tables
+  - **PMM (Physical Memory Manager)**: physical page management via bitmap (64-bit addresses)
+  - **Paging**: fully functional 64-bit paged addressing with 4-level page tables
+    - PML4 → PDPT → PD → PT structure (64-bit)
+    - Identity mapping for first 4MB (0x0-0x3FFFFF)
+    - High-half kernel mapping at 0xFFFFFFFF80000000 (canonical address)
+    - Page fault handler for debugging
+    - Support for 40-bit physical addresses (up to 1TB)
   - **VMM (Virtual Memory Manager)**: virtual address management
   - **Heap Allocator**: dynamic memory allocation for kernel (kmalloc/kfree/krealloc)
-  - Kernel mapping to virtual memory at address 0xC0000000
+
+## Paging Implementation (64-bit)
+
+The kernel implements a complete 64-bit paging system with the following features:
+
+- **4-Level Page Tables**: PML4 (512 entries) → PDPT (512 entries) → PD (512 entries) → PT (512 entries)
+- **64-bit Entries**: All page table entries are 64-bit (8 bytes), supporting 40-bit physical addresses (up to 1TB)
+- **Identity Mapping**: First 4MB (0x0-0x3FFFFF) are identity-mapped for smooth transition
+- **High-Half Mapping**: Kernel code is mapped to canonical virtual addresses 0xFFFFFFFF80100000-0xFFFFFFFF804FFFFF (physical 0x100000-0x4FFFFF)
+- **Double Mapping**: Both identity and high-half mappings exist simultaneously for safe transition
+- **PAE Required**: PAE (Physical Address Extension) is automatically enabled for 64-bit mode
+- **Page Fault Handler**: Debug handler that displays fault address, error code, and system state
+- **Safety Checks**: Comprehensive validation before enabling paging:
+  - CR3 alignment check (must be 4KB aligned)
+  - PML4/PDPT/PD/PT flags verification
+  - Identity mapping verification for code and stack
+  - Page tables mapping verification
+
+**Current Status**: 
+- ✅ 64-bit paging is fully functional with identity mapping
+- ✅ High-half mapping (0xFFFFFFFF80000000+) is created and ready
+- ✅ Function `paging_jump_to_high_half()` is implemented for transition
+- ⏳ Automatic transition to high-half is planned (currently manual call required)
 
 ## Plans
+- High-half kernel mapping (0xC0000000+) with double mapping for smooth transition
 - Implementation of a simple file system (initrd or simple format)
 - Getting memory information from Multiboot2
 - Extending VMM for process support
@@ -86,3 +114,29 @@ This project is licensed under the [MIT License](LICENSE).
 The MIT License allows anyone to use, modify, and distribute this software, including for commercial purposes. However, the copyright holder (the original author) maintains control over the main repository and has the final say on what changes are accepted into the official codebase.
 
 For more details, see the [LICENSE](LICENSE) file.
+
+
+# RodNIX Licensing FAQ
+
+Q: Is RodNIX free?
+A: Yes — for non-commercial use and community development.
+
+Q: Can indie developers sell RodNIX-based products?
+A: Yes. Indie and small-team commercial use is allowed for free.
+
+Q: Do enterprises need to pay?
+A: Yes. Any enterprise use requires an Enterprise License (REL-1.0).
+
+Q: Why pay?
+A: Revenue funds the RodNIX Foundation and is distributed to contributors.
+
+Q: Do contributors keep copyright?
+A: Yes.
+
+Q: Why must contributors sign a CLA?
+A: To allow commercial dual-licensing and ensure legal clarity.
+
+Q: Can enterprises use RodNIX without opening their source code?
+A: Yes — when they hold an Enterprise License.
+
+
