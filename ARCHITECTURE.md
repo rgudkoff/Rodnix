@@ -1,100 +1,114 @@
-# RodNIX Architecture
+# Архитектура RodNIX
 
-## Overview
+RodNIX - это современное 64-битное ядро операционной системы, построенное с нуля для поддержки множества архитектур.
 
-RodNIX is a microkernel-based operating system with strict separation between kernel and userspace.
+## Основные принципы
 
-## Kernel (C11)
+### 1. Только 64-битные архитектуры
+RodNIX поддерживает только 64-битные процессоры. Это упрощает код и позволяет использовать современные возможности процессоров.
 
-The kernel is written in **C11** with the following constraints:
-- No `stdio.h` or standard library
-- No dynamic memory allocation except for the kernel's own allocator
-- Minimal dependencies
+### 2. Архитектурная абстракция
+Ядро разделено на архитектурно-независимые и архитектурно-зависимые части:
+- **kernel/core/**: Архитектурно-независимые интерфейсы
+- **kernel/arch/**: Архитектурно-зависимые реализации
 
-### Kernel Responsibilities
+### 3. Поддержка разных ISA
+Ядро поддерживает как CISC (x86_64), так и RISC (ARM64, RISC-V64) архитектуры через единые интерфейсы.
 
-The kernel provides only core functionality:
-
-1. **Scheduler** - Process scheduling and context switching
-2. **Virtual Memory (VM)** - Memory management, paging, address space isolation
-3. **IPC** - Inter-process communication
-4. **Capabilities** - Capability-based security
-5. **IRQ Routing** - Interrupt routing and handling
-6. **Bus Enumeration** - PCI/ACPI enumeration
-7. **Memory Protection** - W^X, NX bit, KPTI-like address space separation
-
-### Security Features
-
-- **W^X (Write XOR Execute)**: Pages cannot be both writable and executable
-- **NX Bit**: No-execute bit for data pages
-- **KPTI-like separation**: Kernel and user address spaces are separated
-- **copy_to_user/copy_from_user**: Safe copying between kernel and userspace
-
-## Userspace (Rust 1.75+)
-
-Userspace components are written in **Rust**:
-
-### Drivers (no_std)
-
-- Located in `userspace/drivers/`
-- Compiled as static libraries or shared objects
-- Use `no_std` for minimal runtime
-- Communicate with kernel via syscalls
-
-### Daemons (std)
-
-- Located in `userspace/daemons/`
-- Use standard Rust library
-- Examples:
-  - **device-manager**: Manages device registration and discovery
-  - Other system daemons
-
-### Library
-
-- Common library in `userspace/lib/`
-- Provides syscall interfaces and types
-- Shared between drivers and daemons
-
-## Directory Structure
+## Структура проекта
 
 ```
 RodNIX/
-├── kernel/          # Kernel code (C11)
-├── boot/            # Bootloader code
-├── include/          # Kernel headers
-├── drivers/          # Legacy drivers (to be migrated)
-├── userspace/
-│   ├── drivers/      # Rust drivers (no_std)
-│   ├── daemons/     # Rust daemons (std)
-│   └── lib/         # Common userspace library
-└── build/            # Build artifacts
+├── kernel/                    # Основное ядро
+│   ├── core/                  # Архитектурно-независимые абстракции
+│   │   ├── arch_types.h      # Базовые типы
+│   │   ├── config.h          # Конфигурация ядра
+│   │   ├── interrupts.h      # Интерфейс прерываний
+│   │   ├── memory.h          # Интерфейс памяти
+│   │   ├── cpu.h             # Интерфейс процессора
+│   │   └── boot.h            # Интерфейс загрузки
+│   ├── common/               # Общие компоненты ядра
+│   │   ├── scheduler.c       # Планировщик
+│   │   ├── memory.c          # Управление памятью
+│   │   ├── ipc.c             # Межпроцессное взаимодействие
+│   │   └── device.c          # Управление устройствами
+│   └── arch/                 # Архитектурно-зависимые реализации
+│       ├── x86_64/           # x86_64 (CISC)
+│       │   ├── config.h
+│       │   ├── types.h
+│       │   ├── interrupts.c
+│       │   ├── memory.c
+│       │   ├── cpu.c
+│       │   └── boot.S
+│       ├── arm64/            # ARM64 (RISC)
+│       │   └── ...
+│       └── riscv64/          # RISC-V64 (RISC)
+│           └── ...
+├── boot/                     # Код загрузки
+│   ├── boot.S               # Точка входа
+│   └── ...
+├── include/                  # Заголовочные файлы
+│   ├── types.h              # Базовые типы
+│   └── ...
+└── drivers/                  # Драйверы устройств
+    └── ...
 ```
 
-## Communication
+## Архитектурные различия
 
-- **Kernel ↔ Userspace**: Syscalls (int 0x80)
-- **Process ↔ Process**: IPC messages
-- **Driver ↔ Kernel**: Syscalls for device operations
-- **Daemon ↔ Kernel**: Syscalls for system operations
+### x86_64 (CISC)
+- Сложные инструкции
+- Переменная длина инструкций
+- Много режимов адресации
+- 4-уровневая страничная структура (PML4)
 
-## Memory Layout
+### ARM64 (RISC)
+- Простые инструкции фиксированной длины
+- Load/Store архитектура
+- 4-уровневая страничная структура
+- Exception Levels (EL)
 
-- **0x00000000 - 0xBFFFFFFF**: Userspace (3GB)
-- **0xC0000000 - 0xFFFFFFFF**: Kernel space (1GB)
+### RISC-V64 (RISC)
+- Минималистичный набор инструкций
+- Модульная архитектура
+- Страничная структура Sv39/Sv48/Sv57
+- Привилегии: User, Supervisor, Machine
 
-## Build System
+## Абстракции
 
-- **Kernel**: Makefile with i686-elf-gcc
-- **Userspace**: Cargo workspace with Rust toolchain
+### Прерывания
+Все архитектуры используют единый интерфейс для работы с прерываниями:
+- Регистрация обработчиков
+- Управление уровнем прерываний (IRQL)
+- IPI (Inter-Processor Interrupts)
 
-## Future Work
+### Память
+Единый интерфейс для управления памятью:
+- Отображение страниц
+- Выделение/освобождение памяти
+- Преобразование адресов
 
-- [ ] Implement full scheduler
-- [ ] Implement IPC system
-- [ ] Implement capability system
-- [ ] Implement PCI enumeration
-- [ ] Migrate existing drivers to Rust
-- [ ] Implement device-manager daemon
-- [ ] Add KPTI-like address space separation
-- [ ] Add syscall handler
+### Процессор
+Абстракции для работы с процессором:
+- Получение информации о CPU
+- Переключение контекста
+- Атомарные операции
+- Барьеры памяти
 
+## Преимущества архитектуры
+
+1. **Переносимость**: Легко добавить поддержку новой архитектуры
+2. **Модульность**: Четкое разделение ответственности
+3. **Тестируемость**: Архитектурно-независимый код легко тестировать
+4. **Поддерживаемость**: Изменения в одной архитектуре не влияют на другие
+
+## Планы развития
+
+- [x] Базовая структура директорий
+- [ ] Реализация базовых компонентов для x86_64
+- [ ] Реализация базовых компонентов для ARM64
+- [ ] Реализация базовых компонентов для RISC-V64
+- [ ] Планировщик задач
+- [ ] Управление памятью
+- [ ] IPC система
+- [ ] Драйверы устройств

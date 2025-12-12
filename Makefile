@@ -1,166 +1,137 @@
-# ================== RodNIX Makefile (macOS/Linux friendly) ==================
+# RodNIX Makefile
+# Builds 64-bit kernel for x86_64 architecture
 
-CC = i686-elf-gcc
+# Toolchain
+CC = x86_64-elf-gcc
 AS = nasm
-LD = i686-elf-ld
+LD = x86_64-elf-ld
+OBJCOPY = x86_64-elf-objcopy
 
-CFLAGS  = -m32 -std=c11 -ffreestanding -fno-stack-protector -fno-builtin -nostdlib -O2 -g -Wall -Wextra -I./include
-ASFLAGS = -f elf32
-LDFLAGS = -m elf_i386 -T link.ld
-
+# Directories
 BUILD_DIR = build
-ISO_DIR   = iso
+ISO_DIR = iso
+KERNEL_DIR = kernel
+BOOT_DIR = boot
+INCLUDE_DIR = include
 
-# Минимальная сборка - загрузка, GDT, IDT, PIC, IRQ, PIT
+# Compiler flags
+CFLAGS = -m64 \
+         -mcmodel=kernel \
+         -mno-red-zone \
+         -std=c11 \
+         -ffreestanding \
+         -fno-stack-protector \
+         -fno-builtin \
+         -nostdlib \
+         -O2 \
+         -g \
+         -Wall \
+         -Wextra \
+         -I$(INCLUDE_DIR) \
+         -I$(KERNEL_DIR)/core \
+         -I$(KERNEL_DIR)/common \
+         -I$(KERNEL_DIR)/arch/x86_64
+
+# Assembler flags
+ASFLAGS = -f elf64
+
+# Linker flags
+LDFLAGS = -m elf_x86_64 \
+          -T link.ld \
+          --no-warn-mismatch \
+          -z max-page-size=0x1000
+
+# Source files
 KERNEL_C_SRCS = \
-	kernel/main.c \
-	kernel/gdt.c \
-	kernel/idt.c \
-	kernel/isr.c \
-	kernel/pic.c \
-	kernel/pit.c \
-	kernel/pmm.c \
-	kernel/paging.c \
-	kernel/vmm.c \
-	kernel/heap.c \
-	kernel/memory.c \
-	kernel/ipc.c \
-	kernel/capability.c \
-	kernel/scheduler.c \
-	kernel/pci.c \
-	kernel/paging_debug.c \
-	drivers/console.c \
-	drivers/ports.c
+	$(KERNEL_DIR)/main.c \
+	$(KERNEL_DIR)/common/scheduler.c \
+	$(KERNEL_DIR)/common/ipc.c \
+	$(KERNEL_DIR)/common/device.c \
+	$(KERNEL_DIR)/common/console.c \
+	$(KERNEL_DIR)/common/debug.c \
+	$(KERNEL_DIR)/common/task.c \
+	$(KERNEL_DIR)/arch/x86_64/interrupts.c \
+	$(KERNEL_DIR)/arch/x86_64/interrupts_stub.c \
+	$(KERNEL_DIR)/arch/x86_64/cpu.c \
+	$(KERNEL_DIR)/arch/x86_64/memory.c \
+	$(KERNEL_DIR)/arch/x86_64/boot.c
 
 KERNEL_ASM_SRCS = \
-	boot/boot.S \
-	boot/gdt_flush.S \
-	boot/idt_load.S \
-	boot/isr_stubs.S
+	$(BOOT_DIR)/boot.S
 
-KERNEL_C_OBJS   = $(KERNEL_C_SRCS:.c=.o)
+# Object files
+KERNEL_C_OBJS = $(KERNEL_C_SRCS:.c=.o)
 KERNEL_ASM_OBJS = $(KERNEL_ASM_SRCS:.S=.o)
 OBJS = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS))
 
+# Output
 KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
 
-UNAME_S := $(shell uname -s)
-
-# ---- Autodetect tools (supports macOS cross packages) ----------------------
-# Try native grub-mkrescue, then i686-elf-*, then x86_64-elf-* (Homebrew tap)
-GRUB_MKRESCUE ?= $(shell command -v grub-mkrescue 2>/dev/null || true)
-ifeq ($(GRUB_MKRESCUE),)
-  GRUB_MKRESCUE := $(shell command -v i686-elf-grub-mkrescue 2>/dev/null || true)
-endif
-ifeq ($(GRUB_MKRESCUE),)
-  GRUB_MKRESCUE := $(shell command -v x86_64-elf-grub-mkrescue 2>/dev/null || true)
-endif
-
-XORRISO ?= $(shell command -v xorriso 2>/dev/null || true)
-MTOOLS  ?= $(shell command -v mtools 2>/dev/null || true)
-
-# Try to guess GRUB modules directory (used on macOS Homebrew cross build)
-# Typically: <brew_prefix>/Cellar/i686-elf-grub/*/lib/i686-elf/grub/i386-pc
-GRUB_MODDIR ?= $(shell d="$$(dirname $$(dirname $(GRUB_MKRESCUE)))"/lib/grub/i386-pc; [ -d "$$d" ] && echo "$$d" || true)
-ifeq ($(GRUB_MODDIR),)
-  GRUB_MODDIR := $(shell d="$$(dirname $$(dirname $(GRUB_MKRESCUE)))"/lib/i686-elf/grub/i386-pc; [ -d "$$d" ] && echo "$$d" || true)
-endif
-
-define need_tools
-	@{ ok=1; \
-	  if [ -z "$(GRUB_MKRESCUE)" ]; then \
-	    echo "Error: grub-mkrescue not found."; ok=0; \
-	    if [ "$(UNAME_S)" = "Darwin" ]; then \
-	      echo "  macOS hint: brew tap nativeos/i386-elf-toolchain && brew install i686-elf-grub"; \
-	    else \
-	      echo "  Linux hint: sudo apt-get install grub-pc-bin grub-common"; \
-	    fi; \
-	  fi; \
-	  if [ -z "$(XORRISO)" ]; then \
-	    echo "Error: xorriso not found."; ok=0; \
-	    if [ "$(UNAME_S)" = "Darwin" ]; then echo "  macOS: brew install xorriso"; \
-	    else echo "  Linux: sudo apt-get install xorriso"; fi; \
-	  fi; \
-	  if [ $$ok -eq 0 ]; then exit 1; fi; }
-endef
-
-# ---- Debugger & QEMU flags -------------------------------------------------
-# Debugger autodetect: i686-elf-gdb -> gdb -> lldb
-DEBUGGER ?= $(shell command -v i686-elf-gdb 2>/dev/null || command -v gdb 2>/dev/null || command -v lldb 2>/dev/null)
-
-QEMU_FLAGS       = -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown
-QEMU_DEBUG_FLAGS = -s -S
-
-.PHONY: all clean run iso debug check docker-iso
+# Default target
+.PHONY: all clean run iso
 
 all: $(KERNEL_BIN)
-	@echo "[+] Built RodNIX kernel"
+	@echo "[+] Built RodNIX kernel (64-bit)"
 
+# Link kernel
 $(KERNEL_BIN): $(OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	@echo "[+] Linked kernel: $@"
 
+# Compile C files
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+	@echo "[CC] $<"
 
+# Assemble ASM files
 $(BUILD_DIR)/%.o: %.S
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
+	@echo "[AS] $<"
 
+# Clean build artifacts
+clean:
+	rm -rf $(BUILD_DIR) $(ISO_DIR) rodnix.iso
+	@echo "[+] Cleaned build artifacts"
+
+# Create ISO
 iso: $(KERNEL_BIN)
-	$(call need_tools)
 	@mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/rodnix.kernel
-	cp grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
-	@if [ -n "$(GRUB_MODDIR)" ]; then \
-	  echo "[*] Using GRUB modules at: $(GRUB_MODDIR)"; \
-	  "$(GRUB_MKRESCUE)" -d "$(GRUB_MODDIR)" -o rodnix.iso $(ISO_DIR); \
+	@echo "menuentry \"RodNIX\" {" > $(ISO_DIR)/boot/grub/grub.cfg
+	@echo "    multiboot2 /boot/rodnix.kernel" >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo "    boot" >> $(ISO_DIR)/boot/grub/grub.cfg
+	@echo "}" >> $(ISO_DIR)/boot/grub/grub.cfg
+	@if command -v grub-mkrescue >/dev/null 2>&1; then \
+		grub-mkrescue -o rodnix.iso $(ISO_DIR); \
+		echo "[+] Created ISO: rodnix.iso"; \
 	else \
-	  "$(GRUB_MKRESCUE)" -o rodnix.iso $(ISO_DIR); \
+		echo "[!] grub-mkrescue not found, skipping ISO creation"; \
 	fi
-	@echo "[+] Built ISO: rodnix.iso"
 
+# Run in QEMU
 run: iso
-	# Try HVF (macOS); on failure fallback to default (TCG)
-	qemu-system-i386 $(QEMU_FLAGS) -accel hvf || \
-	qemu-system-i386 $(QEMU_FLAGS)
-
-debug: iso
-	# Start QEMU waiting for debugger on :1234; try HVF, else fallback
-	( qemu-system-i386 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) -accel hvf & ) || \
-	( qemu-system-i386 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
-	# Give QEMU time to open the port
-	sleep 1
-	# Attach debugger (GDB preferred; LLDB fallback)
-	@if echo "$(DEBUGGER)" | grep -q lldb; then \
-	  echo "[*] Using LLDB"; \
-	  lldb -o "target create $(KERNEL_BIN)" -o "gdb-remote 1234"; \
+	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
+		qemu-system-x86_64 -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown; \
 	else \
-	  echo "[*] Using GDB: $(DEBUGGER)"; \
-	  $(DEBUGGER) -ex "target remote :1234" -ex "symbol-file $(KERNEL_BIN)"; \
+		echo "[!] qemu-system-x86_64 not found"; \
 	fi
 
-check: $(KERNEL_BIN)
-	@{ \
-	  if command -v grub-file >/dev/null 2>&1; then \
-	    if grub-file --is-x86-multiboot2 $(KERNEL_BIN); then \
-	      echo "[OK] Multiboot2 header detected."; \
-	    else \
-	      echo "[FAIL] NO Multiboot2 header in $(KERNEL_BIN)"; exit 1; \
-	    fi; \
-	  else \
-	    echo "[WARN] grub-file not found; skip MB2 check."; \
-	  fi; \
-	}
+# Debug build
+debug: CFLAGS += -DDEBUG_LEVEL=DEBUG_LEVEL_DEBUG
+debug: all
 
-docker-iso: clean
-	# Portable build inside Ubuntu container (no Homebrew needed)
-	docker run --rm -v "$(PWD)":/w -w /w ubuntu:24.04 bash -lc "\
-	  apt-get update && \
-	  apt-get install -y build-essential nasm xorriso mtools grub-pc-bin grub-common && \
-	  make iso \
-	"
+# Help
+help:
+	@echo "RodNIX Build System"
+	@echo ""
+	@echo "Targets:"
+	@echo "  all     - Build kernel (default)"
+	@echo "  clean   - Remove build artifacts"
+	@echo "  iso     - Create bootable ISO"
+	@echo "  run     - Run kernel in QEMU"
+	@echo "  debug   - Build with debug symbols"
+	@echo "  help    - Show this help"
 
-clean:
-	rm -rf $(BUILD_DIR)/ rodnix.iso $(ISO_DIR)/
