@@ -15,6 +15,7 @@
 #include "../../include/console.h"
 #include "../../core/interrupts.h"
 #include <stddef.h>
+#include <stdarg.h>
 
 /* Maximum number of buses, drivers, devices, services */
 #define MAX_BUSES    16
@@ -53,11 +54,26 @@ static void fabric_irq_wrapper(interrupt_context_t* ctx)
 {
     int vector = ctx->vector;
     
+    /* DIAGNOSTIC: Simple output to avoid kprintf in IRQ context */
+    /* Use direct VGA output for critical diagnostics */
+    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
+    static uint32_t debug_pos = 0;
+    
+    /* Simple character output at fixed position */
+    if (debug_pos < 80) {
+        vga_debug[80 * 10 + debug_pos] = 0x0F00 | ('0' + (vector % 10));
+        debug_pos++;
+    }
+    
     /* Call all registered handlers for this vector */
-    for (uint32_t i = 0; i < MAX_IRQ_HANDLERS; i++) {
+    /* XNU-style: Avoid any operations that might use FPU */
+    /* Use simple integer operations only */
+    uint32_t i = 0;
+    while (i < MAX_IRQ_HANDLERS) {
         if (irq_handlers[i].active && irq_handlers[i].vector == vector) {
             irq_handlers[i].handler(vector, irq_handlers[i].arg);
         }
+        i++; /* Increment manually to avoid potential FPU usage */
     }
 }
 
@@ -277,9 +293,14 @@ fabric_service_t* fabric_service_lookup(const char *name)
 /* Request IRQ */
 int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
 {
+    extern void kprintf(const char* fmt, ...);
+    
     if (!h || vector < 0 || vector >= 256) {
+        kprintf("[FABRIC-IRQ] ERROR: Invalid parameters (vector=%d, handler=%p)\n", vector, h);
         return -1;
     }
+    
+    kprintf("[FABRIC-IRQ] Requesting IRQ: vector=%d\n", vector);
     
     spinlock_lock(&irq_lock);
     
@@ -294,6 +315,7 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     
     if (slot >= MAX_IRQ_HANDLERS) {
         spinlock_unlock(&irq_lock);
+        kputs("[FABRIC-IRQ] ERROR: No free slots\n");
         return -1;
     }
     
@@ -304,15 +326,20 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     
     spinlock_unlock(&irq_lock);
     
+    kprintf("[FABRIC-IRQ] Handler registered in slot %u\n", slot);
+    
     /* Register with interrupt system */
     extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+    kprintf("[FABRIC-IRQ] Registering with interrupt system...\n");
     if (interrupt_register(vector, fabric_irq_wrapper) != 0) {
+        kputs("[FABRIC-IRQ] ERROR: Failed to register with interrupt system\n");
         spinlock_lock(&irq_lock);
         irq_handlers[slot].active = false;
         spinlock_unlock(&irq_lock);
         return -1;
     }
     
+    kprintf("[FABRIC-IRQ] Successfully registered IRQ handler for vector %d\n", vector);
     return 0;
 }
 
@@ -340,7 +367,13 @@ void fabric_free_irq(int vector, fabric_irq_handler_t h)
 /* Logging */
 void fabric_log(const char *fmt, ...)
 {
-    extern void kprintf(const char *fmt, ...);
-    kprintf(fmt);
+    /* XNU-style: Logging with variadic arguments */
+    /* Forward variadic arguments to kprintf using va_list */
+    extern void kvprintf(const char *fmt, va_list args);
+    
+    va_list args;
+    va_start(args, fmt);
+    kvprintf(fmt, args);
+    va_end(args);
 }
 

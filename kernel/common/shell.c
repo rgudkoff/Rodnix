@@ -13,7 +13,7 @@
  */
 
 #include "shell.h"
-#include "../arch/x86_64/keyboard.h"
+#include "../input/input.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
@@ -363,12 +363,14 @@ void shell_run(void)
         kputs(SHELL_PROMPT);
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
         
-        /* Read command line */
-        int len = keyboard_read_line(line, SHELL_MAX_LINE_LENGTH);
+        /* DIAGNOSTIC: Print when shell starts reading */
+        kputs("[SHELL] Waiting for input...\n");
         
-        if (len < 0) {
-            continue; /* Error reading line */
-        }
+        /* Read command line */
+        size_t len = input_read_line(line, SHELL_MAX_LINE_LENGTH);
+        
+        /* DIAGNOSTIC: Print what was read */
+        kprintf("[SHELL] Read line: len=%u, line='%s'\n", len, line);
         
         if (len == 0) {
             kputc('\n');

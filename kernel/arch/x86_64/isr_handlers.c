@@ -110,7 +110,7 @@ static void interrupt_dispatch(struct registers* regs)
             pic_disable_irq(irq);
         }
         
-        /* Send EOI */
+        /* Send EOI - CRITICAL: Must be sent before returning */
         /* When APIC is available, use LAPIC EOI (works for all interrupts) */
         /* PIC EOI is only needed if I/O APIC is not available */
         if (apic_is_available()) {
@@ -147,15 +147,23 @@ static void interrupt_dispatch(struct registers* regs)
             return;
         }
         
+        /* Exception 7 (No Coprocessor) - can occur if FPU is used in interrupt handler */
+        /* XNU-style: Silently ignore - this can happen when FPU is accessed in interrupt context */
+        if (vector == 7) {
+            /* This can occur if FPU is used in interrupt handler */
+            /* Just return silently - FPU operations should not be done in interrupt context */
+            return;
+        }
+        
         /* Critical exceptions - panic (XNU-style: exceptions must be handled) */
         kputs("\n*** Exception ***\n");
-        kprintf("Exception: %s (0x%x)\n", 
+        kprintf("Exception: %s (%x)\n", 
                 exception_names[vector] ? exception_names[vector] : "Unknown",
                 vector);
-        kprintf("Error Code: 0x%llx\n", regs->err_code);
-        kprintf("RIP: 0x%llx\n", regs->rip);
-        kprintf("RSP: 0x%llx\n", regs->rsp);
-        kprintf("RFLAGS: 0x%llx\n", regs->rflags);
+        kprintf("Error Code: %llx\n", regs->err_code);
+        kprintf("RIP: %llx\n", regs->rip);
+        kprintf("RSP: %llx\n", regs->rsp);
+        kprintf("RFLAGS: %llx\n", regs->rflags);
         
         /* Page fault special handling */
         if (vector == 14) {
