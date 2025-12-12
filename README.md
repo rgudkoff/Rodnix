@@ -32,6 +32,40 @@ RodNIX/
 - **Модульность**: Четкое разделение архитектурно-зависимого и независимого кода
 - **Расширяемость**: Легкое добавление поддержки новых архитектур
 
+## Быстрый старт
+
+### Установка зависимостей
+
+**macOS:**
+```bash
+brew install x86_64-elf-gcc x86_64-elf-binutils nasm qemu grub
+```
+
+**Linux:**
+```bash
+sudo apt-get install build-essential nasm qemu-system-x86 grub-pc-bin
+```
+
+### Сборка и запуск
+
+```bash
+# Проверить зависимости
+make check-deps
+
+# Собрать ядро
+make clean && make
+
+# Создать ISO (требует grub-mkrescue)
+make iso
+
+# Запустить в QEMU
+make run
+```
+
+Подробные инструкции см. в [INSTALL.md](INSTALL.md) и [docs/BUILD.md](docs/BUILD.md).
+
 ## Статус
 
 Проект находится в стадии активной разработки.
+
+Ядро успешно собирается и готово к запуску в QEMU.

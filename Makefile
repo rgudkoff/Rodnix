@@ -1,20 +1,13 @@
-# RodNIX Makefile
-# Builds 64-bit kernel for x86_64 architecture
+# ================== RodNIX Makefile (macOS/Linux friendly, 64-bit) ==================
 
-# Toolchain
+SHELL := /bin/bash
+
+# Toolchain (64-bit)
 CC = x86_64-elf-gcc
 AS = nasm
 LD = x86_64-elf-ld
-OBJCOPY = x86_64-elf-objcopy
 
-# Directories
-BUILD_DIR = build
-ISO_DIR = iso
-KERNEL_DIR = kernel
-BOOT_DIR = boot
-INCLUDE_DIR = include
-
-# Compiler flags
+# Compiler flags (64-bit)
 CFLAGS = -m64 \
          -mcmodel=kernel \
          -mno-red-zone \
@@ -27,111 +20,160 @@ CFLAGS = -m64 \
          -g \
          -Wall \
          -Wextra \
-         -I$(INCLUDE_DIR) \
-         -I$(KERNEL_DIR)/core \
-         -I$(KERNEL_DIR)/common \
-         -I$(KERNEL_DIR)/arch/x86_64
+         -I./include \
+         -I./kernel/core \
+         -I./kernel/common \
+         -I./kernel/arch/x86_64
 
-# Assembler flags
 ASFLAGS = -f elf64
+LDFLAGS = -m elf_x86_64 -T link.ld --no-warn-mismatch -z max-page-size=0x1000
 
-# Linker flags
-LDFLAGS = -m elf_x86_64 \
-          -T link.ld \
-          --no-warn-mismatch \
-          -z max-page-size=0x1000
+BUILD_DIR = build
+ISO_DIR   = iso
 
-# Source files
+# ===== Sources =====
 KERNEL_C_SRCS = \
-	$(KERNEL_DIR)/main.c \
-	$(KERNEL_DIR)/common/scheduler.c \
-	$(KERNEL_DIR)/common/ipc.c \
-	$(KERNEL_DIR)/common/device.c \
-	$(KERNEL_DIR)/common/console.c \
-	$(KERNEL_DIR)/common/debug.c \
-	$(KERNEL_DIR)/common/task.c \
-	$(KERNEL_DIR)/arch/x86_64/interrupts.c \
-	$(KERNEL_DIR)/arch/x86_64/interrupts_stub.c \
-	$(KERNEL_DIR)/arch/x86_64/cpu.c \
-	$(KERNEL_DIR)/arch/x86_64/memory.c \
-	$(KERNEL_DIR)/arch/x86_64/boot.c
+	kernel/main.c \
+	kernel/common/scheduler.c \
+	kernel/common/ipc.c \
+	kernel/common/device.c \
+	kernel/common/console.c \
+	kernel/common/debug.c \
+	kernel/common/task.c \
+	kernel/arch/x86_64/interrupts.c \
+	kernel/arch/x86_64/interrupts_stub.c \
+	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/memory.c \
+	kernel/arch/x86_64/boot.c
 
 KERNEL_ASM_SRCS = \
-	$(BOOT_DIR)/boot.S
+	boot/boot.S
 
-# Object files
-KERNEL_C_OBJS = $(KERNEL_C_SRCS:.c=.o)
+KERNEL_C_OBJS   = $(KERNEL_C_SRCS:.c=.o)
 KERNEL_ASM_OBJS = $(KERNEL_ASM_SRCS:.S=.o)
 OBJS = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS))
 
-# Output
 KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
+ISO_OUT    = rodnix.iso
 
-# Default target
-.PHONY: all clean run iso
+UNAME_S := $(shell uname -s)
 
+# ===== Tools =====
+GRUB_MKRESCUE := i686-elf-grub-mkrescue
+XORRISO := xorriso
+GRUB_FILE := i686-elf-grub-file
+
+# QEMU accel
+ifeq ($(UNAME_S),Darwin)
+  QEMU_ACCEL ?= -accel hvf
+else
+  ifneq ("$(wildcard /dev/kvm)","")
+    QEMU_ACCEL ?= -accel kvm
+  else
+    QEMU_ACCEL ?=
+  endif
+endif
+
+QEMU_FLAGS       = -m 64M -boot d -cdrom $(ISO_OUT) -serial stdio -no-reboot -no-shutdown
+QEMU_DEBUG_FLAGS = -s -S
+
+
+# ===== Phony =====
+.PHONY: all clean run iso debug check help check-deps
+
+# ===== Build =====
 all: $(KERNEL_BIN)
 	@echo "[+] Built RodNIX kernel (64-bit)"
 
-# Link kernel
 $(KERNEL_BIN): $(OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
 	@echo "[+] Linked kernel: $@"
 
-# Compile C files
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 	@echo "[CC] $<"
 
-# Assemble ASM files
 $(BUILD_DIR)/%.o: %.S
 	@mkdir -p $(dir $@)
-	$(AS) $(ASFLAGS) $< -o $@
+	@if [ "$<" = "boot/boot.S" ]; then \
+		$(AS) $(ASFLAGS) -Wno-zext-reloc $< -o $@; \
+	else \
+		$(AS) $(ASFLAGS) $< -o $@; \
+	fi
 	@echo "[AS] $<"
 
-# Clean build artifacts
-clean:
-	rm -rf $(BUILD_DIR) $(ISO_DIR) rodnix.iso
-	@echo "[+] Cleaned build artifacts"
-
-# Create ISO
+# ===== ISO =====
 iso: $(KERNEL_BIN)
 	@mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/rodnix.kernel
-	@echo "menuentry \"RodNIX\" {" > $(ISO_DIR)/boot/grub/grub.cfg
-	@echo "    multiboot2 /boot/rodnix.kernel" >> $(ISO_DIR)/boot/grub/grub.cfg
-	@echo "    boot" >> $(ISO_DIR)/boot/grub/grub.cfg
-	@echo "}" >> $(ISO_DIR)/boot/grub/grub.cfg
-	@if command -v grub-mkrescue >/dev/null 2>&1; then \
-		grub-mkrescue -o rodnix.iso $(ISO_DIR); \
-		echo "[+] Created ISO: rodnix.iso"; \
+	@if [ -f boot/grub/grub.cfg ]; then \
+		cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
+	elif [ -f grub.cfg ]; then \
+		cp grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
 	else \
-		echo "[!] grub-mkrescue not found, skipping ISO creation"; \
+		echo "[!] No grub.cfg found (expected boot/grub/grub.cfg or ./grub.cfg)"; exit 1; \
 	fi
+	@echo "[*] Creating ISO with GRUB..."
+	$(GRUB_MKRESCUE) -o $(ISO_OUT) $(ISO_DIR) 2>/dev/null || \
+	$(GRUB_MKRESCUE) --compress=xz -o $(ISO_OUT) $(ISO_DIR)
+	@echo "[+] Built ISO: $(ISO_OUT)"
 
-# Run in QEMU
+# ===== Run / Debug =====
 run: iso
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
-		qemu-system-x86_64 -m 64M -boot d -cdrom rodnix.iso -serial stdio -no-reboot -no-shutdown; \
+		echo "[*] Running QEMU $(QEMU_ACCEL)"; \
+		qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
+		qemu-system-x86_64 $(QEMU_FLAGS); \
 	else \
-		echo "[!] qemu-system-x86_64 not found"; \
+		echo "[!] qemu-system-x86_64 not found. macOS: brew install qemu"; exit 1; \
 	fi
 
-# Debug build
-debug: CFLAGS += -DDEBUG_LEVEL=DEBUG_LEVEL_DEBUG
-debug: all
+debug: iso
+	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
+	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
+	sleep 1
+	@if command -v $(GRUB_FILE) >/dev/null 2>&1 && $(GRUB_FILE) --is-x86-multiboot2 $(KERNEL_BIN); then \
+		echo "[OK] Multiboot2 header detected."; \
+	else \
+		echo "[WARN] Can't verify MB2 header (no grub-file or check failed)"; \
+	fi
+	@echo "[*] Connect debugger at :1234 (gdb/lldb)"
 
-# Help
+# ===== Check & Clean =====
+check: $(KERNEL_BIN)
+	@{ \
+	  if command -v $(GRUB_FILE) >/dev/null 2>&1; then \
+	    if $(GRUB_FILE) --is-x86-multiboot2 $(KERNEL_BIN); then \
+	      echo "[OK] Multiboot2 header detected."; \
+	    else \
+	      echo "[FAIL] NO Multiboot2 header in $(KERNEL_BIN)"; exit 1; \
+	    fi; \
+	  else \
+	    echo "[WARN] $(GRUB_FILE) not found; skip MB2 check."; \
+	  fi; \
+	}
+
+clean:
+	rm -rf $(BUILD_DIR)/ $(ISO_OUT) $(ISO_DIR)/
+	@echo "[+] Cleaned build artifacts"
+
+# Check dependencies
+check-deps:
+	@bash scripts/check-deps.sh
+
 help:
-	@echo "RodNIX Build System"
+	@echo "RodNIX Build System (64-bit)"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all     - Build kernel (default)"
-	@echo "  clean   - Remove build artifacts"
-	@echo "  iso     - Create bootable ISO"
-	@echo "  run     - Run kernel in QEMU"
-	@echo "  debug   - Build with debug symbols"
-	@echo "  help    - Show this help"
-
+	@echo "  all         - Build kernel (default)"
+	@echo "  clean       - Remove build artifacts"
+	@echo "  iso         - Create bootable ISO with GRUB"
+	@echo "  run         - Run kernel in QEMU"
+	@echo "  debug       - Run with debugger support"
+	@echo "  check       - Verify Multiboot2 header"
+	@echo "  check-deps  - Check if all dependencies are installed"
+	@echo "  help        - Show this help"
+	@echo ""
+	@echo "For installation instructions, see INSTALL.md"
