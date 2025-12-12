@@ -76,23 +76,6 @@ Detailed design notes:
 - `mtools`
 - `grub-mkrescue`
 
-### macOS (Homebrew)
-
-```bash
-brew install x86_64-elf-gcc x86_64-elf-binutils nasm qemu xorriso mtools
-Note: grub-mkrescue on macOS may require additional setup.
-Building on Linux is currently the most reliable option.
-
-### Ubuntu / Debian
-```bash
-sudo apt update
-sudo apt install -y \
-  build-essential \
-  nasm \
-  qemu-system-x86 \
-  xorriso \
-  mtools \
-  grub-pc-bin
 
 
 ### Keyboard and shell
@@ -108,3 +91,69 @@ Simple interactive shell
 Line-based input with basic editing
 
 The keyboard logic is currently low-level and architecture-specific by design.
+
+### Roadmap
+Short-term
+
+Complete x86_64 long mode transition
+
+Stable paging with higher-half kernel mapping
+
+Cleanup of interrupt and timer subsystems
+
+Improved shell commands
+
+Mid-term
+
+Driver isolation and abstraction layer
+
+Basic VFS and RAM-backed filesystem
+
+Userspace boundary definition
+
+Syscall interface draft
+
+Long-term
+
+SMP support
+
+APIC support
+
+ELF userspace loader
+
+Security hardening and capability model
+
+Security notice
+
+RodNIX is experimental kernel code.
+
+Do NOT run on production systems
+
+Do NOT test on machines with sensitive data
+
+Expect crashes, hangs, and undefined behavior
+
+Security issues can be reported via SECURITY.md.
+
+Contributing
+
+Contributions are welcome.
+
+Guidelines:
+
+Keep changes focused and well-documented
+
+Prefer clarity over cleverness
+
+Avoid introducing unnecessary abstractions
+
+Large changes should be discussed before implementation
+
+Final design decisions remain with the project maintainer.
+
+License
+
+See LICENSE for open-source terms.
+
+Commercial or enterprise usage may require a separate agreement.
+See ENTERPRISE_LICENSE.md for details.
