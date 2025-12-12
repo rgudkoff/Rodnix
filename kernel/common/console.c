@@ -32,31 +32,87 @@ void console_clear(void)
     vga_col = 0;
 }
 
+/**
+ * @function scroll_screen
+ * @brief Scroll the screen up by one line (XNU-style)
+ * 
+ * This function scrolls the entire screen content up by one line,
+ * clearing the bottom line. This is used when the screen is full.
+ * 
+ * XNU-style: Efficient scrolling using word-sized operations.
+ */
+static void scroll_screen(void)
+{
+    /* XNU-style: Copy entire screen buffer up by one line using word operations */
+    /* This is more efficient than byte-by-byte copying */
+    uint16_t* src = vga_buffer + VGA_WIDTH;  /* Start from line 1 */
+    uint16_t* dst = vga_buffer;              /* Copy to line 0 */
+    uint32_t words_to_copy = (VGA_HEIGHT - 1) * VGA_WIDTH;
+    
+    /* Copy all lines up by one */
+    for (uint32_t i = 0; i < words_to_copy; i++) {
+        dst[i] = src[i];
+    }
+    
+    /* Clear the last line */
+    uint16_t clear_char = (uint16_t)' ' | ((uint16_t)vga_color << 8);
+    uint16_t* last_line = vga_buffer + (VGA_HEIGHT - 1) * VGA_WIDTH;
+    for (uint8_t col = 0; col < VGA_WIDTH; col++) {
+        last_line[col] = clear_char;
+    }
+}
+
 void kputc(char c)
 {
+    /* Handle newline */
     if (c == '\n') {
         vga_col = 0;
         vga_row++;
         if (vga_row >= VGA_HEIGHT) {
-            vga_row = 0;
+            /* XNU-style: Scroll screen when reaching bottom */
+            scroll_screen();
+            vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
         return;
     }
     
+    /* Handle carriage return */
     if (c == '\r') {
         vga_col = 0;
         return;
     }
     
+    /* Handle tab (XNU-style: expand to spaces) */
+    if (c == '\t') {
+        do {
+            uint32_t index = vga_row * VGA_WIDTH + vga_col;
+            vga_buffer[index] = (uint16_t)' ' | ((uint16_t)vga_color << 8);
+            vga_col++;
+            if (vga_col >= VGA_WIDTH) {
+                vga_col = 0;
+                vga_row++;
+                if (vga_row >= VGA_HEIGHT) {
+                    scroll_screen();
+                    vga_row = VGA_HEIGHT - 1;
+                }
+            }
+        } while (vga_col % 8 != 0);  /* Tab stops every 8 columns */
+        return;
+    }
+    
+    /* Write character to screen */
     uint32_t index = vga_row * VGA_WIDTH + vga_col;
     vga_buffer[index] = (uint16_t)c | ((uint16_t)vga_color << 8);
     
+    /* Advance cursor */
     vga_col++;
     if (vga_col >= VGA_WIDTH) {
         vga_col = 0;
         vga_row++;
         if (vga_row >= VGA_HEIGHT) {
-            vga_row = 0;
+            /* XNU-style: Scroll screen when reaching bottom */
+            scroll_screen();
+            vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
     }
 }
@@ -122,10 +178,30 @@ void kvprintf(const char* fmt, va_list args)
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;
+            
+            /* Handle length modifiers (ll, l, h, hh) */
+            int is_long = 0;
+            if (*fmt == 'l') {
+                fmt++;
+                if (*fmt == 'l') {
+                    is_long = 2; /* ll */
+                    fmt++;
+                } else {
+                    is_long = 1; /* l */
+                }
+            }
+            
             switch (*fmt) {
                 case 'd':
                 case 'i': {
-                    int64_t val = va_arg(args, int64_t);
+                    int64_t val;
+                    if (is_long == 2) {
+                        val = (int64_t)va_arg(args, int64_t);
+                    } else if (is_long == 1) {
+                        val = (int64_t)va_arg(args, long);
+                    } else {
+                        val = (int64_t)va_arg(args, int);
+                    }
                     if (val < 0) {
                         kputc('-');
                         val = -val;
@@ -134,13 +210,27 @@ void kvprintf(const char* fmt, va_list args)
                     break;
                 }
                 case 'u': {
-                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_t val;
+                    if (is_long == 2) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long == 1) {
+                        val = (uint64_t)va_arg(args, unsigned long);
+                    } else {
+                        val = (uint64_t)va_arg(args, unsigned int);
+                    }
                     kprint_uint(val, 10);
                     break;
                 }
                 case 'x':
                 case 'X': {
-                    uint64_t val = va_arg(args, uint64_t);
+                    uint64_t val;
+                    if (is_long == 2) {
+                        val = va_arg(args, uint64_t);
+                    } else if (is_long == 1) {
+                        val = (uint64_t)va_arg(args, unsigned long);
+                    } else {
+                        val = (uint64_t)va_arg(args, unsigned int);
+                    }
                     kprint_hex(val);
                     break;
                 }
@@ -160,6 +250,12 @@ void kvprintf(const char* fmt, va_list args)
                 }
                 default:
                     kputc('%');
+                    if (is_long == 2) {
+                        kputc('l');
+                        kputc('l');
+                    } else if (is_long == 1) {
+                        kputc('l');
+                    }
                     kputc(*fmt);
                     break;
             }

@@ -187,16 +187,9 @@ irq_common_stub:
     mov fs, ax
     mov gs, ax
     
-    ; Call C handler
+    ; Call C handler (EOI is sent in irq_handler)
     mov rdi, rsp    ; Pass pointer to registers
     call irq_handler
-    
-    ; Send EOI to PIC
-    mov al, 0x20
-    out 0x20, al    ; Master PIC
-    cmp byte [rsp + 16 * 8], 40  ; Check if IRQ >= 8
-    jl irq_done
-    out 0xA0, al    ; Slave PIC
     
 irq_done:
     ; Restore segment registers

@@ -46,6 +46,7 @@ KERNEL_C_SRCS = \
 	kernel/arch/x86_64/interrupts_stub.c \
 	kernel/arch/x86_64/idt.c \
 	kernel/arch/x86_64/pic.c \
+	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
 	kernel/arch/x86_64/pmm.c \

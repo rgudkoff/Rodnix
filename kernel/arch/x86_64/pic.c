@@ -72,6 +72,7 @@ void pic_init(void)
     uint8_t a1, a2;
     __asm__ volatile ("inb %1, %0" : "=a"(a1) : "Nd"(PIC1_DATA));
     __asm__ volatile ("inb %1, %0" : "=a"(a2) : "Nd"(PIC2_DATA));
+    __asm__ volatile ("" ::: "memory");
     
     /* ICW1: Start initialization sequence
      * Bit 4 = 1: ICW1 command
@@ -79,32 +80,42 @@ void pic_init(void)
      * Other bits: Edge triggered, cascade mode
      */
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_ICW1_INIT), "Nd"(PIC1_COMMAND));
+    __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_ICW1_INIT), "Nd"(PIC2_COMMAND));
+    __asm__ volatile ("" ::: "memory");
     
     /* ICW2: Set interrupt vector offsets
      * Master PIC: IRQ 0-7 -> interrupt vectors 0x20-0x27
      * Slave PIC: IRQ 8-15 -> interrupt vectors 0x28-0x2F
      */
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_IRQ_BASE_MASTER), "Nd"(PIC1_DATA));
+    __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_IRQ_BASE_SLAVE), "Nd"(PIC2_DATA));
+    __asm__ volatile ("" ::: "memory");
     
     /* ICW3: Master/slave configuration
      * Master PIC: Bit 2 = 1 (slave connected to IRQ 2)
      * Slave PIC: Value = 2 (cascade identity - connected to master's IRQ 2)
      */
     __asm__ volatile ("outb %%al, %1" : : "a"(1 << PIC_CASCADE_IRQ), "Nd"(PIC1_DATA));
+    __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_CASCADE_IRQ), "Nd"(PIC2_DATA));
+    __asm__ volatile ("" ::: "memory");
     
     /* ICW4: Additional configuration
      * Bit 0 = 1: 8086/8088 mode (not 8080/8085)
      * Other bits: Normal end of interrupt, not buffered, not special fully nested
      */
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_ICW4_8086_MODE), "Nd"(PIC1_DATA));
+    __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("outb %%al, %1" : : "a"(PIC_ICW4_8086_MODE), "Nd"(PIC2_DATA));
+    __asm__ volatile ("" ::: "memory");
     
     /* Restore saved interrupt masks */
     __asm__ volatile ("outb %%al, %1" : : "a"(a1), "Nd"(PIC1_DATA));
+    __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("outb %%al, %1" : : "a"(a2), "Nd"(PIC2_DATA));
+    __asm__ volatile ("" ::: "memory");
 }
 
 /**
@@ -138,22 +149,74 @@ void pic_disable(void)
     __asm__ volatile ("outb %%al, %1" : : "a"(0xFF), "Nd"(PIC2_DATA));
 }
 
-/* Enable specific IRQ */
+/* Enable specific IRQ (XNU-style: use direct port constants) */
 void pic_enable_irq(uint8_t irq)
 {
-    uint16_t port;
-    uint8_t value;
+    extern void kputs(const char* str);
+    extern void kprint_hex(uint64_t value);
     
+    kputs("[PIC-EN-1] Entry IRQ=");
+    kprint_hex(irq);
+    kputs("\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    uint8_t value;
+    uint8_t bit = irq;
+    
+    kputs("[PIC-EN-2] Select port\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* XNU-style: Use direct port constants instead of variables */
+    /* In x86_64, outb requires port to be constant or in dx register */
     if (irq < 8) {
-        port = PIC1_DATA;
+        kputs("[PIC-EN-3] Master PIC\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Master PIC - use constant port directly */
+        kputs("[PIC-EN-4] Read mask (PIC1)\n");
+        __asm__ volatile ("" ::: "memory");
+        __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(PIC1_DATA));
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-5] Clear bit (PIC1)\n");
+        __asm__ volatile ("" ::: "memory");
+        value &= ~(1 << bit);
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6] Write mask (PIC1)\n");
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6.1] Before outb\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Use simple outb with constant port (same as pic_init) */
+        __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(PIC1_DATA));
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6.2] After outb\n");
+        __asm__ volatile ("" ::: "memory");
     } else {
-        port = PIC2_DATA;
-        irq -= 8;
+        kputs("[PIC-EN-3] Slave PIC\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Slave PIC - use constant port directly */
+        bit = irq - 8;
+        kputs("[PIC-EN-4] Read mask (PIC2)\n");
+        __asm__ volatile ("" ::: "memory");
+        __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(PIC2_DATA));
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-5] Clear bit (PIC2)\n");
+        __asm__ volatile ("" ::: "memory");
+        value &= ~(1 << bit);
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6] Write mask (PIC2)\n");
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6.1] Before outb\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Use simple outb with constant port (same as pic_init) */
+        __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(PIC2_DATA));
+        __asm__ volatile ("" ::: "memory");
+        kputs("[PIC-EN-6.2] After outb\n");
+        __asm__ volatile ("" ::: "memory");
     }
     
-    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
-    value &= ~(1 << irq);
-    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
+    kputs("[PIC-EN-OK] Done IRQ=");
+    kprint_hex(irq);
+    kputs("\n");
+    __asm__ volatile ("" ::: "memory");
 }
 
 /* Disable specific IRQ */

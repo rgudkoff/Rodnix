@@ -13,6 +13,7 @@
 #include "types.h"
 #include "idt.h"
 #include "pic.h"
+#include "apic.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -48,7 +49,7 @@ struct registers {
 interrupt_handler_t interrupt_handlers[256];
 
 /* Current Interrupt Request Level (IRQL) */
-static irql_t current_irql = IRQL_PASSIVE;
+volatile irql_t current_irql = IRQL_PASSIVE;
 
 /* ============================================================================
  * External References
@@ -136,24 +137,67 @@ void irq_handler(struct registers* regs);
  */
 int interrupts_init(void)
 {
+    extern void kputs(const char* str);
+    
+    kputs("[INT-1] Clear handlers\n");
+    __asm__ volatile ("" ::: "memory");
     /* Clear all interrupt handler registrations */
     for (int i = 0; i < 256; i++) {
         interrupt_handlers[i] = NULL;
     }
+    __asm__ volatile ("" ::: "memory");
     
+    kputs("[INT-2] Set IRQL\n");
+    __asm__ volatile ("" ::: "memory");
     /* Set initial IRQL to PASSIVE (lowest level, interrupts allowed) */
     current_irql = IRQL_PASSIVE;
+    __asm__ volatile ("" ::: "memory");
     
-    /* Initialize PIC: remap IRQs to vectors 32-47 */
+    kputs("[INT-3] Try APIC\n");
+    __asm__ volatile ("" ::: "memory");
+    /* XNU-style: Try APIC first, fallback to PIC */
+    bool use_apic = false;
+    if (apic_init() == 0 && apic_is_available()) {
+        use_apic = true;
+        kputs("[INT-3.1] APIC available\n");
+        __asm__ volatile ("" ::: "memory");
+    } else {
+        kputs("[INT-3.2] APIC not available, use PIC\n");
+        __asm__ volatile ("" ::: "memory");
+    }
+    
+    kputs("[INT-4] Init PIC (early, will disable if APIC works)\n");
+    __asm__ volatile ("" ::: "memory");
+    /* Initialize PIC early (required for boot) */
     pic_init();
+    __asm__ volatile ("" ::: "memory");
     
-    /* Mask all IRQs initially (XNU-style: enable only what we need) */
+    kputs("[INT-5] Mask all PIC IRQ\n");
+    __asm__ volatile ("" ::: "memory");
+    /* Mask all PIC IRQs initially */
     pic_disable();
+    __asm__ volatile ("" ::: "memory");
     
+    /* If APIC is available, disable PIC completely */
+    if (use_apic) {
+        kputs("[INT-5.1] Disable PIC (using APIC)\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Disable PIC completely - mask all IRQs and disable cascade */
+        /* This prevents PIC from interfering with APIC */
+        pic_disable();
+        __asm__ volatile ("" ::: "memory");
+    }
+    
+    kputs("[INT-6] Init IDT\n");
+    __asm__ volatile ("" ::: "memory");
     /* Initialize IDT: set up exception and IRQ handlers */
     if (idt_init() != 0) {
         return -1;
     }
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INT-OK] Done\n");
+    __asm__ volatile ("" ::: "memory");
     
     /* TODO: Initialize APIC (Advanced Programmable Interrupt Controller)
      *       if available. APIC is preferred on modern systems but PIC
@@ -184,14 +228,42 @@ int interrupt_unregister(uint32_t vector)
     return 0;
 }
 
+/**
+ * @function interrupts_enable
+ * @brief Enable interrupts (XNU-style)
+ * 
+ * In XNU, interrupts are enabled by setting IRQL to PASSIVE level.
+ * This function sets IRQL to PASSIVE and enables interrupts via STI.
+ * 
+ * @note XNU-style: Use IRQL-based interrupt control
+ */
 void interrupts_enable(void)
 {
+    /* XNU-style: Set IRQL to PASSIVE and enable interrupts */
+    /* Use volatile to prevent optimization issues */
+    volatile irql_t* irql_ptr = &current_irql;
+    *irql_ptr = IRQL_PASSIVE;
+    
+    /* Enable interrupts - execute sti directly without barriers */
     __asm__ volatile ("sti");
 }
 
+/**
+ * @function interrupts_disable
+ * @brief Disable interrupts (XNU-style)
+ * 
+ * In XNU, interrupts are disabled by setting IRQL to HIGH level.
+ * This function disables interrupts via CLI and sets IRQL to HIGH.
+ * 
+ * @note XNU-style: Use IRQL-based interrupt control
+ */
 void interrupts_disable(void)
 {
+    /* XNU-style: Disable interrupts and set IRQL to HIGH */
     __asm__ volatile ("cli");
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    current_irql = IRQL_HIGH;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
 }
 
 irql_t get_current_irql(void)
@@ -199,16 +271,33 @@ irql_t get_current_irql(void)
     return current_irql;
 }
 
+/**
+ * @function set_irql
+ * @brief Set interrupt request level (XNU-style)
+ * 
+ * This function sets the IRQL and enables/disables interrupts accordingly.
+ * In XNU, this is similar to splx() function.
+ * 
+ * @param new_level New IRQL level
+ * @return Previous IRQL level
+ * 
+ * @note XNU-style: IRQL-based interrupt control
+ */
 irql_t set_irql(irql_t new_level)
 {
     irql_t old_level = current_irql;
-    current_irql = new_level;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     
-    /* Если переходим на более высокий уровень, отключаем прерывания */
-    if (new_level > IRQL_PASSIVE) {
-        interrupts_disable();
+    current_irql = new_level;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    
+    /* XNU-style: Enable interrupts only at PASSIVE level */
+    if (new_level == IRQL_PASSIVE) {
+        __asm__ volatile ("sti");
+        __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     } else {
-        interrupts_enable();
+        __asm__ volatile ("cli");
+        __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     }
     
     return old_level;

@@ -344,8 +344,15 @@ int keyboard_init(void)
         return -1;
     }
     
-    /* Enable IRQ 1 (keyboard) in PIC */
-    pic_enable_irq(KEYBOARD_IRQ);
+    /* Enable IRQ 1 (keyboard) - use APIC if available, otherwise PIC */
+    extern bool apic_is_available(void);
+    extern void apic_enable_irq(uint8_t irq);
+    extern void pic_enable_irq(uint8_t irq);
+    if (apic_is_available()) {
+        apic_enable_irq(KEYBOARD_IRQ);
+    } else {
+        pic_enable_irq(KEYBOARD_IRQ);
+    }
     
     return 0;
 }

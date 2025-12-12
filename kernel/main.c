@@ -120,12 +120,31 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 4: Initialize timer (PIT) */
-    kputs("[INIT-4] Timer (PIT)\n");
+    /* Step 4: Initialize timer (LAPIC timer if available, otherwise PIT) */
+    kputs("[INIT-4] Timer\n");
     __asm__ volatile ("" ::: "memory");
+    extern bool apic_is_available(void);
+    extern int apic_timer_init(uint32_t frequency);
     extern int pit_init(uint32_t frequency);
-    if (pit_init(100) != 0) {
-        panic("PIT init failed");
+    
+    bool use_apic_timer = false;
+    if (apic_is_available()) {
+        kputs("[INIT-4.1] Use LAPIC timer\n");
+        __asm__ volatile ("" ::: "memory");
+        if (apic_timer_init(100) == 0) {
+            use_apic_timer = true;
+        } else {
+            kputs("[INIT-4.1.1] LAPIC timer failed, fallback to PIT\n");
+            __asm__ volatile ("" ::: "memory");
+        }
+    }
+    
+    if (!use_apic_timer) {
+        kputs("[INIT-4.2] Use PIT\n");
+        __asm__ volatile ("" ::: "memory");
+        if (pit_init(100) != 0) {
+            panic("Timer init failed");
+        }
     }
     __asm__ volatile ("" ::: "memory");
     
@@ -170,11 +189,58 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 10: Enable interrupts */
+    /* Step 10: Enable interrupts (XNU-style: set IRQL to PASSIVE) */
     kputs("[INIT-10] Enable interrupts\n");
     __asm__ volatile ("" ::: "memory");
-    extern void interrupts_enable(void);
-    interrupts_enable();
+    
+    /* Temporarily disable timer to avoid immediate interrupt on sti */
+    kputs("[INIT-10.1] Disable timer\n");
+    __asm__ volatile ("" ::: "memory");
+    extern bool apic_is_available(void);
+    extern void apic_timer_stop(void);
+    extern void pit_disable(void);
+    if (apic_is_available()) {
+        apic_timer_stop();
+    } else {
+        pit_disable();
+    }
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Set IRQL to PASSIVE */
+    kputs("[INIT-10.2] Set IRQL\n");
+    __asm__ volatile ("" ::: "memory");
+    extern volatile irql_t current_irql;
+    current_irql = IRQL_PASSIVE;
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Enable interrupts */
+    kputs("[INIT-10.3] Execute sti\n");
+    __asm__ volatile ("" ::: "memory");
+    __asm__ volatile ("sti");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Re-enable timer after interrupts are enabled */
+    kputs("[INIT-10.4] Enable timer\n");
+    __asm__ volatile ("" ::: "memory");
+    extern bool apic_is_available(void);
+    extern void apic_timer_start(void);
+    extern void pit_enable(void);
+    if (apic_is_available()) {
+        apic_timer_start();
+    } else {
+        pit_enable();
+    }
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Small delay to allow any pending interrupts to be processed */
+    kputs("[INIT-10.5] Delay after PIT enable\n");
+    __asm__ volatile ("" ::: "memory");
+    for (volatile int i = 0; i < 10000; i++) {
+        __asm__ volatile ("pause");
+    }
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-10-OK] Interrupts enabled\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Step 11: Initialize shell */

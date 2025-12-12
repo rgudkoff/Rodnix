@@ -176,27 +176,74 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     kputs("[PMM-4] Calculate pages\n");
     __asm__ volatile ("" ::: "memory");
     /* Calculate number of pages */
+    kputs("[PMM-4.1] Calc total_bytes\n");
+    __asm__ volatile ("" ::: "memory");
     uint64_t total_bytes = memory_end - memory_start;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-4.2] Calc total_pages\n");
+    __asm__ volatile ("" ::: "memory");
     uint64_t total_pages = total_bytes / PAGE_SIZE;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-4.3] Pages calculated\n");
     __asm__ volatile ("" ::: "memory");
     
     kputs("[PMM-5] Calculate bitmap size\n");
     __asm__ volatile ("" ::: "memory");
     /* Calculate bitmap size (1 bit per page) */
+    kputs("[PMM-5.1] Calc bitmap_size\n");
+    __asm__ volatile ("" ::: "memory");
     uint64_t bitmap_size = (total_pages + BITS_PER_BYTE - 1) / BITS_PER_BYTE;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-5.2] Align bitmap_size\n");
+    __asm__ volatile ("" ::: "memory");
     bitmap_size = (bitmap_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); /* Align to page */
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-5.3] Bitmap size calculated\n");
     __asm__ volatile ("" ::: "memory");
     
     kputs("[PMM-6] Init state\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize state */
+    kputs("[PMM-6.1] Set total_pages\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.total_pages = total_pages;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.2] Set free_pages\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.free_pages = total_pages;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.3] Set used_pages\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.used_pages = 0;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.4] Set bitmap\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.bitmap = (uint32_t*)bitmap_virt;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.5] Set bitmap_size\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.bitmap_size = bitmap_size;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.6] Set memory_start\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.memory_start = memory_start;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.7] Set memory_end\n");
+    __asm__ volatile ("" ::: "memory");
     pmm_state.memory_end = memory_end;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[PMM-6.8] State initialized\n");
     __asm__ volatile ("" ::: "memory");
     
     kputs("[PMM-7] Clear bitmap\n");

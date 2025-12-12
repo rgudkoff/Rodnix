@@ -75,8 +75,9 @@ struct timer_callback {
 
 /* Timer callback list */
 static struct timer_callback* timer_callbacks = NULL;
-static uint32_t timer_ticks = 0;     /* System tick counter */
+static volatile uint32_t timer_ticks = 0;     /* System tick counter (volatile for interrupt handler) */
 static uint32_t timer_frequency = PIT_DEFAULT_FREQUENCY; /* Current frequency */
+static volatile bool timer_handler_active = false; /* Protection against recursive calls */
 
 /* ============================================================================
  * Internal Helper Functions
@@ -132,19 +133,11 @@ static void pit_timer_handler(interrupt_context_t* ctx)
 {
     (void)ctx; /* Context not used for timer */
     
-    /* Increment system tick counter */
+    /* Minimal handler - just increment counter (XNU-style: fast interrupt handler) */
+    /* No protection, no callbacks - just increment counter */
     timer_ticks++;
     
-    /* Call all registered callbacks */
-    struct timer_callback* cb = timer_callbacks;
-    while (cb) {
-        if (cb->active && cb->handler) {
-            cb->handler(cb->arg);
-        }
-        cb = cb->next;
-    }
-    
-    /* TODO: Integrate with scheduler for preemption */
+    /* Handler returns - EOI is sent by interrupt_dispatch in isr_handlers.c */
 }
 
 /* ============================================================================
@@ -182,8 +175,8 @@ int pit_init(uint32_t frequency)
         return -1;
     }
     
-    /* Enable IRQ 0 (timer) in PIC */
-    pic_enable_irq(0);
+    /* NOTE: IRQ 0 is enabled later via pit_enable() */
+    /* Don't enable here to avoid double enable */
     
     return 0;
 }
@@ -362,6 +355,25 @@ void pit_disable(void)
  */
 void pit_enable(void)
 {
-    pic_enable_irq(0);
+    extern void kputs(const char* str);
+    
+    kputs("[PIT-EN-1] Entry\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Only enable PIT IRQ if APIC is not available */
+    extern bool apic_is_available(void);
+    if (!apic_is_available()) {
+        kputs("[PIT-EN-2] Call pic_enable_irq\n");
+        __asm__ volatile ("" ::: "memory");
+        extern void pic_enable_irq(uint8_t irq);
+        pic_enable_irq(0);
+        __asm__ volatile ("" ::: "memory");
+    } else {
+        kputs("[PIT-EN-2] APIC in use, skip PIC\n");
+        __asm__ volatile ("" ::: "memory");
+    }
+    
+    kputs("[PIT-EN-3] Done\n");
+    __asm__ volatile ("" ::: "memory");
 }
 
