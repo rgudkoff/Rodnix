@@ -17,12 +17,15 @@
  * Информация о загрузке
  * ============================================================================ */
 
+/* Boot command line length (XNU-style) */
+#define BOOT_LINE_LENGTH 1024
+
 typedef struct {
     uint32_t magic;            /* Магическое число загрузчика */
     void* boot_info;           /* Информация от загрузчика */
     uint64_t mem_lower;        /* Нижняя граница памяти */
     uint64_t mem_upper;        /* Верхняя граница памяти */
-    void* cmdline;             /* Командная строка */
+    char cmdline[BOOT_LINE_LENGTH];  /* Command line (XNU-style: fixed buffer) */
     uint32_t flags;           /* Флаги загрузки */
 } boot_info_t;
 

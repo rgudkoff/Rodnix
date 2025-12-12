@@ -1,0 +1,449 @@
+/**
+ * @file keyboard.c
+ * @brief PS/2 Keyboard driver implementation for x86_64
+ * 
+ * This module implements PS/2 keyboard support following XNU-style I/O Kit
+ * principles:
+ * - Event-driven input system
+ * - Scan code translation (set 1 to ASCII)
+ * - Input buffer management
+ * - Key state tracking
+ * 
+ * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ */
+
+#include "types.h"
+#include "pic.h"
+#include "../../core/interrupts.h"
+#include "../../include/console.h"
+#include "../../include/debug.h"
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+/* Forward declaration */
+extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+
+/* ============================================================================
+ * PS/2 Keyboard I/O Ports
+ * ============================================================================ */
+
+#define KEYBOARD_DATA_PORT    0x60    /* Keyboard data port */
+#define KEYBOARD_STATUS_PORT  0x64    /* Keyboard status/command port */
+
+/* Keyboard status register bits */
+#define KEYBOARD_STATUS_OUTPUT_FULL  0x01    /* Output buffer full (data available) */
+#define KEYBOARD_STATUS_INPUT_FULL   0x02    /* Input buffer full (don't write) */
+#define KEYBOARD_STATUS_SYSTEM_FLAG  0x04    /* System flag */
+#define KEYBOARD_STATUS_CMD_DATA    0x08    /* Command/data (0=data, 1=command) */
+#define KEYBOARD_STATUS_TIMEOUT     0x40    /* Timeout error */
+#define KEYBOARD_STATUS_PARITY      0x80    /* Parity error */
+
+/* ============================================================================
+ * Keyboard Constants
+ * ============================================================================ */
+
+#define KEYBOARD_BUFFER_SIZE  256    /* Input buffer size */
+#define KEYBOARD_IRQ          1      /* Keyboard IRQ number */
+#define KEYBOARD_VECTOR       33     /* Keyboard interrupt vector (32 + 1) */
+
+/* Special key codes */
+#define KEY_ESC           0x01
+#define KEY_BACKSPACE     0x08
+#define KEY_TAB           0x09
+#define KEY_ENTER         0x0D
+#define KEY_CTRL          0x11
+#define KEY_LSHIFT        0x2A
+#define KEY_RSHIFT        0x36
+#define KEY_ALT           0x38
+#define KEY_CAPSLOCK      0x3A
+#define KEY_F1            0x3B
+#define KEY_F2            0x3C
+#define KEY_F3            0x3D
+#define KEY_F4            0x3E
+#define KEY_F5            0x3F
+#define KEY_F6            0x40
+#define KEY_F7            0x41
+#define KEY_F8            0x42
+#define KEY_F9            0x43
+#define KEY_F10           0x44
+#define KEY_F11           0x57
+#define KEY_F12           0x58
+#define KEY_UP            0x48
+#define KEY_DOWN          0x50
+#define KEY_LEFT          0x4B
+#define KEY_RIGHT         0x4D
+#define KEY_INSERT        0x52
+#define KEY_DELETE        0x53
+#define KEY_HOME          0x47
+#define KEY_END           0x4F
+#define KEY_PAGEUP        0x49
+#define KEY_PAGEDOWN      0x51
+
+/* ============================================================================
+ * Keyboard State
+ * ============================================================================ */
+
+/**
+ * @struct keyboard_state
+ * @brief Keyboard internal state
+ */
+struct keyboard_state {
+    uint8_t buffer[KEYBOARD_BUFFER_SIZE];  /* Input buffer */
+    uint32_t buffer_head;                   /* Buffer head index */
+    uint32_t buffer_tail;                   /* Buffer tail index */
+    uint32_t buffer_count;                  /* Number of characters in buffer */
+    bool shift_pressed;                     /* Shift key state */
+    bool ctrl_pressed;                      /* Ctrl key state */
+    bool alt_pressed;                       /* Alt key state */
+    bool caps_lock;                         /* Caps Lock state */
+    bool num_lock;                          /* Num Lock state */
+    bool scroll_lock;                       /* Scroll Lock state */
+    bool extended;                          /* Extended scan code flag */
+};
+
+/* Global keyboard state */
+static struct keyboard_state kb_state = {0};
+
+/* ============================================================================
+ * Scan Code Translation Tables
+ * ============================================================================ */
+
+/* Normal (non-shifted) key map */
+static const char scan_code_normal[128] = {
+    0,   0,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 0,   0,
+    'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', 0,   0,   'a', 's',
+    'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\'', '`', 0,   '\\', 'z', 'x', 'c', 'v',
+    'b', 'n', 'm', ',', '.', '/', 0,   '*', 0,   ' ', 0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   '-', 0,   0,   0,   '+', 0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
+};
+
+/* Shifted key map */
+static const char scan_code_shift[128] = {
+    0,   0,   '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', 0,   0,
+    'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '{', '}', 0,   0,   'A', 'S',
+    'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0,   '|', 'Z', 'X', 'C', 'V',
+    'B', 'N', 'M', '<', '>', '?', 0,   '*', 0,   ' ', 0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   '-', 0,   0,   0,   '+', 0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+    0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0
+};
+
+/* ============================================================================
+ * Internal Helper Functions
+ * ============================================================================ */
+
+/**
+ * @function keyboard_buffer_put
+ * @brief Put a character into the input buffer
+ * 
+ * @param c Character to add
+ * 
+ * @return 0 on success, -1 if buffer is full
+ */
+static int keyboard_buffer_put(uint8_t c)
+{
+    if (kb_state.buffer_count >= KEYBOARD_BUFFER_SIZE) {
+        return -1; /* Buffer full */
+    }
+    
+    kb_state.buffer[kb_state.buffer_tail] = c;
+    kb_state.buffer_tail = (kb_state.buffer_tail + 1) % KEYBOARD_BUFFER_SIZE;
+    kb_state.buffer_count++;
+    
+    return 0;
+}
+
+/**
+ * @function keyboard_buffer_get
+ * @brief Get a character from the input buffer
+ * 
+ * @return Character, or 0 if buffer is empty
+ */
+static uint8_t keyboard_buffer_get(void)
+{
+    if (kb_state.buffer_count == 0) {
+        return 0; /* Buffer empty */
+    }
+    
+    uint8_t c = kb_state.buffer[kb_state.buffer_head];
+    kb_state.buffer_head = (kb_state.buffer_head + 1) % KEYBOARD_BUFFER_SIZE;
+    kb_state.buffer_count--;
+    
+    return c;
+}
+
+/**
+ * @function keyboard_translate_scan_code
+ * @brief Translate scan code to ASCII character
+ * 
+ * @param scan_code Raw scan code from keyboard
+ * @param is_release Whether this is a key release (0x80 bit set)
+ * 
+ * @return ASCII character, or 0 if not a printable character
+ */
+static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
+{
+    /* Handle key release */
+    if (is_release) {
+        uint8_t key_code = scan_code & 0x7F;
+        
+        /* Update modifier key states */
+        switch (key_code) {
+            case KEY_LSHIFT:
+            case KEY_RSHIFT:
+                kb_state.shift_pressed = false;
+                break;
+            case KEY_CTRL:
+                kb_state.ctrl_pressed = false;
+                break;
+            case KEY_ALT:
+                kb_state.alt_pressed = false;
+                break;
+        }
+        
+        return 0; /* No character on release */
+    }
+    
+    /* Handle special keys */
+    switch (scan_code) {
+        case KEY_LSHIFT:
+        case KEY_RSHIFT:
+            kb_state.shift_pressed = true;
+            return 0;
+            
+        case KEY_CTRL:
+            kb_state.ctrl_pressed = true;
+            return 0;
+            
+        case KEY_ALT:
+            kb_state.alt_pressed = true;
+            return 0;
+            
+        case KEY_CAPSLOCK:
+            kb_state.caps_lock = !kb_state.caps_lock;
+            return 0;
+            
+        case KEY_ENTER:
+            return '\n';
+            
+        case KEY_BACKSPACE:
+            return '\b';
+            
+        case KEY_TAB:
+            return '\t';
+            
+        case KEY_ESC:
+            return 0x1B; /* ESC character */
+            
+        default:
+            break;
+    }
+    
+    /* Translate printable characters */
+    if (scan_code < 128) {
+        bool shift = kb_state.shift_pressed;
+        bool caps = kb_state.caps_lock;
+        
+        /* Determine which map to use */
+        const char* map = (shift || (caps && scan_code >= 'a' && scan_code <= 'z')) 
+                          ? scan_code_shift 
+                          : scan_code_normal;
+        
+        char c = map[scan_code];
+        
+        /* Handle Caps Lock for letters */
+        if (caps && c >= 'a' && c <= 'z' && !shift) {
+            c = c - 'a' + 'A';
+        } else if (caps && c >= 'A' && c <= 'Z' && shift) {
+            c = c - 'A' + 'a';
+        }
+        
+        return c;
+    }
+    
+    return 0; /* Unknown scan code */
+}
+
+/**
+ * @function keyboard_interrupt_handler
+ * @brief Keyboard interrupt handler
+ * 
+ * This function is called on each keyboard interrupt (IRQ 1). It:
+ * 1. Reads scan code from keyboard
+ * 2. Translates scan code to ASCII
+ * 3. Adds character to input buffer
+ * 
+ * @param ctx Interrupt context
+ */
+static void keyboard_interrupt_handler(interrupt_context_t* ctx)
+{
+    (void)ctx;
+    
+    /* Read scan code from keyboard */
+    uint8_t scan_code;
+    __asm__ volatile ("inb %1, %0" : "=a"(scan_code) : "Nd"(KEYBOARD_DATA_PORT));
+    
+    /* Check for extended scan code prefix */
+    if (scan_code == 0xE0) {
+        kb_state.extended = true;
+        return;
+    }
+    
+    /* Check if this is a key release */
+    bool is_release = (scan_code & 0x80) != 0;
+    
+    /* Translate scan code to character */
+    char c = keyboard_translate_scan_code(scan_code, is_release);
+    
+    /* Add to buffer if printable */
+    if (c != 0) {
+        keyboard_buffer_put((uint8_t)c);
+    }
+    
+    kb_state.extended = false;
+}
+
+/* ============================================================================
+ * Public Interface
+ * ============================================================================ */
+
+/**
+ * @function keyboard_init
+ * @brief Initialize keyboard driver
+ * 
+ * This function:
+ * 1. Registers keyboard interrupt handler (IRQ 1)
+ * 2. Enables keyboard interrupt in PIC
+ * 3. Initializes keyboard state
+ * 
+ * @return 0 on success, -1 on failure
+ * 
+ * @note This must be called after PIC and IDT are initialized.
+ */
+int keyboard_init(void)
+{
+    /* Initialize keyboard state */
+    kb_state.buffer_head = 0;
+    kb_state.buffer_tail = 0;
+    kb_state.buffer_count = 0;
+    kb_state.shift_pressed = false;
+    kb_state.ctrl_pressed = false;
+    kb_state.alt_pressed = false;
+    kb_state.caps_lock = false;
+    kb_state.num_lock = false;
+    kb_state.scroll_lock = false;
+    kb_state.extended = false;
+    
+    /* Register keyboard interrupt handler (IRQ 1 = vector 33) */
+    if (interrupt_register(KEYBOARD_VECTOR, keyboard_interrupt_handler) != 0) {
+        return -1;
+    }
+    
+    /* Enable IRQ 1 (keyboard) in PIC */
+    pic_enable_irq(KEYBOARD_IRQ);
+    
+    return 0;
+}
+
+/**
+ * @function keyboard_read_char
+ * @brief Read a character from keyboard buffer
+ * 
+ * @return Character, or 0 if no character available
+ * 
+ * @note This is a non-blocking function. Returns 0 if buffer is empty.
+ */
+char keyboard_read_char(void)
+{
+    return (char)keyboard_buffer_get();
+}
+
+/**
+ * @function keyboard_read_line
+ * @brief Read a line from keyboard (blocking)
+ * 
+ * @param buffer Buffer to store the line
+ * @param size Size of buffer
+ * 
+ * @return Number of characters read, or -1 on error
+ * 
+ * @note This function blocks until Enter is pressed.
+ * @note Backspace is handled to allow editing.
+ */
+int keyboard_read_line(char* buffer, uint32_t size)
+{
+    if (!buffer || size == 0) {
+        return -1;
+    }
+    
+    uint32_t pos = 0;
+    buffer[0] = '\0';
+    
+    while (pos < size - 1) {
+        char c = keyboard_read_char();
+        
+        if (c == 0) {
+            /* No character available, wait for interrupt */
+            __asm__ volatile ("hlt");
+            continue;
+        }
+        
+        if (c == '\n' || c == '\r') {
+            /* Enter pressed */
+            buffer[pos] = '\0';
+            kputc('\n');
+            return (int)pos;
+        }
+        
+        if (c == '\b' || c == 0x7F) {
+            /* Backspace */
+            if (pos > 0) {
+                pos--;
+                buffer[pos] = '\0';
+                kputc('\b');
+                kputc(' ');
+                kputc('\b');
+            }
+            continue;
+        }
+        
+        if (c >= 32 && c < 127) {
+            /* Printable character */
+            buffer[pos] = c;
+            pos++;
+            buffer[pos] = '\0';
+            kputc(c);
+        }
+    }
+    
+    buffer[size - 1] = '\0';
+    return (int)pos;
+}
+
+/**
+ * @function keyboard_has_input
+ * @brief Check if keyboard buffer has input
+ * 
+ * @return true if characters are available, false otherwise
+ */
+bool keyboard_has_input(void)
+{
+    return kb_state.buffer_count > 0;
+}
+
+/**
+ * @function keyboard_flush
+ * @brief Flush keyboard input buffer
+ */
+void keyboard_flush(void)
+{
+    kb_state.buffer_head = 0;
+    kb_state.buffer_tail = 0;
+    kb_state.buffer_count = 0;
+}
+

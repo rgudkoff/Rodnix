@@ -40,14 +40,24 @@ KERNEL_C_SRCS = \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \
+	kernel/common/string.c \
+	kernel/common/shell.c \
 	kernel/arch/x86_64/interrupts.c \
 	kernel/arch/x86_64/interrupts_stub.c \
+	kernel/arch/x86_64/idt.c \
+	kernel/arch/x86_64/pic.c \
+	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/pmm.c \
+	kernel/arch/x86_64/paging.c \
+	kernel/arch/x86_64/pit.c \
+	kernel/arch/x86_64/keyboard.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c
 
 KERNEL_ASM_SRCS = \
-	boot/boot.S
+	boot/boot.S \
+	kernel/arch/x86_64/isr_stubs.S
 
 KERNEL_C_OBJS   = $(KERNEL_C_SRCS:.c=.o)
 KERNEL_ASM_OBJS = $(KERNEL_ASM_SRCS:.S=.o)

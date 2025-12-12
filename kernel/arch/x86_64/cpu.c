@@ -7,42 +7,60 @@
 #include "types.h"
 #include <stddef.h>
 
-static cpu_info_t cpu_info_cache;
-static uint32_t cpu_count = 1;
-static bool cpu_initialized = false;
+/* Use volatile to prevent compiler optimizations that might cause issues */
+static volatile cpu_info_t cpu_info_cache;
+static volatile uint32_t cpu_count = 1;
+static volatile bool cpu_initialized = false;
 
 int cpu_init(void)
 {
-    if (cpu_initialized) {
+    /* Use volatile read to prevent optimization issues */
+    volatile bool initialized = cpu_initialized;
+    __asm__ volatile ("" ::: "memory");
+    
+    if (initialized) {
         return 0;
     }
     
     /* Получение информации о процессоре через CPUID */
+    /* Use memory barriers to ensure proper ordering (XNU-style) */
     uint32_t eax, ebx, ecx, edx;
     
+    __asm__ volatile ("" ::: "memory");
     /* CPUID для получения vendor string */
     __asm__ volatile ("cpuid"
                       : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                       : "a"(0));
+    __asm__ volatile ("" ::: "memory");
     
     char vendor[13];
     *((uint32_t*)vendor) = ebx;
     *((uint32_t*)(vendor + 4)) = edx;
     *((uint32_t*)(vendor + 8)) = ecx;
     vendor[12] = '\0';
+    __asm__ volatile ("" ::: "memory");
     
+    /* Fill CPU info cache (XNU-style) */
+    /* Use memory barriers between assignments */
     cpu_info_cache.cpu_id = 0;
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.apic_id = 0;
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.vendor = "Unknown";
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.model = "x86_64";
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.features = 0;
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.cores = 1;
+    __asm__ volatile ("" ::: "memory");
     cpu_info_cache.threads = 1;
+    __asm__ volatile ("" ::: "memory");
     
-    /* TODO: Получить полную информацию о процессоре через CPUID */
-    /* TODO: Определить количество ядер и потоков */
-    
+    /* Set initialized flag last, with memory barrier (XNU-style) */
     cpu_initialized = true;
+    __asm__ volatile ("" ::: "memory");
+    
     return 0;
 }
 
@@ -52,11 +70,19 @@ int cpu_get_info(cpu_info_t* info)
         return -1;
     }
     
-    if (!cpu_initialized) {
+    /* Use volatile read to prevent optimization issues */
+    volatile bool initialized = cpu_initialized;
+    __asm__ volatile ("" ::: "memory");
+    
+    if (!initialized) {
         cpu_init();
     }
     
-    *info = cpu_info_cache;
+    /* Copy cache with memory barrier */
+    __asm__ volatile ("" ::: "memory");
+    *info = *(cpu_info_t*)&cpu_info_cache;
+    __asm__ volatile ("" ::: "memory");
+    
     return 0;
 }
 

@@ -14,10 +14,7 @@
  */
 void kmain(uint32_t magic, void* mbi)
 {
-    (void)magic;
-    (void)mbi;
-    
-    /* Initialize console */
+    /* Initialize console first - this is critical for debugging */
     console_init();
     console_clear();
     
@@ -27,74 +24,180 @@ void kmain(uint32_t magic, void* mbi)
     kputs("    64-bit Architecture\n");
     kputs("========================================\n\n");
     
-    DEBUG_INFO("Kernel starting...");
+    kputs("[DEBUG] kmain: Entry point reached\n");
+    kputs("[DEBUG] kmain: magic = ");
+    extern void kprint_hex(uint64_t num);
+    kprint_hex(magic);
+    kputs(", mbi = ");
+    kprint_hex((uint64_t)mbi);
+    kputs("\n");
     
-    /* Initialize boot subsystem */
-    boot_info_t boot_info = {
-        .magic = magic,
-        .boot_info = mbi,
-        .mem_lower = 0,
-        .mem_upper = 0,
-        .cmdline = NULL,
-        .flags = 0
-    };
+    kputs("[INIT] Starting kernel...\n");
+    __asm__ volatile ("" ::: "memory");
     
-    if (boot_early_init(&boot_info) != 0) {
-        panic("Failed to initialize boot subsystem");
+    /* Step 1: Initialize boot subsystem */
+    kputs("[INIT-1] Boot subsystem\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.1] Create boot_info struct\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info_t boot_info;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2] Fill boot_info\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.1] magic\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info.magic = magic;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.2] boot_info\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info.boot_info = mbi;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.3] mem_lower\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info.mem_lower = 0;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.4] mem_upper\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info.mem_upper = 0;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.5] cmdline\n");
+    __asm__ volatile ("" ::: "memory");
+    /* Initialize cmdline buffer to empty string (XNU-style: fixed buffer) */
+    boot_info.cmdline[0] = '\0';
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.2.6] flags\n");
+    __asm__ volatile ("" ::: "memory");
+    boot_info.flags = 0;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.3] Call boot_early_init\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.3.1] Before call\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.3.2] Calling function\n");
+    __asm__ volatile ("" ::: "memory");
+    int boot_result = boot_early_init(&boot_info);
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.3.3] After call\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-1.3.4] Check result\n");
+    __asm__ volatile ("" ::: "memory");
+    if (boot_result != 0) {
+        kputs("[INIT-1-ERR] Boot init failed\n");
+        panic("Boot init failed");
     }
+    __asm__ volatile ("" ::: "memory");
     
-    DEBUG_INFO("Boot subsystem initialized");
+    kputs("[INIT-1-OK] Boot done\n");
+    __asm__ volatile ("" ::: "memory");
     
-    /* Initialize CPU */
+    /* Step 2: Initialize CPU */
+    kputs("[INIT-2] CPU\n");
+    __asm__ volatile ("" ::: "memory");
+    extern int cpu_init(void);
     if (cpu_init() != 0) {
-        panic("Failed to initialize CPU");
+        panic("CPU init failed");
     }
+    __asm__ volatile ("" ::: "memory");
     
-    DEBUG_INFO("CPU initialized");
-    
-    /* Initialize interrupts */
+    /* Step 3: Initialize interrupts */
+    kputs("[INIT-3] Interrupts\n");
+    __asm__ volatile ("" ::: "memory");
     if (interrupts_init() != 0) {
-        panic("Failed to initialize interrupts");
+        panic("Interrupts init failed");
     }
+    __asm__ volatile ("" ::: "memory");
     
-    DEBUG_INFO("Interrupts initialized");
-        
-    /* Initialize memory */
+    /* Step 4: Initialize timer (PIT) */
+    kputs("[INIT-4] Timer (PIT)\n");
+    __asm__ volatile ("" ::: "memory");
+    extern int pit_init(uint32_t frequency);
+    if (pit_init(100) != 0) {
+        panic("PIT init failed");
+    }
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Step 5: Initialize memory */
+    kputs("[INIT-5] Memory\n");
+    __asm__ volatile ("" ::: "memory");
     if (memory_init() != 0) {
-        panic("Failed to initialize memory");
-        }
-        
-    DEBUG_INFO("Memory initialized");
+        panic("Memory init failed");
+    }
+    __asm__ volatile ("" ::: "memory");
     
-    /* Initialize scheduler */
+    /* Step 6: Initialize scheduler */
+    kputs("[INIT-6] Scheduler\n");
+    __asm__ volatile ("" ::: "memory");
     if (scheduler_init() != 0) {
-        panic("Failed to initialize scheduler");
-        }
-        
-    DEBUG_INFO("Scheduler initialized");
+        panic("Scheduler init failed");
+    }
+    __asm__ volatile ("" ::: "memory");
     
-    /* Initialize IPC */
+    /* Step 7: Initialize IPC */
+    kputs("[INIT-7] IPC\n");
+    __asm__ volatile ("" ::: "memory");
     if (ipc_init() != 0) {
-        panic("Failed to initialize IPC");
+        panic("IPC init failed");
     }
+    __asm__ volatile ("" ::: "memory");
     
-    DEBUG_INFO("IPC initialized");
-            
-    /* Initialize device manager */
+    /* Step 8: Initialize device manager */
+    kputs("[INIT-8] Device manager\n");
+    __asm__ volatile ("" ::: "memory");
     if (device_manager_init() != 0) {
-        panic("Failed to initialize device manager");
+        panic("Device manager init failed");
     }
+    __asm__ volatile ("" ::: "memory");
     
-    DEBUG_INFO("Device manager initialized");
+    /* Step 9: Initialize keyboard */
+    kputs("[INIT-9] Keyboard\n");
+    __asm__ volatile ("" ::: "memory");
+    extern int keyboard_init(void);
+    if (keyboard_init() != 0) {
+        panic("Keyboard init failed");
+    }
+    __asm__ volatile ("" ::: "memory");
     
-    kputs("\nKernel initialized successfully!\n");
-    kputs("Entering main loop...\n\n");
+    /* Step 10: Enable interrupts */
+    kputs("[INIT-10] Enable interrupts\n");
+    __asm__ volatile ("" ::: "memory");
+    extern void interrupts_enable(void);
+    interrupts_enable();
+    __asm__ volatile ("" ::: "memory");
     
-    /* Main loop */
+    /* Step 11: Initialize shell */
+    kputs("[INIT-11] Shell\n");
+    __asm__ volatile ("" ::: "memory");
+    extern int shell_init(void);
+    extern void shell_run(void);
+    if (shell_init() != 0) {
+        panic("Shell init failed");
+    }
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-OK] Kernel ready\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-12] Starting shell...\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Run shell (blocks) */
+    shell_run();
+    
+    /* Should never reach here */
     for (;;) {
-        /* Wait for interrupt */
         interrupt_wait();
-        
-        /* TODO: Handle events, schedule tasks, etc. */
-        }
+    }
     }

@@ -67,6 +67,8 @@ void kputs(const char* str)
         kputc(*str);
         str++;
     }
+    /* Force immediate output - no buffering */
+    __asm__ volatile ("" ::: "memory");
 }
 
 static void kprint_uint(uint64_t num, uint64_t base)

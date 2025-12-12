@@ -1,6 +1,8 @@
 /**
  * @file x86_64/boot.c
  * @brief Реализация загрузки для x86_64
+ * 
+ * @note This implementation follows XNU-style boot argument handling.
  */
 
 #include "../../core/boot.h"
@@ -8,8 +10,24 @@
 #include "config.h"
 #include <stddef.h>
 
-static boot_info_t boot_info_storage;
-static bool boot_info_valid = false;
+/* Multiboot2 tag structure (XNU-style parsing) */
+struct multiboot2_tag {
+    uint32_t type;
+    uint32_t size;
+    /* Variable data follows */
+} __attribute__((packed));
+
+/* Multiboot2 command line tag (type 1) */
+struct multiboot2_tag_string {
+    uint32_t type;
+    uint32_t size;
+    char string[];
+} __attribute__((packed));
+
+/* Use explicit initialization to ensure proper memory layout */
+/* Use volatile to prevent compiler optimizations that might cause issues */
+static volatile boot_info_t boot_info_storage = {0};
+static volatile bool boot_info_valid = false;
 
 int boot_early_init(boot_info_t* info)
 {
@@ -17,8 +35,31 @@ int boot_early_init(boot_info_t* info)
         return -1;
     }
     
-    boot_info_storage = *info;
+    /* Copy boot information (XNU-style: fixed buffer for cmdline) */
+    /* Use memory barriers to ensure proper ordering (XNU-style) */
+    boot_info_storage.magic = info->magic;
+    __asm__ volatile ("" ::: "memory");
+    
+    boot_info_storage.boot_info = info->boot_info;
+    __asm__ volatile ("" ::: "memory");
+    
+    boot_info_storage.mem_lower = info->mem_lower;
+    __asm__ volatile ("" ::: "memory");
+    
+    boot_info_storage.mem_upper = info->mem_upper;
+    __asm__ volatile ("" ::: "memory");
+    
+    boot_info_storage.flags = info->flags;
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Initialize cmdline buffer to empty string (XNU-style: fixed buffer) */
+    /* TODO: Parse cmdline from Multiboot2 info later when memory is fully initialized */
+    boot_info_storage.cmdline[0] = '\0';
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Set valid flag last, with memory barrier (XNU-style) */
     boot_info_valid = true;
+    __asm__ volatile ("" ::: "memory");
     
     return 0;
 }
@@ -64,10 +105,15 @@ int boot_interrupts_init(void)
 
 boot_info_t* boot_get_info(void)
 {
-    if (!boot_info_valid) {
+    /* Use volatile read to prevent optimization issues */
+    volatile bool valid = boot_info_valid;
+    __asm__ volatile ("" ::: "memory");
+    
+    if (!valid) {
         return NULL;
     }
     
-    return &boot_info_storage;
+    /* Cast away volatile for return (caller knows it's safe) */
+    return (boot_info_t*)&boot_info_storage;
 }
 
