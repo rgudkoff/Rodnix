@@ -1,18 +1,15 @@
 # Build artifacts
 build/
-iso/
-*.iso
 *.o
-*.kernel
-
-# Rust
-target/
-Cargo.lock
-**/*.rs.bk
+*.a
+*.so
+*.iso
+*.bin
+*.elf
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
@@ -20,3 +17,7 @@ Cargo.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Temporary files
+*.tmp
+*.log
