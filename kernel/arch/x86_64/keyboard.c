@@ -10,6 +10,8 @@
  * - Key state tracking
  * 
  * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note Interrupt handler is minimal - only reads scan code and adds to buffer.
+ *       Translation is done in non-interrupt context.
  */
 
 #include "types.h"
@@ -43,42 +45,20 @@ extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
  * Keyboard Constants
  * ============================================================================ */
 
-#define KEYBOARD_BUFFER_SIZE  256    /* Input buffer size */
+#define KEYBOARD_BUFFER_SIZE  256    /* Input buffer size (power of 2) */
 #define KEYBOARD_IRQ          1      /* Keyboard IRQ number */
 #define KEYBOARD_VECTOR       33     /* Keyboard interrupt vector (32 + 1) */
 
-/* Special key codes */
-#define KEY_ESC           0x01
-#define KEY_BACKSPACE     0x08
-#define KEY_TAB           0x09
-#define KEY_ENTER         0x0D
-#define KEY_CTRL          0x11
-#define KEY_LSHIFT        0x2A
-#define KEY_RSHIFT        0x36
-#define KEY_ALT           0x38
-#define KEY_CAPSLOCK      0x3A
-#define KEY_F1            0x3B
-#define KEY_F2            0x3C
-#define KEY_F3            0x3D
-#define KEY_F4            0x3E
-#define KEY_F5            0x3F
-#define KEY_F6            0x40
-#define KEY_F7            0x41
-#define KEY_F8            0x42
-#define KEY_F9            0x43
-#define KEY_F10           0x44
-#define KEY_F11           0x57
-#define KEY_F12           0x58
-#define KEY_UP            0x48
-#define KEY_DOWN          0x50
-#define KEY_LEFT          0x4B
-#define KEY_RIGHT         0x4D
-#define KEY_INSERT        0x52
-#define KEY_DELETE        0x53
-#define KEY_HOME          0x47
-#define KEY_END           0x4F
-#define KEY_PAGEUP        0x49
-#define KEY_PAGEDOWN      0x51
+/* Special key codes (scan code set 1) */
+#define KEY_LSHIFT           0x2A
+#define KEY_RSHIFT           0x36
+#define KEY_CTRL             0x1D
+#define KEY_ALT              0x38
+#define KEY_CAPSLOCK         0x3A
+#define KEY_ENTER            0x1C
+#define KEY_BACKSPACE        0x0E
+#define KEY_TAB              0x0F
+#define KEY_ESC              0x01
 
 /* ============================================================================
  * Keyboard State
@@ -86,7 +66,7 @@ extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
 
 /**
  * @struct keyboard_state
- * @brief Keyboard internal state
+ * @brief Keyboard driver state
  */
 struct keyboard_state {
     uint8_t buffer[KEYBOARD_BUFFER_SIZE];  /* Input buffer */
@@ -144,15 +124,23 @@ static const char scan_code_shift[128] = {
  * @param c Character to add
  * 
  * @return 0 on success, -1 if buffer is full
+ * 
+ * @note XNU-style: Minimal operation in interrupt context
+ * @note Uses bitwise AND instead of modulo (buffer size is power of 2)
  */
 static int keyboard_buffer_put(uint8_t c)
 {
+    /* Check if buffer is full */
     if (kb_state.buffer_count >= KEYBOARD_BUFFER_SIZE) {
         return -1; /* Buffer full */
     }
     
+    /* Add character to buffer */
     kb_state.buffer[kb_state.buffer_tail] = c;
-    kb_state.buffer_tail = (kb_state.buffer_tail + 1) % KEYBOARD_BUFFER_SIZE;
+    
+    /* Update tail index using bitwise AND (no division) */
+    /* KEYBOARD_BUFFER_SIZE is 256 (2^8), so (x & 255) == (x % 256) */
+    kb_state.buffer_tail = (kb_state.buffer_tail + 1) & 0xFF;
     kb_state.buffer_count++;
     
     return 0;
@@ -163,6 +151,8 @@ static int keyboard_buffer_put(uint8_t c)
  * @brief Get a character from the input buffer
  * 
  * @return Character, or 0 if buffer is empty
+ * 
+ * @note XNU-style: Safe to call from non-interrupt context
  */
 static uint8_t keyboard_buffer_get(void)
 {
@@ -171,7 +161,9 @@ static uint8_t keyboard_buffer_get(void)
     }
     
     uint8_t c = kb_state.buffer[kb_state.buffer_head];
-    kb_state.buffer_head = (kb_state.buffer_head + 1) % KEYBOARD_BUFFER_SIZE;
+    
+    /* Update head index using bitwise AND (no division) */
+    kb_state.buffer_head = (kb_state.buffer_head + 1) & 0xFF;
     kb_state.buffer_count--;
     
     return c;
@@ -185,6 +177,9 @@ static uint8_t keyboard_buffer_get(void)
  * @param is_release Whether this is a key release (0x80 bit set)
  * 
  * @return ASCII character, or 0 if not a printable character
+ * 
+ * @note XNU-style: Translation done in non-interrupt context
+ * @note No division operations - only table lookups and bitwise operations
  */
 static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
 {
@@ -250,16 +245,17 @@ static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
         bool caps = kb_state.caps_lock;
         
         /* Determine which map to use */
-        const char* map = (shift || (caps && scan_code >= 'a' && scan_code <= 'z')) 
-                          ? scan_code_shift 
-                          : scan_code_normal;
+        const char* map = shift ? scan_code_shift : scan_code_normal;
         
+        /* Get character from map (simple array lookup, no division) */
         char c = map[scan_code];
         
-        /* Handle Caps Lock for letters */
-        if (caps && c >= 'a' && c <= 'z' && !shift) {
+        /* Handle Caps Lock for letters (only bitwise operations) */
+        if (caps && !shift && c >= 'a' && c <= 'z') {
+            /* Convert to uppercase: c - 'a' + 'A' (no division) */
             c = c - 'a' + 'A';
-        } else if (caps && c >= 'A' && c <= 'Z' && shift) {
+        } else if (caps && shift && c >= 'A' && c <= 'Z') {
+            /* Convert to lowercase: c - 'A' + 'a' (no division) */
             c = c - 'A' + 'a';
         }
         
@@ -269,16 +265,24 @@ static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
     return 0; /* Unknown scan code */
 }
 
+/* ============================================================================
+ * Interrupt Handler (XNU-style: Minimal work in interrupt context)
+ * ============================================================================ */
+
 /**
  * @function keyboard_interrupt_handler
- * @brief Keyboard interrupt handler
+ * @brief Keyboard interrupt handler (XNU-style minimal implementation)
  * 
  * This function is called on each keyboard interrupt (IRQ 1). It:
- * 1. Reads scan code from keyboard
- * 2. Translates scan code to ASCII
- * 3. Adds character to input buffer
+ * 1. Reads scan code from keyboard (I/O operation)
+ * 2. Adds raw scan code to buffer (minimal operation)
+ * 
+ * Translation to ASCII is done later in non-interrupt context.
  * 
  * @param ctx Interrupt context
+ * 
+ * @note XNU-style: Minimal work in interrupt handler
+ * @note No division, no complex operations, only I/O and buffer management
  */
 static void keyboard_interrupt_handler(interrupt_context_t* ctx)
 {
@@ -294,15 +298,12 @@ static void keyboard_interrupt_handler(interrupt_context_t* ctx)
         return;
     }
     
-    /* Check if this is a key release */
-    bool is_release = (scan_code & 0x80) != 0;
-    
-    /* Translate scan code to character */
-    char c = keyboard_translate_scan_code(scan_code, is_release);
-    
-    /* Add to buffer if printable */
-    if (c != 0) {
-        keyboard_buffer_put((uint8_t)c);
+    /* XNU-style: Add raw scan code to buffer, translate later */
+    /* This avoids any complex operations in interrupt context */
+    if (kb_state.buffer_count < KEYBOARD_BUFFER_SIZE) {
+        kb_state.buffer[kb_state.buffer_tail] = scan_code;
+        kb_state.buffer_tail = (kb_state.buffer_tail + 1) & 0xFF;
+        kb_state.buffer_count++;
     }
     
     kb_state.extended = false;
@@ -313,19 +314,15 @@ static void keyboard_interrupt_handler(interrupt_context_t* ctx)
  * ============================================================================ */
 
 /**
- * @function keyboard_init
- * @brief Initialize keyboard driver
+ * @function keyboard_hw_init
+ * @brief Initialize keyboard hardware state
  * 
- * This function:
- * 1. Registers keyboard interrupt handler (IRQ 1)
- * 2. Enables keyboard interrupt in PIC
- * 3. Initializes keyboard state
+ * This function initializes keyboard state only.
+ * IRQ registration is done by Fabric driver.
  * 
- * @return 0 on success, -1 on failure
- * 
- * @note This must be called after PIC and IDT are initialized.
+ * @note This is called by Fabric HID keyboard driver.
  */
-int keyboard_init(void)
+void keyboard_hw_init(void)
 {
     /* Initialize keyboard state */
     kb_state.buffer_head = 0;
@@ -338,23 +335,30 @@ int keyboard_init(void)
     kb_state.num_lock = false;
     kb_state.scroll_lock = false;
     kb_state.extended = false;
-    
-    /* Register keyboard interrupt handler (IRQ 1 = vector 33) */
-    if (interrupt_register(KEYBOARD_VECTOR, keyboard_interrupt_handler) != 0) {
-        return -1;
+}
+
+/**
+ * @function keyboard_buffer_put_raw
+ * @brief Put raw scan code into keyboard buffer
+ * 
+ * @param scan_code Raw scan code from keyboard
+ * 
+ * @note This is called by Fabric IRQ handler
+ * @note Handles extended scan code prefix (0xE0)
+ */
+void keyboard_buffer_put_raw(uint8_t scan_code)
+{
+    /* Check for extended scan code prefix */
+    if (scan_code == 0xE0) {
+        kb_state.extended = true;
+        return;
     }
     
-    /* Enable IRQ 1 (keyboard) - use APIC if available, otherwise PIC */
-    extern bool apic_is_available(void);
-    extern void apic_enable_irq(uint8_t irq);
-    extern void pic_enable_irq(uint8_t irq);
-    if (apic_is_available()) {
-        apic_enable_irq(KEYBOARD_IRQ);
-    } else {
-        pic_enable_irq(KEYBOARD_IRQ);
-    }
+    /* Add scan code to buffer */
+    keyboard_buffer_put(scan_code);
     
-    return 0;
+    /* Clear extended flag after processing */
+    kb_state.extended = false;
 }
 
 /**
@@ -364,10 +368,20 @@ int keyboard_init(void)
  * @return Character, or 0 if no character available
  * 
  * @note This is a non-blocking function. Returns 0 if buffer is empty.
+ * @note XNU-style: Translation done here, not in interrupt handler
  */
 char keyboard_read_char(void)
 {
-    return (char)keyboard_buffer_get();
+    /* Get raw scan code from buffer */
+    uint8_t scan_code = keyboard_buffer_get();
+    
+    if (scan_code == 0) {
+        return 0; /* Buffer empty */
+    }
+    
+    /* Translate scan code to character (non-interrupt context) */
+    bool is_release = (scan_code & 0x80) != 0;
+    return keyboard_translate_scan_code(scan_code, is_release);
 }
 
 /**
@@ -379,8 +393,8 @@ char keyboard_read_char(void)
  * 
  * @return Number of characters read, or -1 on error
  * 
- * @note This function blocks until Enter is pressed.
- * @note Backspace is handled to allow editing.
+ * @note XNU-style: Blocks until Enter is pressed
+ * @note Translation and echo done in non-interrupt context
  */
 int keyboard_read_line(char* buffer, uint32_t size)
 {
@@ -392,17 +406,19 @@ int keyboard_read_line(char* buffer, uint32_t size)
     buffer[0] = '\0';
     
     while (pos < size - 1) {
+        /* Get character (translated from scan code) */
         char c = keyboard_read_char();
         
         if (c == 0) {
             /* No character available, wait for interrupt */
-            __asm__ volatile ("hlt");
+            __asm__ volatile ("hlt"); /* Wait for next interrupt */
             continue;
         }
         
         if (c == '\n' || c == '\r') {
             /* Enter pressed */
             buffer[pos] = '\0';
+            extern void kputc(char c);
             kputc('\n');
             return (int)pos;
         }
@@ -412,6 +428,8 @@ int keyboard_read_line(char* buffer, uint32_t size)
             if (pos > 0) {
                 pos--;
                 buffer[pos] = '\0';
+                /* Handle backspace visually */
+                extern void kputc(char c);
                 kputc('\b');
                 kputc(' ');
                 kputc('\b');
@@ -424,6 +442,8 @@ int keyboard_read_line(char* buffer, uint32_t size)
             buffer[pos] = c;
             pos++;
             buffer[pos] = '\0';
+            /* Display character as user types */
+            extern void kputc(char c);
             kputc(c);
         }
     }
@@ -442,15 +462,3 @@ bool keyboard_has_input(void)
 {
     return kb_state.buffer_count > 0;
 }
-
-/**
- * @function keyboard_flush
- * @brief Flush keyboard input buffer
- */
-void keyboard_flush(void)
-{
-    kb_state.buffer_head = 0;
-    kb_state.buffer_tail = 0;
-    kb_state.buffer_count = 0;
-}
-

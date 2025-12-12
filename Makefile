@@ -23,7 +23,8 @@ CFLAGS = -m64 \
          -I./include \
          -I./kernel/core \
          -I./kernel/common \
-         -I./kernel/arch/x86_64
+         -I./kernel/arch/x86_64 \
+         -I./kernel/fabric
 
 ASFLAGS = -f elf64
 LDFLAGS = -m elf_x86_64 -T link.ld --no-warn-mismatch -z max-page-size=0x1000
@@ -54,7 +55,13 @@ KERNEL_C_SRCS = \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/keyboard.c \
 	kernel/arch/x86_64/memory.c \
-	kernel/arch/x86_64/boot.c
+	kernel/arch/x86_64/boot.c \
+	kernel/fabric/fabric.c \
+	kernel/fabric/spin.c \
+	kernel/fabric/bus/virt.c \
+	kernel/fabric/bus/pci.c \
+	kernel/fabric/bus/ps2.c \
+	drivers/fabric/hid/hid_kbd.c
 
 KERNEL_ASM_SRCS = \
 	boot/boot.S \

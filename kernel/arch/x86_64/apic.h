@@ -17,18 +17,21 @@
 
 /* APIC detection and initialization */
 bool apic_is_available(void);
+bool ioapic_is_available(void);
 int apic_init(void);
 
 /* APIC interrupt management */
 void apic_enable(void);
 void apic_disable(void);
 void apic_send_eoi(void);
+uint8_t apic_get_lapic_id(void);
 
 /* APIC timer (LAPIC timer) */
 int apic_timer_init(uint32_t frequency);
 void apic_timer_start(void);
 void apic_timer_stop(void);
 uint32_t apic_timer_get_ticks(void);
+uint32_t apic_timer_get_frequency(void);
 
 /* APIC IRQ management */
 void apic_enable_irq(uint8_t irq);

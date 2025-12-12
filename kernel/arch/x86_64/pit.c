@@ -355,25 +355,16 @@ void pit_disable(void)
  */
 void pit_enable(void)
 {
-    extern void kputs(const char* str);
+    /* Enable PIT IRQ 0 */
+    /* Use I/O APIC if available, otherwise fallback to PIC */
+    extern bool ioapic_is_available(void);
+    extern void apic_enable_irq(uint8_t irq);
+    extern void pic_enable_irq(uint8_t irq);
     
-    kputs("[PIT-EN-1] Entry\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    /* Only enable PIT IRQ if APIC is not available */
-    extern bool apic_is_available(void);
-    if (!apic_is_available()) {
-        kputs("[PIT-EN-2] Call pic_enable_irq\n");
-        __asm__ volatile ("" ::: "memory");
-        extern void pic_enable_irq(uint8_t irq);
-        pic_enable_irq(0);
-        __asm__ volatile ("" ::: "memory");
+    if (ioapic_is_available()) {
+        apic_enable_irq(0);
     } else {
-        kputs("[PIT-EN-2] APIC in use, skip PIC\n");
-        __asm__ volatile ("" ::: "memory");
+        pic_enable_irq(0);
     }
-    
-    kputs("[PIT-EN-3] Done\n");
-    __asm__ volatile ("" ::: "memory");
 }
 

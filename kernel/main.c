@@ -180,13 +180,20 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 9: Initialize keyboard */
-    kputs("[INIT-9] Keyboard\n");
+    /* Step 9: Initialize Fabric */
+    kputs("[INIT-9] Fabric\n");
     __asm__ volatile ("" ::: "memory");
-    extern int keyboard_init(void);
-    if (keyboard_init() != 0) {
-        panic("Keyboard init failed");
-    }
+    extern void fabric_init(void);
+    extern void virt_bus_init(void);
+    extern void pci_bus_init(void);
+    extern void ps2_bus_init(void);
+    extern void hid_kbd_init(void);
+    
+    fabric_init();
+    virt_bus_init();
+    pci_bus_init();
+    ps2_bus_init();  /* PS/2 bus for keyboard */
+    hid_kbd_init();  /* HID keyboard driver */
     __asm__ volatile ("" ::: "memory");
     
     /* Step 10: Enable interrupts (XNU-style: set IRQL to PASSIVE) */

@@ -13,7 +13,9 @@
 
 #include "types.h"
 #include "config.h"
+#include "paging.h"
 #include "../../include/debug.h"
+#include "../../core/interrupts.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -57,6 +59,44 @@
 #define APIC_LVT_TIMER_PERIODIC   (1 << 17)
 
 /* ============================================================================
+ * I/O APIC Register Definitions
+ * ============================================================================ */
+
+/* I/O APIC Base Address (typically 0xFEC00000, from ACPI) */
+#define IOAPIC_BASE_ADDR       0xFEC00000
+
+/* I/O APIC Registers (memory-mapped) */
+#define IOAPIC_REGSEL         0x00    /* Register Select */
+#define IOAPIC_REGWIN         0x10    /* Register Window */
+
+/* I/O APIC Register Indices */
+#define IOAPIC_ID             0x00    /* I/O APIC ID */
+#define IOAPIC_VER             0x01    /* I/O APIC Version */
+#define IOAPIC_ARB             0x02    /* Arbitration ID */
+#define IOAPIC_REDIR_TBL(n)    (0x10 + (n) * 2)  /* Redirection Table Entry n (low) */
+#define IOAPIC_REDIR_TBL_H(n)  (0x11 + (n) * 2)  /* Redirection Table Entry n (high) */
+
+/* Redirection Table Entry (RTE) flags */
+#define IOAPIC_RTE_VECTOR(v)        ((v) & 0xFF)
+#define IOAPIC_RTE_DELIVERY_FIXED   (0UL << 8)   /* Fixed delivery mode */
+#define IOAPIC_RTE_DELIVERY_LOWEST  (1UL << 8)   /* Lowest priority */
+#define IOAPIC_RTE_DELIVERY_SMI     (2UL << 8)   /* SMI */
+#define IOAPIC_RTE_DELIVERY_NMI     (4UL << 8)   /* NMI */
+#define IOAPIC_RTE_DELIVERY_INIT    (5UL << 8)   /* INIT */
+#define IOAPIC_RTE_DELIVERY_EXTINT  (7UL << 8)   /* External interrupt */
+#define IOAPIC_RTE_DEST_MODE_PHYS   (0UL << 11)  /* Physical destination mode */
+#define IOAPIC_RTE_DEST_MODE_LOG    (1UL << 11)  /* Logical destination mode */
+#define IOAPIC_RTE_POLARITY_LOW     (0UL << 13)  /* Active low */
+#define IOAPIC_RTE_POLARITY_HIGH    (1UL << 13)  /* Active high */
+#define IOAPIC_RTE_TRIGGER_EDGE     (0UL << 15)  /* Edge triggered */
+#define IOAPIC_RTE_TRIGGER_LEVEL    (1UL << 15)  /* Level triggered */
+#define IOAPIC_RTE_MASKED           (1UL << 16)  /* Mask interrupt */
+#define IOAPIC_RTE_DEST_APIC_ID(id) ((id) << 24) /* Destination APIC ID */
+
+/* Maximum number of I/O APIC redirection entries */
+#define IOAPIC_MAX_REDIR       24
+
+/* ============================================================================
  * APIC State
  * ============================================================================ */
 
@@ -64,9 +104,25 @@ static volatile uint32_t* apic_base = NULL;
 static bool apic_initialized = false;
 static bool apic_available = false;
 
+/* I/O APIC State */
+static volatile uint32_t* ioapic_base = NULL;
+static bool ioapic_initialized = false;
+static bool ioapic_available = false;
+static uint8_t ioapic_id = 0;
+static uint8_t ioapic_version = 0;
+static uint8_t ioapic_max_redir = 0;
+
+/* LAPIC Timer State */
+static uint32_t apic_timer_ticks_per_ms = 0;  /* Calibrated ticks per millisecond */
+static uint32_t apic_timer_frequency = 0;     /* Target frequency */
+static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
+
 /* ============================================================================
  * Internal Helper Functions
  * ============================================================================ */
+
+/* Forward declarations */
+static int ioapic_init(void);
 
 /**
  * @function apic_read_msr
@@ -175,7 +231,8 @@ static void apic_write_register(uint32_t offset, uint32_t value)
     if (!apic_base) {
         return;
     }
-    apic_base[offset / sizeof(uint32_t)] = value;
+    /* APIC registers are 32-bit aligned, so divide by 4 using bit shift */
+    apic_base[offset >> 2] = value;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
 }
 
@@ -226,6 +283,17 @@ static bool apic_check_cpuid(void)
 bool apic_is_available(void)
 {
     return apic_available;
+}
+
+/**
+ * @function ioapic_is_available
+ * @brief Check if I/O APIC is available
+ * 
+ * @return true if I/O APIC is available, false otherwise
+ */
+bool ioapic_is_available(void)
+{
+    return ioapic_available;
 }
 
 /**
@@ -351,6 +419,17 @@ int apic_init(void)
     apic_initialized = true;
     __asm__ volatile ("" ::: "memory");
     
+    kputs("[APIC-11] Init I/O APIC\n");
+    __asm__ volatile ("" ::: "memory");
+    /* Initialize I/O APIC for external IRQ routing */
+    if (ioapic_init() == 0) {
+        kputs("[APIC-11.1] I/O APIC initialized\n");
+        __asm__ volatile ("" ::: "memory");
+    } else {
+        kputs("[APIC-11.2] I/O APIC init failed (will use PIC for external IRQ)\n");
+        __asm__ volatile ("" ::: "memory");
+    }
+    
     kputs("[APIC-OK] Done\n");
     __asm__ volatile ("" ::: "memory");
     
@@ -402,37 +481,294 @@ void apic_send_eoi(void)
     apic_write_register(APIC_EOI, 0);
 }
 
+/* ============================================================================
+ * I/O APIC Helper Functions
+ * ============================================================================ */
+
+/**
+ * @function ioapic_read_register
+ * @brief Read I/O APIC register
+ * 
+ * @param reg Register index
+ * @return Register value
+ */
+static uint32_t ioapic_read_register(uint8_t reg)
+{
+    if (!ioapic_base) {
+        return 0;
+    }
+    
+    /* Write register index to IOREGSEL */
+    /* I/O APIC registers are 32-bit aligned, so divide by 4 */
+    ioapic_base[IOAPIC_REGSEL >> 2] = reg;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    
+    /* Read register value from IOWIN */
+    uint32_t value = ioapic_base[IOAPIC_REGWIN >> 2];
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    
+    return value;
+}
+
+/**
+ * @function ioapic_write_register
+ * @brief Write I/O APIC register
+ * 
+ * @param reg Register index
+ * @param value Value to write
+ */
+static void ioapic_write_register(uint8_t reg, uint32_t value)
+{
+    if (!ioapic_base) {
+        return;
+    }
+    
+    /* Write register index to IOREGSEL */
+    /* I/O APIC registers are 32-bit aligned, so divide by 4 */
+    ioapic_base[IOAPIC_REGSEL >> 2] = reg;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    
+    /* Write register value to IOWIN */
+    ioapic_base[IOAPIC_REGWIN >> 2] = value;
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+}
+
+/**
+ * @function ioapic_init
+ * @brief Initialize I/O APIC
+ * 
+ * @return 0 on success, -1 on failure
+ */
+int ioapic_init(void)
+{
+    extern void kputs(const char* str);
+    extern void kprint_hex(uint64_t value);
+    extern int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags);
+    
+    kputs("[IOAPIC-1] Map I/O APIC registers\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Map I/O APIC registers (4KB, uncached MMIO) */
+    uint64_t ioapic_phys = IOAPIC_BASE_ADDR;
+    uint64_t ioapic_virt = ioapic_phys; /* Identity mapping */
+    uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
+    
+    if (paging_map_page_4kb(ioapic_virt, ioapic_phys, mmio_flags) != 0) {
+        kputs("[IOAPIC-1.1] Failed to map I/O APIC\n");
+        return -1;
+    }
+    
+    ioapic_base = (volatile uint32_t*)ioapic_virt;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[IOAPIC-2] Read I/O APIC ID\n");
+    __asm__ volatile ("" ::: "memory");
+    ioapic_id = (uint8_t)((ioapic_read_register(IOAPIC_ID) >> 24) & 0xFF);
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[IOAPIC-3] Read I/O APIC Version\n");
+    __asm__ volatile ("" ::: "memory");
+    uint32_t ver = ioapic_read_register(IOAPIC_VER);
+    ioapic_version = (uint8_t)(ver & 0xFF);
+    ioapic_max_redir = (uint8_t)((ver >> 16) & 0xFF);
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[IOAPIC-4] I/O APIC initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    kputs("[IOAPIC-4.1] ID="); kprint_hex(ioapic_id); kputs("\n");
+    kputs("[IOAPIC-4.2] Version="); kprint_hex(ioapic_version); kputs("\n");
+    kputs("[IOAPIC-4.3] Max Redir="); kprint_hex(ioapic_max_redir); kputs("\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    ioapic_initialized = true;
+    ioapic_available = true;
+    __asm__ volatile ("" ::: "memory");
+    
+    return 0;
+}
+
+/**
+ * @function apic_get_lapic_id
+ * @brief Get Local APIC ID of current CPU
+ * 
+ * @return LAPIC ID
+ * 
+ * @note XNU-style: Get current CPU's LAPIC ID
+ */
+uint8_t apic_get_lapic_id(void)
+{
+    if (!apic_initialized) {
+        return 0;
+    }
+    
+    /* Read APIC ID register */
+    uint32_t apic_id_reg = apic_read_register(APIC_ID);
+    /* APIC ID is in bits 24-31 */
+    return (uint8_t)((apic_id_reg >> 24) & 0xFF);
+}
+
 /**
  * @function apic_enable_irq
- * @brief Enable IRQ in I/O APIC (placeholder for now)
+ * @brief Enable IRQ in I/O APIC
  * 
- * @param irq IRQ number
+ * @param irq IRQ number (0-23)
  * 
- * @note This will be implemented when I/O APIC is added
+ * @note Maps IRQ to interrupt vector (irq + 32)
+ * @note Routes to current CPU's LAPIC ID
+ * @note Uses edge-triggered, active-high by default (most legacy devices)
+ * 
+ * @note XNU-style: Route to current CPU, use appropriate trigger/polarity
  */
 void apic_enable_irq(uint8_t irq)
 {
-    (void)irq;
-    /* TODO: Implement I/O APIC IRQ enabling */
+    if (!ioapic_available || irq >= IOAPIC_MAX_REDIR) {
+        return;
+    }
+    
+    /* Calculate interrupt vector (IRQ 0 -> vector 32, IRQ 1 -> vector 33, etc.) */
+    uint8_t vector = irq + 32;
+    
+    /* Get current CPU's LAPIC ID */
+    uint8_t dest_lapic_id = apic_get_lapic_id();
+    
+    /* Configure RTE:
+     * - Vector: irq + 32
+     * - Delivery Mode: Fixed (0)
+     * - Destination Mode: Physical (0)
+     * - Polarity: Active High (default for most legacy devices)
+     * - Trigger: Edge (default for legacy PIC-compatible devices)
+     * - Mask: Clear (unmask)
+     * - Destination: Current CPU's LAPIC ID
+     */
+    uint32_t rte_low = vector 
+                     | IOAPIC_RTE_DELIVERY_FIXED 
+                     | IOAPIC_RTE_POLARITY_HIGH 
+                     | IOAPIC_RTE_TRIGGER_EDGE
+                     | IOAPIC_RTE_DEST_MODE_PHYS;
+    rte_low &= ~IOAPIC_RTE_MASKED; /* Unmask */
+    
+    /* Destination: Current CPU's LAPIC ID (bits 24-31) */
+    uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID(dest_lapic_id);
+    
+    /* Write RTE */
+    ioapic_write_register(IOAPIC_REDIR_TBL(irq), rte_low);
+    ioapic_write_register(IOAPIC_REDIR_TBL_H(irq), rte_high);
 }
 
 /**
  * @function apic_disable_irq
- * @brief Disable IRQ in I/O APIC (placeholder for now)
+ * @brief Disable IRQ in I/O APIC
  * 
- * @param irq IRQ number
- * 
- * @note This will be implemented when I/O APIC is added
+ * @param irq IRQ number (0-23)
  */
 void apic_disable_irq(uint8_t irq)
 {
-    (void)irq;
-    /* TODO: Implement I/O APIC IRQ disabling */
+    if (!ioapic_available || irq >= IOAPIC_MAX_REDIR) {
+        return;
+    }
+    
+    /* Read current RTE */
+    uint32_t rte_low = ioapic_read_register(IOAPIC_REDIR_TBL(irq));
+    
+    /* Mask interrupt */
+    rte_low |= IOAPIC_RTE_MASKED;
+    
+    /* Write RTE */
+    ioapic_write_register(IOAPIC_REDIR_TBL(irq), rte_low);
 }
 
 /* ============================================================================
  * LAPIC Timer Functions
  * ============================================================================ */
+
+/**
+ * @function apic_timer_handler
+ * @brief LAPIC timer interrupt handler
+ * 
+ * @param ctx Interrupt context
+ * 
+ * @note XNU-style: Minimal work in interrupt handler
+ */
+void apic_timer_handler(interrupt_context_t* ctx)
+{
+    (void)ctx;
+    /* Increment tick counter */
+    apic_timer_ticks++;
+    apic_send_eoi();
+}
+
+/**
+ * @function apic_timer_calibrate
+ * @brief Calibrate LAPIC timer using PIT as reference
+ * 
+ * This function calibrates the LAPIC timer by:
+ * 1. Setting PIT to a known frequency (100Hz)
+ * 2. Starting LAPIC timer with a large count
+ * 3. Waiting for PIT interrupt (10ms)
+ * 4. Reading LAPIC timer count to calculate frequency
+ * 
+ * @return 0 on success, -1 on failure
+ * 
+ * @note XNU-style: Use PIT as reference for calibration
+ * @note Avoids division operations - uses bit shifts
+ */
+static int apic_timer_calibrate(void)
+{
+    extern int pit_init(uint32_t frequency);
+    extern void pit_enable(void);
+    extern void pit_disable(void);
+    extern uint32_t pit_get_ticks(void);
+    
+    /* Initialize PIT at 100Hz for calibration (10ms per tick) */
+    if (pit_init(100) != 0) {
+        return -1;
+    }
+    
+    /* Mask LAPIC timer during calibration */
+    uint32_t lvt_timer = apic_read_register(APIC_LVT_TIMER);
+    lvt_timer |= APIC_LVT_MASKED;
+    apic_write_register(APIC_LVT_TIMER, lvt_timer);
+    
+    /* Set timer divide configuration (divide by 16 for better precision) */
+    /* APIC timer divide: 0b0011 = divide by 16 */
+    apic_write_register(APIC_TIMER_DIV, 0b0011);
+    
+    /* Set timer to one-shot mode */
+    lvt_timer &= ~APIC_LVT_TIMER_PERIODIC;
+    lvt_timer &= ~APIC_LVT_MASKED;
+    apic_write_register(APIC_LVT_TIMER, lvt_timer);
+    
+    /* Start with a large count (will count down) */
+    uint32_t start_count = 0xFFFFFFFF;
+    apic_write_register(APIC_TIMER_INITCNT, start_count);
+    
+    /* Wait for 10ms using PIT (100Hz = 10ms per tick) */
+    pit_enable();
+    uint32_t pit_start = pit_get_ticks();
+    while (pit_get_ticks() == pit_start) {
+        __asm__ volatile ("pause");
+    }
+    pit_disable();
+    
+    /* Read current LAPIC timer count */
+    uint32_t end_count = apic_read_register(APIC_TIMER_CURRCNT);
+    
+    /* Calculate ticks per 10ms */
+    uint32_t ticks_10ms = start_count - end_count;
+    
+    /* Calculate ticks per millisecond */
+    /* ticks_10ms / 10 = ticks_per_ms */
+    /* Use approximation: (ticks_10ms * 102) >> 10 ≈ ticks_10ms / 10 */
+    /* 102/1024 = 0.0996... ≈ 0.1 */
+    apic_timer_ticks_per_ms = (ticks_10ms * 102) >> 10;
+    
+    /* If result is 0, use a safe default */
+    if (apic_timer_ticks_per_ms == 0) {
+        apic_timer_ticks_per_ms = 10000; /* Default: 10MHz bus frequency */
+    }
+    
+    return 0;
+}
 
 /**
  * @function apic_timer_init
@@ -443,6 +779,7 @@ void apic_disable_irq(uint8_t irq)
  * @return 0 on success, -1 on failure
  * 
  * @note LAPIC timer is per-CPU and more accurate than PIT
+ * @note Timer is calibrated using PIT as reference
  */
 int apic_timer_init(uint32_t frequency)
 {
@@ -450,24 +787,19 @@ int apic_timer_init(uint32_t frequency)
         return -1;
     }
     
-    /* Calculate timer divisor and initial count */
-    /* LAPIC timer runs at bus frequency, typically ~100MHz */
-    /* We need to calibrate it first, but for now use a simple approach */
+    apic_timer_frequency = frequency;
     
-    /* Set timer to one-shot mode first for calibration */
-    uint32_t lvt_timer = apic_read_register(APIC_LVT_TIMER);
-    lvt_timer &= ~APIC_LVT_TIMER_PERIODIC; /* One-shot mode */
-    lvt_timer &= ~APIC_LVT_MASKED; /* Unmask timer */
-    lvt_timer |= 32; /* Timer interrupt vector (IRQ 0 -> vector 32) */
-    apic_write_register(APIC_LVT_TIMER, lvt_timer);
+    /* Calibrate LAPIC timer using PIT */
+    if (apic_timer_calibrate() != 0) {
+        return -1;
+    }
     
-    /* Set timer divide configuration (divide by 1) */
-    apic_write_register(APIC_TIMER_DIV, 0x0B); /* Divide by 1 */
+    /* Register timer interrupt handler (vector 32) */
+    extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
     
-    /* TODO: Calibrate timer using PIT as reference */
-    /* For now, use a simple initial count */
-    uint32_t initial_count = 1000000; /* Approximate for 100Hz */
-    apic_write_register(APIC_TIMER_INITCNT, initial_count);
+    if (interrupt_register(32, apic_timer_handler) != 0) {
+        return -1;
+    }
     
     return 0;
 }
@@ -475,11 +807,28 @@ int apic_timer_init(uint32_t frequency)
 /**
  * @function apic_timer_start
  * @brief Start LAPIC timer in periodic mode
+ * 
+ * @note XNU-style: Uses calibrated frequency for accurate timing
  */
 void apic_timer_start(void)
 {
-    if (!apic_initialized) {
+    if (!apic_initialized || apic_timer_ticks_per_ms == 0) {
         return;
+    }
+    
+    /* Calculate initial count for desired frequency */
+    /* ticks_per_ms * 1000 / frequency = ticks per period */
+    /* For 100Hz: period = 10ms, so initial_count = ticks_per_ms * 10 */
+    /* Use bit shift: ticks_per_ms * 10 = (ticks_per_ms << 3) + (ticks_per_ms << 1) */
+    uint32_t initial_count;
+    if (apic_timer_frequency == 100) {
+        /* 100Hz: 10ms per tick = ticks_per_ms * 10 */
+        initial_count = (apic_timer_ticks_per_ms << 3) + (apic_timer_ticks_per_ms << 1); /* * 10 */
+    } else {
+        /* General case: initial_count = (ticks_per_ms * 1000) / frequency */
+        /* For other frequencies, we need division, but for now use 100Hz calculation */
+        /* TODO: Implement proper division-free calculation for other frequencies */
+        initial_count = (apic_timer_ticks_per_ms << 3) + (apic_timer_ticks_per_ms << 1); /* * 10 */
     }
     
     /* Set timer to periodic mode */
@@ -490,7 +839,6 @@ void apic_timer_start(void)
     apic_write_register(APIC_LVT_TIMER, lvt_timer);
     
     /* Set initial count to start timer */
-    uint32_t initial_count = 1000000; /* Approximate for 100Hz */
     apic_write_register(APIC_TIMER_INITCNT, initial_count);
 }
 
@@ -512,16 +860,25 @@ void apic_timer_stop(void)
 
 /**
  * @function apic_timer_get_ticks
- * @brief Get current timer count
+ * @brief Get system tick count
  * 
- * @return Current timer count
+ * @return System tick count (increments at timer frequency)
+ * 
+ * @note XNU-style: Returns system ticks, not timer register value
  */
 uint32_t apic_timer_get_ticks(void)
 {
-    if (!apic_initialized) {
-        return 0;
-    }
-    
-    return apic_read_register(APIC_TIMER_CURRCNT);
+    return apic_timer_ticks;
+}
+
+/**
+ * @function apic_timer_get_frequency
+ * @brief Get timer frequency
+ * 
+ * @return Timer frequency in Hz
+ */
+uint32_t apic_timer_get_frequency(void)
+{
+    return apic_timer_frequency;
 }
 

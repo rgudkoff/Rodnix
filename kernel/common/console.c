@@ -11,16 +11,50 @@
 #define VGA_HEIGHT 25
 #define VGA_MEMORY 0xB8000
 
+/* VGA cursor control ports */
+#define VGA_CRTC_INDEX  0x3D4
+#define VGA_CRTC_DATA   0x3D5
+#define VGA_CURSOR_LOW  0x0F
+#define VGA_CURSOR_HIGH 0x0E
+
 static uint16_t* vga_buffer = (uint16_t*)VGA_MEMORY;
 static uint8_t vga_row = 0;
 static uint8_t vga_col = 0;
 static uint8_t vga_color = 0x0F; /* White on black */
+
+/**
+ * @function update_cursor
+ * @brief Update VGA text mode cursor position
+ * 
+ * This function updates the hardware cursor position in VGA text mode.
+ * The cursor is controlled via I/O ports 0x3D4 (index) and 0x3D5 (data).
+ * 
+ * @param row Cursor row (0-24)
+ * @param col Cursor column (0-79)
+ */
+static void update_cursor(uint8_t row, uint8_t col)
+{
+    uint16_t pos = row * VGA_WIDTH + col;
+    uint8_t pos_low = (uint8_t)(pos & 0xFF);
+    uint8_t pos_high = (uint8_t)((pos >> 8) & 0xFF);
+    
+    /* Send low byte of cursor position */
+    /* Use same approach as pic.c - direct port constants in constraint */
+    __asm__ volatile ("outb %%al, %1" : : "a"(VGA_CURSOR_LOW), "Nd"((uint16_t)0x3D4));
+    __asm__ volatile ("outb %%al, %1" : : "a"(pos_low), "Nd"((uint16_t)0x3D5));
+    
+    /* Send high byte of cursor position */
+    __asm__ volatile ("outb %%al, %1" : : "a"(VGA_CURSOR_HIGH), "Nd"((uint16_t)0x3D4));
+    __asm__ volatile ("outb %%al, %1" : : "a"(pos_high), "Nd"((uint16_t)0x3D5));
+}
 
 void console_init(void)
 {
     vga_row = 0;
     vga_col = 0;
     vga_color = 0x0F;
+    /* Initialize cursor position */
+    update_cursor(vga_row, vga_col);
 }
 
 void console_clear(void)
@@ -30,6 +64,7 @@ void console_clear(void)
     }
     vga_row = 0;
     vga_col = 0;
+    update_cursor(vga_row, vga_col);
 }
 
 /**
@@ -73,12 +108,14 @@ void kputc(char c)
             scroll_screen();
             vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
+        update_cursor(vga_row, vga_col);
         return;
     }
     
     /* Handle carriage return */
     if (c == '\r') {
         vga_col = 0;
+        update_cursor(vga_row, vga_col);
         return;
     }
     
@@ -96,7 +133,7 @@ void kputc(char c)
                     vga_row = VGA_HEIGHT - 1;
                 }
             }
-        } while (vga_col % 8 != 0);  /* Tab stops every 8 columns */
+        } while ((vga_col & 7) != 0);  /* Tab stops every 8 columns (use bitwise AND instead of modulo) */
         return;
     }
     
@@ -115,6 +152,9 @@ void kputc(char c)
             vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
     }
+    
+    /* Update hardware cursor position */
+    update_cursor(vga_row, vga_col);
 }
 
 void kputs(const char* str)
@@ -131,6 +171,11 @@ static void kprint_uint(uint64_t num, uint64_t base)
 {
     char buffer[32];
     int i = 0;
+    
+    /* Prevent division by zero */
+    if (base == 0 || base > 36) {
+        base = 16; /* Default to hexadecimal */
+    }
     
     if (num == 0) {
         kputc('0');

@@ -179,13 +179,20 @@ int interrupts_init(void)
     __asm__ volatile ("" ::: "memory");
     
     /* If APIC is available, disable PIC completely */
+    /* External IRQ will route through I/O APIC */
     if (use_apic) {
-        kputs("[INT-5.1] Disable PIC (using APIC)\n");
-        __asm__ volatile ("" ::: "memory");
-        /* Disable PIC completely - mask all IRQs and disable cascade */
-        /* This prevents PIC from interfering with APIC */
-        pic_disable();
-        __asm__ volatile ("" ::: "memory");
+        extern bool ioapic_is_available(void);
+        if (ioapic_is_available()) {
+            kputs("[INT-5.1] I/O APIC available, disable PIC completely\n");
+            __asm__ volatile ("" ::: "memory");
+            /* Disable PIC completely - all IRQ route through I/O APIC */
+            pic_disable();
+            __asm__ volatile ("" ::: "memory");
+        } else {
+            kputs("[INT-5.1] I/O APIC not available, keep PIC for external IRQ\n");
+            __asm__ volatile ("" ::: "memory");
+            /* Keep PIC enabled for external IRQ until I/O APIC is ready */
+        }
     }
     
     kputs("[INT-6] Init IDT\n");

@@ -48,23 +48,23 @@ static const char* exception_names[] = {
     "Stack Fault",
     "General Protection Fault",
     "Page Fault",
-    "Unknown Interrupt",
+    "Unknown Interrupt", // 15 - Reserved
     "Coprocessor Fault",
     "Alignment Check",
     "Machine Check",
     "SIMD Floating Point Exception",
     "Virtualization Exception",
-    "Control Protection Exception",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
-    "Reserved",
+    "Control Protection Exception", // 21 - Reserved
+    "Reserved", // 22
+    "Reserved", // 23
+    "Reserved", // 24
+    "Reserved", // 25
+    "Reserved", // 26
+    "Reserved", // 27
     "Hypervisor Injection Exception",
     "VMM Communication Exception",
     "Security Exception",
-    "Reserved"
+    "Reserved" // 31
 };
 
 /**
@@ -110,11 +110,14 @@ static void interrupt_dispatch(struct registers* regs)
             pic_disable_irq(irq);
         }
         
-        /* Send EOI via LAPIC (PIC is disabled when APIC is used) */
+        /* Send EOI */
+        /* When APIC is available, use LAPIC EOI (works for all interrupts) */
+        /* PIC EOI is only needed if I/O APIC is not available */
         if (apic_is_available()) {
+            /* Use LAPIC EOI (works for all interrupts when LAPIC is active) */
             apic_send_eoi();
         } else {
-            /* Fallback to PIC only if APIC is not available */
+            /* PIC only - send PIC EOI */
             pic_send_eoi(irq);
         }
         return;

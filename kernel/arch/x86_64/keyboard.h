@@ -9,8 +9,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Initialize keyboard */
-int keyboard_init(void);
+/* Hardware initialization (called by Fabric driver) */
+void keyboard_hw_init(void);
+
+/* Buffer management (for Fabric driver) */
+void keyboard_buffer_put_raw(uint8_t scan_code);
 
 /* Read functions */
 char keyboard_read_char(void);

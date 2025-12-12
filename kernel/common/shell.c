@@ -166,6 +166,11 @@ static int shell_cmd_timer(int argc, char** argv)
     
     uint32_t ticks = pit_get_ticks();
     uint32_t freq = pit_get_frequency();
+    /* Prevent division by zero */
+    if (freq == 0) {
+        freq = 1;
+    }
+    
     uint32_t seconds = ticks / freq;
     uint32_t ms = (ticks % freq) * 1000 / freq;
     
