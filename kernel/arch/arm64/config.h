@@ -3,10 +3,10 @@
  * @brief Конфигурация для архитектуры ARM64
  */
 
-#ifndef _OSFMK_ARCH_ARM64_CONFIG_H
-#define _OSFMK_ARCH_ARM64_CONFIG_H
+#ifndef _RODNIX_ARCH_ARM64_CONFIG_H
+#define _RODNIX_ARCH_ARM64_CONFIG_H
 
-#include "../../mach/config.h"
+#include "../../core/config.h"
 
 /* ARM64 специфичные константы */
 #define ARM64_KERNEL_VIRT_BASE 0xFFFF000000000000ULL
@@ -20,5 +20,5 @@
 #define ARM64_VIRT_TO_PHYS(addr) ((uintptr_t)(addr) - ARM64_KERNEL_VIRT_BASE)
 #define ARM64_PHYS_TO_VIRT(addr) ((void*)((uintptr_t)(addr) + ARM64_KERNEL_VIRT_BASE))
 
-#endif /* _OSFMK_ARCH_ARM64_CONFIG_H */
+#endif /* _RODNIX_ARCH_ARM64_CONFIG_H */
 

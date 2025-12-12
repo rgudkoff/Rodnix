@@ -3,10 +3,10 @@
  * @brief Конфигурация для архитектуры x86_64
  */
 
-#ifndef _OSFMK_ARCH_X86_64_CONFIG_H
-#define _OSFMK_ARCH_X86_64_CONFIG_H
+#ifndef _RODNIX_ARCH_X86_64_CONFIG_H
+#define _RODNIX_ARCH_X86_64_CONFIG_H
 
-#include "../../mach/config.h"
+#include "../../core/config.h"
 
 /* x86_64 специфичные константы */
 #define X86_64_KERNEL_VIRT_BASE 0xFFFFFFFF80000000ULL
@@ -20,5 +20,5 @@
 #define X86_64_VIRT_TO_PHYS(addr) ((uintptr_t)(addr) - X86_64_KERNEL_VIRT_BASE)
 #define X86_64_PHYS_TO_VIRT(addr) ((void*)((uintptr_t)(addr) + X86_64_KERNEL_VIRT_BASE))
 
-#endif /* _OSFMK_ARCH_X86_64_CONFIG_H */
+#endif /* _RODNIX_ARCH_X86_64_CONFIG_H */
 

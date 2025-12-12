@@ -3,8 +3,8 @@
  * @brief Конфигурация ядра
  */
 
-#ifndef _OSFMK_MACH_CONFIG_H
-#define _OSFMK_MACH_CONFIG_H
+#ifndef _RODNIX_CORE_CONFIG_H
+#define _RODNIX_CORE_CONFIG_H
 
 /* Определение целевой архитектуры на этапе компиляции */
 #if defined(__x86_64__) || defined(_M_X64)
@@ -38,5 +38,5 @@
 #define PAGE_FRAME(addr) ((addr) >> PAGE_SHIFT)
 #define FRAME_ADDR(frame) ((frame) << PAGE_SHIFT)
 
-#endif /* _OSFMK_MACH_CONFIG_H */
+#endif /* _RODNIX_CORE_CONFIG_H */
 

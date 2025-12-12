@@ -5,8 +5,8 @@
  * Определяет базовые типы и константы, используемые во всех архитектурах.
  */
 
-#ifndef _OSFMK_MACH_ARCH_TYPES_H
-#define _OSFMK_MACH_ARCH_TYPES_H
+#ifndef _RODNIX_CORE_ARCH_TYPES_H
+#define _RODNIX_CORE_ARCH_TYPES_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -85,5 +85,5 @@ typedef struct {
 #error "ARCH_ISA_TYPE must be defined (ARCH_TYPE_CISC or ARCH_TYPE_RISC)"
 #endif
 
-#endif /* _OSFMK_MACH_ARCH_TYPES_H */
+#endif /* _RODNIX_CORE_ARCH_TYPES_H */
 
