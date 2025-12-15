@@ -84,19 +84,16 @@ XORRISO := xorriso
 GRUB_FILE := i686-elf-grub-file
 
 # QEMU accel
-ifeq ($(UNAME_S),Darwin)
-  QEMU_ACCEL ?= -accel hvf
-else
-  ifneq ("$(wildcard /dev/kvm)","")
-    QEMU_ACCEL ?= -accel kvm
-  else
-    QEMU_ACCEL ?=
-  endif
-endif
+# По умолчанию не используем аппаратное ускорение (TCG), чтобы избежать
+# проблем с недоступными ускорителями (hvf/kvm). При желании можно
+# переопределить переменную QEMU_ACCEL снаружи:
+#   make run QEMU_ACCEL="-accel hvf"
+QEMU_ACCEL ?=
 
-# QEMU flags: enable APIC and I/O APIC for modern interrupt handling
+# QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
+# Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
 QEMU_FLAGS       = -m 64M -boot d -cdrom $(ISO_OUT) -serial stdio -no-reboot -no-shutdown \
-                   -machine q35 -cpu qemu64,+apic,+x2apic
+                   -machine pc -cpu qemu64,+apic,+x2apic
 QEMU_DEBUG_FLAGS = -s -S
 
 
@@ -145,9 +142,9 @@ iso: $(KERNEL_BIN)
 # ===== Run / Debug =====
 run: iso
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
-		echo "[*] Running QEMU $(QEMU_ACCEL)"; \
-		qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
-		qemu-system-x86_64 $(QEMU_FLAGS); \
+		echo "[*] Running QEMU $(QEMU_ACCEL), logging to boot.log"; \
+		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
+		  qemu-system-x86_64 $(QEMU_FLAGS) ) 2>&1 | tee boot.log; \
 	else \
 		echo "[!] qemu-system-x86_64 not found. macOS: brew install qemu"; exit 1; \
 	fi

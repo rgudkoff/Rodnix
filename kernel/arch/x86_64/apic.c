@@ -6,7 +6,7 @@
  * interrupt controller for x86_64 systems, providing better support for multi-core
  * systems and more flexible interrupt routing.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  * @note APIC is preferred over PIC on modern systems, but PIC is still required
  *       for compatibility and as a fallback.
  */
@@ -69,7 +69,7 @@
 #define ACPI_SIG_RSDP     "RSD PTR "
 #define ACPI_SIG_MADT     "APIC"
 
-/* ACPI MADT structure (XNU-style) */
+/* ACPI MADT structure */
 struct acpi_madt {
     uint32_t signature;      /* "APIC" */
     uint32_t length;
@@ -162,7 +162,7 @@ static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
 /* Forward declarations */
 static int ioapic_init(void);
 
-/* XNU-style: Find I/O APIC address from ACPI MADT */
+/* Find I/O APIC address from ACPI MADT */
 static uint64_t find_ioapic_from_madt(void)
 {
     extern void kputs(const char* str);
@@ -172,7 +172,7 @@ static uint64_t find_ioapic_from_madt(void)
     kputs("[MADT-1] Searching for ACPI MADT table...\n");
     __asm__ volatile ("" ::: "memory");
     
-    /* XNU-style: Search for RSDP in BIOS memory area (0xE0000-0xFFFFF) */
+    /* Search for RSDP in BIOS memory area (0xE0000-0xFFFFF) */
     /* RSDP signature: "RSD PTR " (8 bytes) */
     uint64_t rsdp_addr = 0;
     
@@ -480,15 +480,19 @@ int apic_init(void)
     
     kputs("[APIC-1] Check CPUID\n");
     __asm__ volatile ("" ::: "memory");
-    /* Check if APIC is available */
-    if (!apic_check_cpuid()) {
-        kputs("[APIC-1.1] APIC not available\n");
+    /* XNU-style: доверяем платформе/QEMU и стараемся инициализировать LAPIC
+     * даже если CPUID не выставляет флаг APIC (некоторые конфигурации
+     * виртуализации грешат этим). CPUID используем только для логирования. */
+    bool cpuid_has_apic = apic_check_cpuid();
+    if (!cpuid_has_apic) {
+        kputs("[APIC-1.1] WARNING: CPUID reports no APIC, forcing APIC init (QEMU/firmware quirk?)\n");
         __asm__ volatile ("" ::: "memory");
-        return -1; /* APIC not available */
+    } else {
+        kputs("[APIC-1.2] CPUID reports APIC present\n");
+        __asm__ volatile ("" ::: "memory");
     }
-    __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-2] Set available flag\n");
+    kputs("[APIC-2] Mark APIC as available (forced)\n");
     __asm__ volatile ("" ::: "memory");
     apic_available = true;
     __asm__ volatile ("" ::: "memory");
@@ -584,7 +588,7 @@ int apic_init(void)
     kputs("[APIC-11] Init I/O APIC\n");
     __asm__ volatile ("" ::: "memory");
     
-    /* XNU-style: Find I/O APIC address from ACPI MADT */
+    /* Find I/O APIC address from ACPI MADT */
     kputs("[APIC-11.0] Searching for I/O APIC in ACPI MADT...\n");
     __asm__ volatile ("" ::: "memory");
     uint64_t ioapic_addr = find_ioapic_from_madt();
@@ -665,6 +669,61 @@ void apic_send_eoi(void)
  * I/O APIC Helper Functions
  * ============================================================================ */
 
+/* Вспомогательный вывод 8 hex-цифр на VGA (одна строка, красный текст) */
+static void ioapic_vga_print_hex8(uint8_t row, uint8_t start_col, uint32_t value, uint16_t attr)
+{
+    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+    static const char* hex = "0123456789ABCDEF";
+
+    for (int i = 7; i >= 0; i--) {
+        uint8_t nibble = (value >> (i * 4)) & 0xF;
+        uint8_t col = start_col + (7 - i);
+        if (col >= 80) break;
+        vga[row * 80 + col] = (uint16_t)hex[nibble] | attr;
+    }
+}
+
+/* Минимальный VGA-логгер состояния I/O APIC (нижняя строка экрана, КРАСНЫЙ).
+ * Печатает ОДНУ стабильную строку вида:
+ *   IOAPIC ID=XXXXXXXX VER=XXXXXXXX
+ * и затирает предыдущий мусор на этой строке.
+ */
+static void ioapic_vga_state(uint32_t id_reg, uint32_t ver)
+{
+    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+    const uint8_t row = 24; /* последняя строка (0-based) */
+    const uint16_t attr = 0x0C00; /* красный на чёрном */
+
+    /* Очистить всю строку */
+    for (uint8_t c = 0; c < 80; c++) {
+        vga[row * 80 + c] = (uint16_t)(' ') | attr;
+    }
+
+    /* Текст: "IOAPIC ID=" */
+    const char* prefix = "IOAPIC ID=";
+    uint8_t col = 0;
+    while (*prefix && col < 80) {
+        vga[row * 80 + col] = (uint16_t)(*prefix) | attr;
+        prefix++;
+        col++;
+    }
+
+    /* ID */
+    ioapic_vga_print_hex8(row, col, id_reg, attr);
+    col += 8;
+
+    /* Разделитель и " VER=" */
+    const char* mid = " VER=";
+    while (*mid && col < 80) {
+        vga[row * 80 + col] = (uint16_t)(*mid) | attr;
+        mid++;
+        col++;
+    }
+
+    /* VER */
+    ioapic_vga_print_hex8(row, col, ver, attr);
+}
+
 /**
  * @function ioapic_read_register
  * @brief Read I/O APIC register
@@ -744,6 +803,10 @@ int ioapic_init(void)
         kprintf("[IOAPIC-1.2] ERROR: Failed to map I/O APIC page (error=%d)\n", map_result);
         kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
         __asm__ volatile ("" ::: "memory");
+        /* DEBUG: остановиться, чтобы можно было увидеть логи */
+        for (;;) {
+            __asm__ volatile ("hlt");
+        }
         return -1;
     }
     
@@ -787,6 +850,9 @@ int ioapic_init(void)
     
     kprintf("[IOAPIC-3.1] I/O APIC Version register value: 0x%08X\n", ver);
     __asm__ volatile ("" ::: "memory");
+
+    /* Зафиксировать на экране текущее состояние ID/VER (даже если они «битые») */
+    ioapic_vga_state(id_reg, ver);
     
     /* Check if Version register is readable */
     if (ver == 0xFFFFFFFF) {
@@ -839,7 +905,7 @@ int ioapic_init(void)
  * 
  * @return LAPIC ID
  * 
- * @note XNU-style: Get current CPU's LAPIC ID
+ * @note Get current CPU's LAPIC ID
  */
 uint8_t apic_get_lapic_id(void)
 {
@@ -863,7 +929,7 @@ uint8_t apic_get_lapic_id(void)
  * @note Routes to current CPU's LAPIC ID
  * @note Uses edge-triggered, active-high by default (most legacy devices)
  * 
- * @note XNU-style: Route to current CPU, use appropriate trigger/polarity
+ * @note Route to current CPU, use appropriate trigger/polarity
  */
 void apic_enable_irq(uint8_t irq)
 {
@@ -933,7 +999,7 @@ void apic_disable_irq(uint8_t irq)
  * 
  * @param ctx Interrupt context
  * 
- * @note XNU-style: Minimal work in interrupt handler
+ * @note Minimal work in interrupt handler
  */
 void apic_timer_handler(interrupt_context_t* ctx)
 {
@@ -955,7 +1021,7 @@ void apic_timer_handler(interrupt_context_t* ctx)
  * 
  * @return 0 on success, -1 on failure
  * 
- * @note XNU-style: Use PIT as reference for calibration
+ * @note Use PIT as reference for calibration
  * @note Avoids division operations - uses bit shifts
  */
 static int apic_timer_calibrate(void)
@@ -1054,7 +1120,7 @@ int apic_timer_init(uint32_t frequency)
  * @function apic_timer_start
  * @brief Start LAPIC timer in periodic mode
  * 
- * @note XNU-style: Uses calibrated frequency for accurate timing
+ * @note Uses calibrated frequency for accurate timing
  */
 void apic_timer_start(void)
 {
@@ -1110,7 +1176,7 @@ void apic_timer_stop(void)
  * 
  * @return System tick count (increments at timer frequency)
  * 
- * @note XNU-style: Returns system ticks, not timer register value
+ * @note Returns system ticks, not timer register value
  */
 uint32_t apic_timer_get_ticks(void)
 {

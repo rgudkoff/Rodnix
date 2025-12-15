@@ -5,7 +5,7 @@
  * This module implements the 8259A PIC initialization and management.
  * The PIC is used to route hardware interrupts to the CPU before APIC is available.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  * @note On modern systems, APIC is preferred, but PIC initialization is still required
  *       for compatibility and as a fallback.
  */
@@ -150,7 +150,7 @@ void pic_disable(void)
     __asm__ volatile ("outb %%al, %1" : : "a"(0xFF), "Nd"(PIC2_DATA));
 }
 
-/* Enable specific IRQ (XNU-style: use direct port constants) */
+/* Enable specific IRQ (use direct port constants) */
 void pic_enable_irq(uint8_t irq)
 {
     /* DIAGNOSTIC: Mark on VGA (RED) */
@@ -168,7 +168,7 @@ void pic_enable_irq(uint8_t irq)
     uint8_t value;
     uint8_t bit = irq;
     
-    /* XNU-style: Use direct port constants instead of variables */
+    /* Use direct port constants instead of variables */
     /* In x86_64, outb requires port to be constant or in dx register */
     if (irq < 8) {
         /* Master PIC - use constant port directly */

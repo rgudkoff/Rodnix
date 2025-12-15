@@ -67,7 +67,7 @@ static void fabric_irq_wrapper(interrupt_context_t* ctx)
     }
     
     /* Call all registered handlers for this vector */
-    /* XNU-style: Avoid any operations that might use FPU */
+    /* Avoid any operations that might use FPU */
     /* Use simple integer operations only */
     uint32_t i = 0;
     uint32_t handler_count = 0;
@@ -423,7 +423,7 @@ void fabric_free_irq(int vector, fabric_irq_handler_t h)
 /* Logging */
 void fabric_log(const char *fmt, ...)
 {
-    /* XNU-style: Logging with variadic arguments */
+    /* Logging with variadic arguments */
     /* Forward variadic arguments to kprintf using va_list */
     extern void kvprintf(const char *fmt, va_list args);
     

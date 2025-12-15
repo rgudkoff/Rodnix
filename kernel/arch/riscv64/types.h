@@ -1,6 +1,6 @@
 /**
  * @file riscv64/types.h
- * @brief Типы данных для архитектуры RISC-V64
+ * @brief Data types for RISC-V64 architecture
  */
 
 #ifndef _RODNIX_ARCH_RISCV64_TYPES_H
@@ -11,11 +11,11 @@
 #include <stdint.h>
 
 /* ============================================================================
- * Регистры процессора RISC-V64
+ * RISC-V64 CPU registers
  * ============================================================================ */
 
 typedef struct {
-    uint64_t x0;            /* zero - всегда 0 */
+    uint64_t x0;            /* zero - always 0 */
     uint64_t x1;             /* ra - return address */
     uint64_t x2;             /* sp - stack pointer */
     uint64_t x3;             /* gp - global pointer */
@@ -32,18 +32,18 @@ typedef struct {
 } riscv64_registers_t;
 
 /* ============================================================================
- * Контекст прерывания RISC-V64
+ * RISC-V64 interrupt context
  * ============================================================================ */
 
 typedef struct {
     riscv64_registers_t regs;
     uint64_t cause;          /* Cause register */
     uint64_t tval;           /* Trap Value register */
-    uint32_t exception_type; /* Тип исключения */
+    uint32_t exception_type; /* Exception type */
 } riscv64_interrupt_context_t;
 
 /* ============================================================================
- * Структура страницы RISC-V64 (Sv39/Sv48)
+ * RISC-V64 page structure (Sv39/Sv48)
  * ============================================================================ */
 
 typedef struct {
@@ -61,7 +61,7 @@ typedef struct {
 } __attribute__((packed)) riscv64_pte_t;
 
 /* ============================================================================
- * Макросы для адресации страниц RISC-V64 (Sv39)
+ * Macros for RISC-V64 page addressing (Sv39)
  * ============================================================================ */
 
 #define RISCV64_LEVEL0_INDEX(addr) (((addr) >> 30) & 0x1FF)
@@ -70,14 +70,14 @@ typedef struct {
 #define RISCV64_PAGE_OFFSET(addr) ((addr) & 0xFFF)
 
 /* ============================================================================
- * Константы RISC-V64
+ * RISC-V64 constants
  * ============================================================================ */
 
 #define RISCV64_PAGE_SIZE 4096
 #define RISCV64_LARGE_PAGE_SIZE 2097152  /* 2MB */
 #define RISCV64_HUGE_PAGE_SIZE 1073741824 /* 1GB */
 
-/* Привилегии */
+/* Privileges */
 #define RISCV64_PRIV_USER 0
 #define RISCV64_PRIV_SUPERVISOR 1
 #define RISCV64_PRIV_MACHINE 3

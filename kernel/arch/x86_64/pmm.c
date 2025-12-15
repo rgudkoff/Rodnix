@@ -6,12 +6,12 @@
  * allocator. It tracks free and used physical pages and provides allocation
  * and deallocation functions.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "types.h"
 #include "config.h"
-#include "../../include/debug.h"
+#include "../../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -248,12 +248,12 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     
     kputs("[PMM-7] Clear bitmap\n");
     __asm__ volatile ("" ::: "memory");
-    /* Clear bitmap (mark all pages as free) - XNU-style: efficient clearing */
+    /* Clear bitmap (mark all pages as free) - efficient clearing */
     /* Use volatile pointer to prevent optimization issues */
     volatile uint32_t* bitmap_ptr = (volatile uint32_t*)pmm_state.bitmap;
     uint64_t bitmap_words = bitmap_size / sizeof(uint32_t);
     
-    /* Clear in chunks to avoid long loops (XNU-style: batched operations) */
+    /* Clear in chunks to avoid long loops (batched operations) */
     const uint64_t chunk_size = 1024; /* Clear 1024 words at a time */
     uint64_t chunks = bitmap_words / chunk_size;
     uint64_t remainder = bitmap_words % chunk_size;
@@ -286,13 +286,13 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
  * @function pmm_alloc_page
  * @brief Allocate a single physical page
  * 
- * This function implements a first-fit allocation strategy, similar to XNU's
- * approach. It finds the first free page and marks it as used.
+ * This function implements a first-fit allocation strategy.
+ * It finds the first free page and marks it as used.
  * 
  * @return Physical address of allocated page, or 0 on failure
  * 
  * @note The returned address is page-aligned.
- * @note In XNU-style, this would be part of a zone-based allocator.
+ * @note This would be part of a zone-based allocator in a more advanced implementation.
  *       For now, we use a simple bitmap-based approach.
  */
 uint64_t pmm_alloc_page(void)
@@ -311,7 +311,7 @@ uint64_t pmm_alloc_page(void)
             
             uint64_t phys = pmm_index_to_page(i);
             
-            /* Zero the page (XNU-style: ensure clean pages) */
+            /* Zero the page (ensure clean pages) */
             void* virt = (void*)(phys + X86_64_KERNEL_VIRT_BASE);
             for (uint64_t j = 0; j < PAGE_SIZE / sizeof(uint64_t); j++) {
                 ((uint64_t*)virt)[j] = 0;
@@ -363,7 +363,7 @@ void pmm_free_page(uint64_t phys)
  * @return Physical address of first page, or 0 on failure
  * 
  * @note This implements a best-fit contiguous allocation algorithm.
- *       XNU uses zone-based allocation for better performance, but this
+ *       Zone-based allocation would provide better performance, but this
  *       simple approach works for initial implementation.
  */
 uint64_t pmm_alloc_pages(uint32_t count)
@@ -396,7 +396,7 @@ uint64_t pmm_alloc_pages(uint32_t count)
             
             uint64_t first_page = pmm_index_to_page(start);
             
-            /* Zero all pages (XNU-style: ensure clean pages) */
+            /* Zero all pages (ensure clean pages) */
             for (uint32_t i = 0; i < count; i++) {
                 void* virt = (void*)(first_page + i * PAGE_SIZE + X86_64_KERNEL_VIRT_BASE);
                 for (uint64_t j = 0; j < PAGE_SIZE / sizeof(uint64_t); j++) {

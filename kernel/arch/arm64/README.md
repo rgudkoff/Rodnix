@@ -1,38 +1,38 @@
-# ARM64 - Реализация для архитектуры ARM64
+# ARM64 - Implementation for ARM64 architecture
 
-Реализация ядра для процессоров ARM 64-бит (RISC архитектура).
+Kernel implementation for ARM 64-bit processors (RISC architecture).
 
-## Особенности
+## Features
 
-- **RISC архитектура**: Reduced Instruction Set Computer
-- **64-битный режим**: AArch64
-- **4-уровневая страничная структура**: Level 0 → Level 1 → Level 2 → Level 3
-- **EL (Exception Levels)**: Уровни привилегий
+- **RISC architecture**: Reduced Instruction Set Computer
+- **64-bit mode**: AArch64
+- **4-level page structure**: Level 0 → Level 1 → Level 2 → Level 3
+- **EL (Exception Levels)**: Privilege levels
 
-## Компоненты
+## Components
 
-- `config.h` - конфигурация ARM64
-- `types.h` - типы данных ARM64
-- `interrupts.c` - обработка прерываний (IRQ/FIQ)
-- `memory.c` - управление памятью (MMU)
-- `cpu.c` - работа с процессором
-- `boot.S` - код загрузки
+- `config.h` - ARM64 configuration
+- `types.h` - ARM64 data types
+- `interrupts.c` - interrupt handling (IRQ/FIQ)
+- `memory.c` - memory management (MMU)
+- `cpu.c` - CPU operations
+- `boot.S` - boot code
 
-## Регистры
+## Registers
 
-ARM64 использует 31 64-битных регистра общего назначения:
+ARM64 uses 31 64-bit general purpose registers:
 - x0-x30 (x30 = LR, Link Register)
 - SP (Stack Pointer)
 - PC (Program Counter)
 
-## Страничная структура
+## Page Structure
 
 ```
 Level 0 (512 entries) → Level 1 (512 entries) → Level 2 (512 entries) → Level 3 (512 entries)
 ```
 
-Размеры страниц:
-- 4KB (обычные страницы)
+Page sizes:
+- 4KB (regular pages)
 - 2MB (large pages)
 - 1GB (huge pages)
 
@@ -42,4 +42,3 @@ Level 0 (512 entries) → Level 1 (512 entries) → Level 2 (512 entries) → Le
 - EL1: Kernel mode
 - EL2: Hypervisor
 - EL3: Secure monitor
-

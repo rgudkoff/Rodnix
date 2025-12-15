@@ -1,6 +1,6 @@
 /**
  * @file types.h
- * @brief Базовые типы данных
+ * @brief Basic data types
  */
 
 #ifndef _RODNIX_TYPES_H
@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-/* Базовые целочисленные типы */
+/* Basic integer types */
 typedef uint8_t  u8_t;
 typedef uint16_t u16_t;
 typedef uint32_t u32_t;
@@ -21,15 +21,15 @@ typedef int16_t  i16_t;
 typedef int32_t  i32_t;
 typedef int64_t  i64_t;
 
-/* Указатели и размеры уже определены в <stdint.h> и <stddef.h> */
-/* В 64-битном режиме они автоматически 64-битные */
+/* Pointers and sizes are already defined in <stdint.h> and <stddef.h> */
+/* In 64-bit mode they are automatically 64-bit */
 
 /* NULL */
 #ifndef NULL
 #define NULL ((void*)0)
 #endif
 
-/* Макросы для выравнивания */
+/* Alignment macros */
 #define ALIGN_UP(addr, align)    (((addr) + (align) - 1) & ~((align) - 1))
 #define ALIGN_DOWN(addr, align) ((addr) & ~((align) - 1))
 

@@ -1,14 +1,14 @@
 /**
  * @file input.h
- * @brief InputCore - системный слой ввода (аналог IOHIDSystem в XNU)
+ * @brief InputCore - system input layer
  * 
- * InputCore - это системный слой ввода, который:
- * - принимает сырые события от драйверов
- * - ведёт состояние клавиатуры
- * - переводит scancode → символ
- * - предоставляет стабильный API ядру
+ * InputCore is the system input layer, which:
+ * - receives raw events from drivers
+ * - maintains keyboard state
+ * - translates scancode → character
+ * - provides stable API to kernel
  * 
- * Архитектура:
+ * Architecture:
  * [ hardware driver ] → [ InputCore ] → [ shell / console / UI ]
  */
 
@@ -18,18 +18,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Инициализация подсистемы клавиатуры */
+/* Initialize keyboard subsystem */
 void input_init_keyboard(void);
 
-/* Вход для драйверов: сырые события */
+/* Entry point for drivers: raw events */
 void input_push_scancode(uint16_t scancode, bool pressed);
 
-/* API для потребителей (shell, console) */
+/* API for consumers (shell, console) */
 bool input_has_char(void);
-int  input_read_char(void);                  /* -1 если нет символа */
-size_t input_read_line(char *buf, size_t n); /* блокирующее чтение строки */
+int  input_read_char(void);                  /* -1 if no character */
+size_t input_read_line(char *buf, size_t n); /* blocking line read */
 
-/* XNU-style: Process queued scan codes from interrupt handler */
+/* Process queued scan codes from interrupt handler */
 void input_process_queue(void);
 
 

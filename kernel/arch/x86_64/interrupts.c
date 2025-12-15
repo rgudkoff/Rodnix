@@ -6,7 +6,7 @@
  * interrupt subsystem for x86_64. It integrates IDT, PIC, and interrupt
  * handler registration.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "../../core/interrupts.h"
@@ -98,13 +98,13 @@ static void convert_interrupt_context(struct registers* regs, interrupt_context_
     ctx->arch_specific = arch_ctx;
 }
 
-/* Обертка для обработчиков прерываний x86_64 */
+/* Wrapper for x86_64 interrupt handlers */
 static void interrupt_wrapper(struct registers* regs)
 {
     interrupt_context_t ctx;
     convert_interrupt_context(regs, &ctx);
     
-    /* Вызываем зарегистрированный обработчик */
+    /* Call registered handler */
     if (interrupt_handlers[regs->int_no]) {
         interrupt_handlers[regs->int_no](&ctx);
     }
@@ -155,7 +155,7 @@ int interrupts_init(void)
     
     kputs("[INT-3] Try APIC\n");
     __asm__ volatile ("" ::: "memory");
-    /* XNU-style: Try APIC first, fallback to PIC */
+    /* Try APIC first, fallback to PIC */
     bool use_apic = false;
     if (apic_init() == 0 && apic_is_available()) {
         use_apic = true;
@@ -178,7 +178,7 @@ int interrupts_init(void)
     pic_disable();
     __asm__ volatile ("" ::: "memory");
     
-    /* XNU-style: If LAPIC is available, PIC should be disabled */
+    /* If LAPIC is available, PIC should be disabled */
     /* But if I/O APIC is not available, keep PIC for external IRQ routing */
     if (use_apic) {
         extern bool ioapic_is_available(void);
@@ -240,16 +240,16 @@ int interrupt_unregister(uint32_t vector)
 
 /**
  * @function interrupts_enable
- * @brief Enable interrupts (XNU-style)
+ * @brief Enable interrupts
  * 
- * In XNU, interrupts are enabled by setting IRQL to PASSIVE level.
+ * Interrupts are enabled by setting IRQL to PASSIVE level.
  * This function sets IRQL to PASSIVE and enables interrupts via STI.
  * 
- * @note XNU-style: Use IRQL-based interrupt control
+ * @note Use IRQL-based interrupt control
  */
 void interrupts_enable(void)
 {
-    /* XNU-style: Set IRQL to PASSIVE and enable interrupts */
+    /* Set IRQL to PASSIVE and enable interrupts */
     /* Use volatile to prevent optimization issues */
     volatile irql_t* irql_ptr = &current_irql;
     *irql_ptr = IRQL_PASSIVE;
@@ -260,16 +260,16 @@ void interrupts_enable(void)
 
 /**
  * @function interrupts_disable
- * @brief Disable interrupts (XNU-style)
+ * @brief Disable interrupts
  * 
- * In XNU, interrupts are disabled by setting IRQL to HIGH level.
+ * Interrupts are disabled by setting IRQL to HIGH level.
  * This function disables interrupts via CLI and sets IRQL to HIGH.
  * 
- * @note XNU-style: Use IRQL-based interrupt control
+ * @note Use IRQL-based interrupt control
  */
 void interrupts_disable(void)
 {
-    /* XNU-style: Disable interrupts and set IRQL to HIGH */
+    /* Disable interrupts and set IRQL to HIGH */
     __asm__ volatile ("cli");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     current_irql = IRQL_HIGH;
@@ -283,15 +283,14 @@ irql_t get_current_irql(void)
 
 /**
  * @function set_irql
- * @brief Set interrupt request level (XNU-style)
+ * @brief Set interrupt request level
  * 
  * This function sets the IRQL and enables/disables interrupts accordingly.
- * In XNU, this is similar to splx() function.
  * 
  * @param new_level New IRQL level
  * @return Previous IRQL level
  * 
- * @note XNU-style: IRQL-based interrupt control
+ * @note IRQL-based interrupt control
  */
 irql_t set_irql(irql_t new_level)
 {
@@ -301,7 +300,7 @@ irql_t set_irql(irql_t new_level)
     current_irql = new_level;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     
-    /* XNU-style: Enable interrupts only at PASSIVE level */
+    /* Enable interrupts only at PASSIVE level */
     if (new_level == IRQL_PASSIVE) {
         __asm__ volatile ("sti");
         __asm__ volatile ("" ::: "memory"); /* Memory barrier */
@@ -320,7 +319,7 @@ void interrupt_wait(void)
 
 int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
 {
-    /* TODO: Реализовать отправку IPI через APIC */
+    /* TODO: Implement IPI sending via APIC */
     (void)cpu_id;
     (void)vector;
     return -1;

@@ -5,7 +5,7 @@
  * This module provides the interface for APIC initialization and management.
  * APIC is the modern interrupt controller for x86_64, replacing the legacy PIC.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  * @note APIC is preferred over PIC on modern systems.
  */
 

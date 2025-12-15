@@ -21,6 +21,7 @@ static uint16_t* vga_buffer = (uint16_t*)VGA_MEMORY;
 static uint8_t vga_row = 0;
 static uint8_t vga_col = 0;
 static uint8_t vga_color = 0x0F; /* White on black */
+static volatile bool kputs_in_progress = false; /* Prevent recursive calls from exception handlers */
 
 /**
  * @function update_cursor
@@ -69,16 +70,22 @@ void console_clear(void)
 
 /**
  * @function scroll_screen
- * @brief Scroll the screen up by one line (XNU-style)
+ * @brief Scroll the screen up by one line
  * 
  * This function scrolls the entire screen content up by one line,
  * clearing the bottom line. This is used when the screen is full.
  * 
- * XNU-style: Efficient scrolling using word-sized operations.
+ * Efficient scrolling using word-sized operations.
  */
 static void scroll_screen(void)
 {
-    /* XNU-style: Copy entire screen buffer up by one line using word operations */
+    /* Safety check: ensure vga_buffer is valid */
+    if (!vga_buffer || (uintptr_t)vga_buffer < 0xB8000 || (uintptr_t)vga_buffer > 0xB8FFF) {
+        /* Invalid buffer - cannot scroll, just return */
+        return;
+    }
+    
+    /* Copy entire screen buffer up by one line using word operations */
     /* This is more efficient than byte-by-byte copying */
     uint16_t* src = vga_buffer + VGA_WIDTH;  /* Start from line 1 */
     uint16_t* dst = vga_buffer;              /* Copy to line 0 */
@@ -104,7 +111,7 @@ void kputc(char c)
         vga_col = 0;
         vga_row++;
         if (vga_row >= VGA_HEIGHT) {
-            /* XNU-style: Scroll screen when reaching bottom */
+            /* Scroll screen when reaching bottom */
             scroll_screen();
             vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
@@ -119,7 +126,7 @@ void kputc(char c)
         return;
     }
     
-    /* Handle tab (XNU-style: expand to spaces) */
+    /* Handle tab (expand to spaces) */
     if (c == '\t') {
         do {
             uint32_t index = vga_row * VGA_WIDTH + vga_col;
@@ -147,7 +154,7 @@ void kputc(char c)
         vga_col = 0;
         vga_row++;
         if (vga_row >= VGA_HEIGHT) {
-            /* XNU-style: Scroll screen when reaching bottom */
+            /* Scroll screen when reaching bottom */
             scroll_screen();
             vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
@@ -159,10 +166,39 @@ void kputc(char c)
 
 void kputs(const char* str)
 {
+    /* Prevent recursive calls from exception handlers */
+    if (kputs_in_progress) {
+        /* If already in kputs, just write directly to VGA to avoid recursion */
+        volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+        static uint8_t safe_row = 0;
+        static uint8_t safe_col = 0;
+        
+        while (*str && safe_row < VGA_HEIGHT) {
+            if (*str == '\n') {
+                safe_col = 0;
+                safe_row++;
+            } else if (*str != '\r') {
+                uint32_t idx = safe_row * VGA_WIDTH + safe_col;
+                if (idx < VGA_WIDTH * VGA_HEIGHT) {
+                    vga[idx] = (uint16_t)*str | ((uint16_t)0x0F << 8);
+                }
+                safe_col++;
+                if (safe_col >= VGA_WIDTH) {
+                    safe_col = 0;
+                    safe_row++;
+                }
+            }
+            str++;
+        }
+        return;
+    }
+    
+    kputs_in_progress = true;
     while (*str) {
         kputc(*str);
         str++;
     }
+    kputs_in_progress = false;
     /* Force immediate output - no buffering */
     __asm__ volatile ("" ::: "memory");
 }

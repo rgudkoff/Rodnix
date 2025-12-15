@@ -1,8 +1,8 @@
 /**
  * @file x86_64/boot.c
- * @brief Реализация загрузки для x86_64
+ * @brief Boot implementation for x86_64
  * 
- * @note This implementation follows XNU-style boot argument handling.
+ * @note This implementation follows boot argument handling.
  */
 
 #include "../../core/boot.h"
@@ -10,7 +10,7 @@
 #include "config.h"
 #include <stddef.h>
 
-/* Multiboot2 tag structure (XNU-style parsing) */
+/* Multiboot2 tag structure */
 struct multiboot2_tag {
     uint32_t type;
     uint32_t size;
@@ -35,8 +35,8 @@ int boot_early_init(boot_info_t* info)
         return -1;
     }
     
-    /* Copy boot information (XNU-style: fixed buffer for cmdline) */
-    /* Use memory barriers to ensure proper ordering (XNU-style) */
+    /* Copy boot information (fixed buffer for cmdline) */
+    /* Use memory barriers to ensure proper ordering */
     boot_info_storage.magic = info->magic;
     __asm__ volatile ("" ::: "memory");
     
@@ -52,12 +52,12 @@ int boot_early_init(boot_info_t* info)
     boot_info_storage.flags = info->flags;
     __asm__ volatile ("" ::: "memory");
     
-    /* Initialize cmdline buffer to empty string (XNU-style: fixed buffer) */
+    /* Initialize cmdline buffer to empty string (fixed buffer) */
     /* TODO: Parse cmdline from Multiboot2 info later when memory is fully initialized */
     boot_info_storage.cmdline[0] = '\0';
     __asm__ volatile ("" ::: "memory");
     
-    /* Set valid flag last, with memory barrier (XNU-style) */
+    /* Set valid flag last, with memory barrier */
     boot_info_valid = true;
     __asm__ volatile ("" ::: "memory");
     
@@ -66,16 +66,16 @@ int boot_early_init(boot_info_t* info)
 
 int boot_arch_init(void)
 {
-    /* Инициализация архитектурно-зависимых компонентов x86_64 */
-    /* GDT, IDT и т.д. уже инициализированы в boot.S */
+    /* Initialize architecture-dependent components for x86_64 */
+    /* GDT, IDT, etc. are already initialized in boot.S */
     
     return 0;
 }
 
 int boot_switch_to_64bit(void)
 {
-    /* Переключение в 64-битный режим уже выполнено в boot.S */
-    /* Эта функция вызывается для совместимости, но ничего не делает */
+    /* Switch to 64-bit mode already done in boot.S */
+    /* This function is called for compatibility but does nothing */
     
     return 0;
 }
@@ -89,16 +89,16 @@ int boot_memory_init(boot_info_t* info)
         info = &boot_info_storage;
     }
     
-    /* Инициализация памяти на раннем этапе */
-    /* PMM уже инициализирован */
+    /* Early memory initialization */
+    /* PMM is already initialized */
     
     return 0;
 }
 
 int boot_interrupts_init(void)
 {
-    /* Инициализация прерываний на раннем этапе */
-    /* IDT уже инициализирована */
+    /* Early interrupt initialization */
+    /* IDT is already initialized */
     
     return 0;
 }

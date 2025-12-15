@@ -1,6 +1,6 @@
 /**
  * @file arm64/interrupts.c
- * @brief Реализация прерываний для ARM64
+ * @brief Interrupt implementation for ARM64
  */
 
 #include "../../core/interrupts.h"
@@ -18,7 +18,7 @@ int interrupts_init(void)
     
     current_irql = IRQL_PASSIVE;
     
-    /* TODO: Инициализация GIC (Generic Interrupt Controller) */
+    /* TODO: Initialize GIC (Generic Interrupt Controller) */
     
     return 0;
 }
@@ -31,7 +31,7 @@ int interrupt_register(uint32_t vector, interrupt_handler_t handler)
     
     interrupt_handlers[vector] = handler;
     
-    /* TODO: Регистрация в GIC */
+    /* TODO: Register in GIC */
     
     return 0;
 }
@@ -82,7 +82,7 @@ void interrupt_wait(void)
 
 int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
 {
-    /* TODO: Реализовать отправку IPI через GIC */
+    /* TODO: Implement IPI sending via GIC */
     (void)cpu_id;
     (void)vector;
     return -1;

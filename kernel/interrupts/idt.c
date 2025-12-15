@@ -1,8 +1,11 @@
-#include "idt.h"
-#include "../../include/ports.h"
-#include "../../include/types.h"
+#include "../arch/x86_64/idt.h"
+#include "../include/ports.h"
+#include "../include/types.h"
 
-/* Определения архитектуры */
+/* Maximum number of IDT entries (full vector range 0-255) */
+#define IDT_MAX_ENTRIES 256
+
+/* Architecture definitions */
 #ifndef ARCH_X86_64
 #ifndef ARCH_I386
 #ifdef __x86_64__
@@ -54,7 +57,7 @@ struct idt_descriptor {
 
 static struct idt_descriptor idt_desc;
 
-void idt_init(void)
+int idt_init(void)
 {
     /* Debug marker */
     volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
@@ -151,6 +154,8 @@ void idt_init(void)
     /* Debug marker - idt_init done */
     vga_debug[80*2 + 16] = 0x0F4F;  // 'O'
     vga_debug[80*2 + 17] = 0x0F4B;  // 'K'
+
+    return 0;
 }
 
 void idt_set_gate(uint8_t vector, void* isr, uint8_t flags)

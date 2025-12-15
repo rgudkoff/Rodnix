@@ -5,12 +5,12 @@
  * This module implements the IDT for x86_64 architecture. The IDT maps
  * interrupt vectors (0-255) to their respective interrupt handlers.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "types.h"
 #include "config.h"
-#include "../../include/debug.h"
+#include "../../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -193,7 +193,7 @@ int idt_init(void)
     __asm__ volatile ("" ::: "memory");
     
     /* Step 3: Setup exception handlers (vectors 0-31)
-     * XNU-style: call idt_set_entry directly for each handler
+     * call idt_set_entry directly for each handler
      */
     kputs("[IDT-3] Setup ISR 0-31\n");
     __asm__ volatile ("" ::: "memory");
@@ -269,7 +269,7 @@ int idt_init(void)
  * @param vector Interrupt vector number (0-255)
  * @return Handler address, or NULL if vector is invalid
  */
-void* idt_get_handler(uint8_t vector)
+void* idt_get_handler(uint16_t vector)
 {
     if (vector >= 256) {
         return NULL;
@@ -293,7 +293,7 @@ void* idt_get_handler(uint8_t vector)
  * 
  * @return 0 on success, -1 on failure
  */
-int idt_set_handler(uint8_t vector, void* handler, uint8_t type_attr, uint8_t ist)
+int idt_set_handler(uint16_t vector, void* handler, uint8_t type_attr, uint8_t ist)
 {
     if (vector >= 256 || !handler) {
         return -1;

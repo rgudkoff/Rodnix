@@ -1,21 +1,21 @@
 /**
  * @file paging.c
- * @brief x86_64 paging implementation (inspired by XNU VM approaches)
+ * @brief x86_64 paging implementation
  * 
  * This module implements x86_64 page table management with support for
- * 4KB, 2MB, and 1GB pages. It follows XNU-style VM architecture principles:
+ * 4KB, 2MB, and 1GB pages. It follows VM architecture principles:
  * - Hierarchical page table structure (PML4 -> PDPT -> PD -> PT)
  * - Support for large pages (2MB, 1GB) for performance
  * - Efficient page table allocation and management
  * - TLB management considerations
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "types.h"
 #include "config.h"
 #include "pmm.h"
-#include "../../include/debug.h"
+#include "../../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -136,7 +136,7 @@ static inline uint64_t paging_get_page_offset(uint64_t virt)
  * 
  * @return Physical address of allocated page, or 0 on failure
  * 
- * @note In XNU, page tables are allocated from a dedicated zone.
+ * @note Page tables are allocated from a dedicated zone.
  *       For now, we use the general PMM allocator.
  */
 static uint64_t paging_alloc_page_table(void)
@@ -146,7 +146,7 @@ static uint64_t paging_alloc_page_table(void)
         return 0;
     }
     
-    /* Zero the page table (XNU-style: ensure clean page tables) */
+    /* Zero the page table (ensure clean page tables) */
     void* virt = (void*)(phys + X86_64_KERNEL_VIRT_BASE);
     for (uint64_t i = 0; i < PAGE_SIZE / sizeof(uint64_t); i++) {
         ((uint64_t*)virt)[i] = 0;

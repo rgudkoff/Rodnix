@@ -69,7 +69,7 @@ void kmain(uint32_t magic, void* mbi)
     
     kputs("[INIT-1.2.5] cmdline\n");
     __asm__ volatile ("" ::: "memory");
-    /* Initialize cmdline buffer to empty string (XNU-style: fixed buffer) */
+    /* Initialize cmdline buffer to empty string (fixed buffer) */
     boot_info.cmdline[0] = '\0';
     __asm__ volatile ("" ::: "memory");
     
@@ -212,7 +212,7 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-9-OK] Fabric initialization complete\n");
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 10: Enable interrupts (XNU-style: set IRQL to PASSIVE) */
+    /* Step 10: Enable interrupts (set IRQL to PASSIVE) */
     kputs("[INIT-10] Enable interrupts\n");
     __asm__ volatile ("" ::: "memory");
     

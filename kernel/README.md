@@ -1,43 +1,42 @@
-# kernel - Основное ядро RodNIX
+# kernel - RodNIX Core Kernel
 
-Директория `kernel` содержит основное ядро операционной системы.
+The `kernel` directory contains the core operating system kernel.
 
-## Структура
+## Structure
 
 ```
 kernel/
-├── core/           # Архитектурно-независимые абстракции
-├── common/         # Общие компоненты ядра
-└── arch/           # Архитектурно-зависимые реализации
+├── core/           # Architecture-independent abstractions
+├── common/         # Common kernel components
+└── arch/           # Architecture-dependent implementations
     ├── x86_64/     # x86_64 (CISC)
     ├── arm64/      # ARM64 (RISC)
     └── riscv64/    # RISC-V64 (RISC)
 ```
 
-## Принципы
+## Principles
 
-1. **Архитектурная абстракция**: Все архитектурно-зависимые детали изолированы в `arch/`
-2. **Единый интерфейс**: `core/` предоставляет единые интерфейсы для всех архитектур
-3. **Модульность**: Каждый компонент четко разделен и может быть заменен
+1. **Architectural abstraction**: All architecture-dependent details are isolated in `arch/`
+2. **Unified interface**: `core/` provides unified interfaces for all architectures
+3. **Modularity**: Each component is clearly separated and can be replaced
 
-## Компоненты
+## Components
 
 ### core/
-Архитектурно-независимые интерфейсы и абстракции:
-- `arch_types.h` - базовые типы данных
-- `config.h` - конфигурация ядра
-- Интерфейсы для прерываний, памяти, процессора и т.д.
+Architecture-independent interfaces and abstractions:
+- `arch_types.h` - basic data types
+- `config.h` - kernel configuration
+- Interfaces for interrupts, memory, CPU, etc.
 
 ### common/
-Общие компоненты ядра, работающие поверх абстракций:
-- Планировщик
-- Управление памятью
+Common kernel components working on top of abstractions:
+- Scheduler
+- Memory management
 - IPC
-- Драйверы устройств
+- Device drivers
 
 ### arch/
-Архитектурно-зависимые реализации:
-- Каждая архитектура реализует интерфейсы из `core/`
-- Содержит специфичные для архитектуры оптимизации
-- Изолирует различия между CISC и RISC
-
+Architecture-dependent implementations:
+- Each architecture implements interfaces from `core/`
+- Contains architecture-specific optimizations
+- Isolates differences between CISC and RISC

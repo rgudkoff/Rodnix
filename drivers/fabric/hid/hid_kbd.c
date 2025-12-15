@@ -23,7 +23,7 @@
 static keyboard_ops_t keyboard_ops = {0};
 static fabric_service_t keyboard_service = {0};
 
-/* XNU-style: Lock-free queue for scan codes from interrupt handler */
+/* Lock-free queue for scan codes from interrupt handler */
 #define KBD_SCANCODE_QUEUE_SIZE 64
 typedef struct {
     uint8_t scan_code;
@@ -41,7 +41,7 @@ static int keyboard_read_event(keyboard_event_t *event)
         return -1;
     }
     
-    /* XNU-style: Process queued scan codes first (input_read_char does this) */
+    /* Process queued scan codes first (input_read_char does this) */
     int c = input_read_char();
     
     if (c == -1) {
@@ -57,7 +57,7 @@ static int keyboard_read_event(keyboard_event_t *event)
 /* Check if keyboard has event */
 static bool keyboard_has_event(void)
 {
-    /* XNU-style: Process queued scan codes first (input_has_char does this) */
+    /* Process queued scan codes first (input_has_char does this) */
     return input_has_char();
 }
 
@@ -93,7 +93,7 @@ static bool hid_kbd_probe(fabric_device_t *dev)
     return false;
 }
 
-/* XNU-style: Process queued scan codes (internal implementation) */
+/* Process queued scan codes (internal implementation) */
 static void keyboard_process_queue_internal(void)
 {
     while (scancode_queue_head != scancode_queue_tail) {
@@ -112,13 +112,13 @@ static void keyboard_process_queue_internal(void)
     }
 }
 
-/* XNU-style: Process queued scan codes (called from normal context, not IRQ) */
+/* Process queued scan codes (called from normal context, not IRQ) */
 void input_process_queue(void)
 {
     keyboard_process_queue_internal();
 }
 
-/* Keyboard IRQ handler for Fabric - XNU-style minimal processing */
+/* Keyboard IRQ handler for Fabric - minimal processing */
 static void keyboard_irq_handler(int vector, void *arg)
 {
     (void)vector;
@@ -133,7 +133,7 @@ static void keyboard_irq_handler(int vector, void *arg)
         handler_call_count++;
     }
     
-    /* XNU-style: In interrupt context, do MINIMAL work:
+    /* In interrupt context, do MINIMAL work:
      * 1. Read scan code from hardware
      * 2. Put it in lock-free queue
      * 3. Return immediately
@@ -141,7 +141,7 @@ static void keyboard_irq_handler(int vector, void *arg)
     
     /* Read scan code from keyboard port */
     uint8_t scan_code;
-    __asm__ volatile ("inb %1, %0" : "=a"(scan_code) : "Nd"((uint16_t)0x60));
+    __asm__ volatile ("inb %%dx, %%al" : "=a"(scan_code) : "d"((uint16_t)0x60));
     
     /* DIAGNOSTIC: Show scan code on VGA (RED) */
     if (handler_call_count < 20) {
@@ -163,7 +163,7 @@ static void keyboard_irq_handler(int vector, void *arg)
         pressed = true;
     }
     
-    /* XNU-style: Put scan code in lock-free queue */
+    /* Put scan code in lock-free queue */
     uint32_t tail = scancode_queue_tail;
     uint32_t next_tail = (tail + 1) & (KBD_SCANCODE_QUEUE_SIZE - 1);
     
@@ -175,7 +175,7 @@ static void keyboard_irq_handler(int vector, void *arg)
         __asm__ volatile ("" ::: "memory");
         scancode_queue_tail = next_tail;
     }
-    /* If queue is full, scan code is lost (XNU-style: better than deadlock) */
+    /* If queue is full, scan code is lost (better than deadlock) */
     
     /* DIAGNOSTIC: Mark handler exit (RED) */
     if (handler_call_count < 20) {
@@ -191,7 +191,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     extern void kprintf(const char* fmt, ...);
     kputs("[HID-KBD] Attaching keyboard driver\n");
     
-    /* XNU-style: Initialize lock-free queue */
+    /* Initialize lock-free queue */
     scancode_queue_head = 0;
     scancode_queue_tail = 0;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
@@ -242,17 +242,12 @@ static int hid_kbd_attach(fabric_device_t *dev)
         }
     }
     
-    /* Register keyboard IRQ (IRQ 1 = vector 33) */
-    kprintf("[HID-KBD] Registering IRQ handler (vector 33)\n");
-    if (fabric_request_irq(33, keyboard_irq_handler, NULL) != 0) {
-        kputs("[HID-KBD] ERROR: Failed to register IRQ\n");
-        return -1;
-    }
-    
-    /* CRITICAL: Do NOT enable keyboard IRQ yet - enable it only after full initialization */
-    /* This prevents interrupts during initialization which can cause hangs */
-    kputs("[HID-KBD] IRQ handler registered (IRQ not enabled yet)\n");
-    kputs("[HID-KBD] Keyboard driver attached successfully\n");
+    /* ВРЕМЕННО: не регистрируем IRQ и не включаем IRQ1.
+     * Ввод будет работать через поллинговый fallback в InputCore,
+     * который сам читает порты 0x64/0x60 и вызывает input_push_scancode().
+     */
+    kputs("[HID-KBD] NOTE: Skipping IRQ registration; using polling fallback in InputCore\n");
+    kputs("[HID-KBD] Keyboard driver attached successfully (polling mode)\n");
     
     /* Temporarily disable interrupts during initialization to avoid interference */
     __asm__ volatile ("cli"); /* Disable interrupts */
@@ -311,43 +306,10 @@ static int hid_kbd_attach(fabric_device_t *dev)
     }
     vga_debug[80 * 18 + 3] = 0x0C00 | ('3');  /* RED */
     
-    /* NOW enable keyboard IRQ after everything is initialized */
-    kputs("[HID-KBD] Enabling keyboard IRQ now...\n");
-    vga_debug[80 * 18 + 4] = 0x0C00 | ('E');  /* RED - Enabling */
-    
-    extern bool apic_is_available(void);
-    extern bool ioapic_is_available(void);
-    extern void apic_enable_irq(uint8_t irq);
-    extern void pic_enable_irq(uint8_t irq);
-    
-    /* XNU-style: Use I/O APIC if available, otherwise use PIC */
-    /* If LAPIC is available but I/O APIC not, use PIC for routing (EOI via LAPIC) */
-    kprintf("[HID-KBD] Checking interrupt controller availability...\n");
-    bool lapic_avail = apic_is_available();
-    bool ioapic_avail = ioapic_is_available();
-    kprintf("[HID-KBD] LAPIC available: %s, I/O APIC available: %s\n", 
-            lapic_avail ? "yes" : "no", ioapic_avail ? "yes" : "no");
-    
-    if (lapic_avail) {
-        if (ioapic_avail) {
-            kprintf("[HID-KBD] Enabling keyboard IRQ (IRQ 1) via I/O APIC\n");
-            apic_enable_irq(1);
-        } else {
-            /* LAPIC available but I/O APIC not - use PIC for routing */
-            /* EOI will be sent via LAPIC, but IRQ routing goes through PIC */
-            kputs("[HID-KBD] WARNING: LAPIC available but I/O APIC not available\n");
-            kputs("[HID-KBD] Using PIC for IRQ routing (EOI will be sent via LAPIC)\n");
-            kputs("[HID-KBD] Check I/O APIC initialization logs above for details\n");
-            pic_enable_irq(1);
-        }
-    } else {
-        /* No APIC - use PIC */
-        kputs("[HID-KBD] No APIC available, using PIC for interrupt routing\n");
-        pic_enable_irq(1);
-    }
-    
-    vga_debug[80 * 18 + 5] = 0x0C00 | ('N');  /* RED - Enabled */
-    kputs("[HID-KBD] Keyboard IRQ enabled\n");
+    /* ВРЕМЕННО: полностью отключаем включение IRQ1 клавиатуры.
+     * Всё ниже будет включено, когда IRQ-путь станет стабильным.
+     */
+    kputs("[HID-KBD] NOTE: Keyboard IRQ1 is DISABLED (polling mode only)\n");
     
     /* Small delay to allow any pending interrupts to be processed */
     for (volatile int i = 0; i < 5000; i++) {

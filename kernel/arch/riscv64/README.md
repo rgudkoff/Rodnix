@@ -1,45 +1,44 @@
-# RISC-V64 - Реализация для архитектуры RISC-V64
+# RISC-V64 - Implementation for RISC-V64 architecture
 
-Реализация ядра для процессоров RISC-V 64-бит (RISC архитектура).
+Kernel implementation for RISC-V 64-bit processors (RISC architecture).
 
-## Особенности
+## Features
 
-- **RISC архитектура**: Reduced Instruction Set Computer
-- **64-битный режим**: RV64
-- **Страничная структура**: Sv39, Sv48, или Sv57
-- **Привилегии**: User, Supervisor, Machine
+- **RISC architecture**: Reduced Instruction Set Computer
+- **64-bit mode**: RV64
+- **Page structure**: Sv39, Sv48, or Sv57
+- **Privileges**: User, Supervisor, Machine
 
-## Компоненты
+## Components
 
-- `config.h` - конфигурация RISC-V64
-- `types.h` - типы данных RISC-V64
-- `interrupts.c` - обработка прерываний
-- `memory.c` - управление памятью (MMU)
-- `cpu.c` - работа с процессором
-- `boot.S` - код загрузки
+- `config.h` - RISC-V64 configuration
+- `types.h` - RISC-V64 data types
+- `interrupts.c` - interrupt handling
+- `memory.c` - memory management (MMU)
+- `cpu.c` - CPU operations
+- `boot.S` - boot code
 
-## Регистры
+## Registers
 
-RISC-V64 использует 32 64-битных регистра общего назначения:
-- x0-x31 (x0 = zero register, всегда 0)
-- SP (Stack Pointer, обычно x2)
+RISC-V64 uses 32 64-bit general purpose registers:
+- x0-x31 (x0 = zero register, always 0)
+- SP (Stack Pointer, usually x2)
 - PC (Program Counter)
 
-## Страничная структура
+## Page Structure
 
-RISC-V поддерживает несколько режимов виртуализации:
-- **Sv39**: 39-битные виртуальные адреса (3 уровня)
-- **Sv48**: 48-битные виртуальные адреса (4 уровня)
-- **Sv57**: 57-битные виртуальные адреса (5 уровней)
+RISC-V supports several virtualization modes:
+- **Sv39**: 39-bit virtual addresses (3 levels)
+- **Sv48**: 48-bit virtual addresses (4 levels)
+- **Sv57**: 57-bit virtual addresses (5 levels)
 
-Размеры страниц:
-- 4KB (обычные страницы)
+Page sizes:
+- 4KB (regular pages)
 - 2MB (megapages)
 - 1GB (gigapages)
 
-## Привилегии
+## Privileges
 
 - User (U): 0
 - Supervisor (S): 1
 - Machine (M): 3
-

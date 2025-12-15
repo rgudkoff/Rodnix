@@ -5,7 +5,7 @@
  * This module provides the architecture-specific implementation of memory
  * management for x86_64, including page mapping and virtual memory management.
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "../../core/memory.h"

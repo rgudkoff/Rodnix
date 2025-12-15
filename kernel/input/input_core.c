@@ -1,14 +1,14 @@
 /**
  * @file input_core.c
- * @brief InputCore - системный слой ввода (аналог IOHIDSystem в XNU)
+ * @brief InputCore - system input layer
  * 
- * Этот модуль реализует системный слой ввода, который:
- * - принимает сырые события от драйверов (scancode)
- * - ведёт состояние клавиатуры (модификаторы, caps lock и т.д.)
- * - переводит scancode → ASCII
- * - предоставляет стабильный API для потребителей (shell, console)
+ * This module implements the system input layer, which:
+ * - receives raw events from drivers (scancode)
+ * - maintains keyboard state (modifiers, caps lock, etc.)
+ * - translates scancode → ASCII
+ * - provides stable API for consumers (shell, console)
  * 
- * Архитектура:
+ * Architecture:
  * [ hardware driver ] → [ InputCore ] → [ shell / console / UI ]
  */
 
@@ -312,6 +312,43 @@ void input_push_scancode(uint16_t scancode, bool pressed)
     spinlock_unlock(&input_state.lock);
 }
 
+/* ============================================================================
+ * Вспомогательная функция: опрос PS/2 клавиатуры в поллинговом режиме
+ * ============================================================================
+ *
+ * Используется как fallback, когда IRQ1 не работает/не включён.
+ * Читает сканкоды напрямую из портов 0x64/0x60 и прокидывает их в
+ * обычный путь через input_push_scancode(), чтобы вся логика
+ * трансляции/буфера осталась общей.
+ */
+static void input_poll_keyboard_ps2(void)
+{
+    uint8_t status;
+    /* Прочитать статус контроллера клавиатуры (порт 0x64) */
+    __asm__ volatile ("inb %1, %0" : "=a"(status) : "Nd"((uint16_t)0x64));
+    
+    /* Если буфер вывода пуст (бит 0 = 0) – данных нет */
+    if ((status & 0x01) == 0) {
+        return;
+    }
+    
+    /* Прочитать сканкод из порта 0x60 */
+    uint8_t scan_code;
+    __asm__ volatile ("inb %1, %0" : "=a"(scan_code) : "Nd"((uint16_t)0x60));
+    
+    bool pressed = (scan_code & 0x80) == 0;
+    uint16_t code = (uint16_t)(scan_code & 0x7F);
+    
+    /* Обработка префикса расширенных сканкодов */
+    if (scan_code == 0xE0) {
+        code = 0xE0;
+        pressed = true;
+    }
+    
+    extern void input_push_scancode(uint16_t scancode, bool pressed);
+    input_push_scancode(code, pressed);
+}
+
 /**
  * @function input_has_char
  * @brief Check if input buffer has characters
@@ -320,7 +357,10 @@ void input_push_scancode(uint16_t scancode, bool pressed)
  */
 bool input_has_char(void)
 {
-    /* XNU-style: Process queued scan codes first */
+    /* Сначала опросить клавиатуру в поллинговом режиме (fallback без IRQ) */
+    input_poll_keyboard_ps2();
+    
+    /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);
     input_process_queue();
     
@@ -343,7 +383,10 @@ bool input_has_char(void)
  */
 int input_read_char(void)
 {
-    /* XNU-style: Process queued scan codes first */
+    /* Сначала опросить клавиатуру (fallback без IRQ) */
+    input_poll_keyboard_ps2();
+    
+    /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);
     input_process_queue();
     
@@ -386,7 +429,7 @@ size_t input_read_line(char *buf, size_t n)
     extern void kputc(char c);
     
     while (pos < n - 1) {
-        /* XNU-style: Process queued scan codes first */
+        /* Process queued scan codes first */
         extern void input_process_queue(void);
         input_process_queue();
         

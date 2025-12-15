@@ -3,13 +3,13 @@
  * @brief PIT (Programmable Interval Timer) implementation for x86_64
  * 
  * This module implements the 8253/8254 PIT for system timing. It follows
- * XNU-style timer architecture principles:
+ * timer architecture principles:
  * - Callback-based timer system
  * - Integration with interrupt subsystem
  * - Support for multiple timer callbacks
  * - Precise timing control
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  * @note PIT is typically used as a fallback timer when APIC timer is not available.
  */
 
@@ -56,7 +56,7 @@ extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
 #define PIT_DEFAULT_FREQUENCY 100    /* Default frequency (100 Hz = 10ms) */
 
 /* ============================================================================
- * Timer Callback System (XNU-style)
+ * Timer Callback System
  * ============================================================================ */
 
 /**
@@ -133,7 +133,7 @@ static void pit_timer_handler(interrupt_context_t* ctx)
 {
     (void)ctx; /* Context not used for timer */
     
-    /* Minimal handler - just increment counter (XNU-style: fast interrupt handler) */
+    /* Minimal handler - just increment counter (fast interrupt handler) */
     /* No protection, no callbacks - just increment counter */
     timer_ticks++;
     
@@ -362,7 +362,7 @@ void pit_enable(void)
     extern void apic_enable_irq(uint8_t irq);
     extern void pic_enable_irq(uint8_t irq);
     
-    /* XNU-style: If LAPIC is available, PIC should be disabled */
+    /* If LAPIC is available, PIC should be disabled */
     if (apic_is_available()) {
         if (ioapic_is_available()) {
             apic_enable_irq(0);

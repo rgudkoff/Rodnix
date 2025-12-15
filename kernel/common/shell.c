@@ -2,14 +2,14 @@
  * @file shell.c
  * @brief Simple shell implementation
  * 
- * This module implements a basic command-line shell following XNU-style
+ * This module implements a basic command-line shell following
  * command processing principles:
  * - Command parsing and execution
  * - Built-in commands
  * - Command history (future)
  * - Tab completion (future)
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  */
 
 #include "shell.h"
@@ -343,7 +343,7 @@ int shell_init(void)
  * @brief Run shell main loop
  * 
  * This function runs the shell's main loop, reading commands and executing them.
- * It follows XNU-style command processing but is adapted for RodNIX.
+ * It follows command processing but is adapted for RodNIX.
  * 
  * @note This function blocks and runs indefinitely until shell is stopped.
  */

@@ -1,6 +1,6 @@
 /**
  * @file x86_64/cpu.c
- * @brief Реализация работы с процессором для x86_64
+ * @brief CPU implementation for x86_64
  */
 
 #include "../../core/cpu.h"
@@ -22,12 +22,12 @@ int cpu_init(void)
         return 0;
     }
     
-    /* Получение информации о процессоре через CPUID */
-    /* Use memory barriers to ensure proper ordering (XNU-style) */
+    /* Get CPU information via CPUID */
+    /* Use memory barriers to ensure proper ordering */
     uint32_t eax, ebx, ecx, edx;
     
     __asm__ volatile ("" ::: "memory");
-    /* CPUID для получения vendor string */
+    /* CPUID to get vendor string */
     __asm__ volatile ("cpuid"
                       : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                       : "a"(0));
@@ -40,7 +40,7 @@ int cpu_init(void)
     vendor[12] = '\0';
     __asm__ volatile ("" ::: "memory");
     
-    /* Fill CPU info cache (XNU-style) */
+    /* Fill CPU info cache */
     /* Use memory barriers between assignments */
     cpu_info_cache.cpu_id = 0;
     __asm__ volatile ("" ::: "memory");
@@ -57,7 +57,7 @@ int cpu_init(void)
     cpu_info_cache.threads = 1;
     __asm__ volatile ("" ::: "memory");
     
-    /* Set initialized flag last, with memory barrier (XNU-style) */
+    /* Set initialized flag last, with memory barrier */
     cpu_initialized = true;
     __asm__ volatile ("" ::: "memory");
     
@@ -88,7 +88,7 @@ int cpu_get_info(cpu_info_t* info)
 
 uint32_t cpu_get_id(void)
 {
-    /* TODO: Получить реальный ID процессора через APIC */
+    /* TODO: Get real CPU ID via APIC */
     return 0;
 }
 
@@ -101,7 +101,7 @@ void cpu_save_context(thread_context_t* ctx)
 {
     if (!ctx) return;
     
-    /* Сохранение регистров в контекст */
+    /* Save registers to context */
     __asm__ volatile (
         "mov %%rsp, %0\n\t"
         "mov $., %1\n\t"
@@ -115,7 +115,7 @@ void cpu_restore_context(thread_context_t* ctx)
 {
     if (!ctx) return;
     
-    /* Восстановление регистров из контекста */
+    /* Restore registers from context */
     __asm__ volatile (
         "mov %0, %%rsp\n\t"
         "jmp *%1\n\t"
@@ -129,10 +129,10 @@ void cpu_switch_thread(thread_context_t* from, thread_context_t* to)
 {
     if (!from || !to) return;
     
-    /* Сохранение текущего контекста */
+    /* Save current context */
     cpu_save_context(from);
     
-    /* Восстановление нового контекста */
+    /* Restore new context */
     cpu_restore_context(to);
 }
 
@@ -198,7 +198,7 @@ void cpu_idle(void)
 
 uint64_t cpu_get_frequency(void)
 {
-    /* TODO: Получить частоту процессора через CPUID или MSR */
+    /* TODO: Get CPU frequency via CPUID or MSR */
     return 0;
 }
 

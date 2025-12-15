@@ -2,7 +2,7 @@
  * @file idt.h
  * @brief IDT (Interrupt Descriptor Table) interface
  * 
- * @note This interface follows XNU-style architecture for interrupt handling.
+ * @note This interface follows architecture for interrupt handling.
  */
 
 #ifndef _RODNIX_ARCH_X86_64_IDT_H
@@ -18,10 +18,10 @@
 int idt_init(void);
 
 /* Get handler address */
-void* idt_get_handler(uint8_t vector);
+void* idt_get_handler(uint16_t vector);
 
-/* Set custom handler (XNU-style interface) */
-int idt_set_handler(uint8_t vector, void* handler, uint8_t type_attr, uint8_t ist);
+/* Set custom handler */
+int idt_set_handler(uint16_t vector, void* handler, uint8_t type_attr, uint8_t ist);
 
 #endif /* _RODNIX_ARCH_X86_64_IDT_H */
 

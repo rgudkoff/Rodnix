@@ -1,6 +1,6 @@
 /**
  * @file arm64/types.h
- * @brief Типы данных для архитектуры ARM64
+ * @brief Data types for ARM64 architecture
  */
 
 #ifndef _RODNIX_ARCH_ARM64_TYPES_H
@@ -11,7 +11,7 @@
 #include <stdint.h>
 
 /* ============================================================================
- * Регистры процессора ARM64
+ * ARM64 CPU registers
  * ============================================================================ */
 
 typedef struct {
@@ -25,18 +25,18 @@ typedef struct {
 } arm64_registers_t;
 
 /* ============================================================================
- * Контекст прерывания ARM64
+ * ARM64 interrupt context
  * ============================================================================ */
 
 typedef struct {
     arm64_registers_t regs;
     uint64_t esr;           /* Exception Syndrome Register */
     uint64_t far;           /* Fault Address Register */
-    uint32_t exception_type; /* Тип исключения */
+    uint32_t exception_type; /* Exception type */
 } arm64_interrupt_context_t;
 
 /* ============================================================================
- * Структура страницы ARM64 (4KB)
+ * ARM64 page structure (4KB)
  * ============================================================================ */
 
 typedef struct {
@@ -56,7 +56,7 @@ typedef struct {
 } __attribute__((packed)) arm64_pte_t;
 
 /* ============================================================================
- * Макросы для адресации страниц ARM64
+ * Macros for ARM64 page addressing
  * ============================================================================ */
 
 #define ARM64_LEVEL0_INDEX(addr) (((addr) >> 39) & 0x1FF)
@@ -66,7 +66,7 @@ typedef struct {
 #define ARM64_PAGE_OFFSET(addr) ((addr) & 0xFFF)
 
 /* ============================================================================
- * Константы ARM64
+ * ARM64 constants
  * ============================================================================ */
 
 #define ARM64_PAGE_SIZE 4096

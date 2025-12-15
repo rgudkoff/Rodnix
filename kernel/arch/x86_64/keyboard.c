@@ -2,14 +2,14 @@
  * @file keyboard.c
  * @brief PS/2 Keyboard driver implementation for x86_64
  * 
- * This module implements PS/2 keyboard support following XNU-style I/O Kit
+ * This module implements PS/2 keyboard support following fabric principles
  * principles:
  * - Event-driven input system
  * - Scan code translation (set 1 to ASCII)
  * - Input buffer management
  * - Key state tracking
  * 
- * @note This implementation follows XNU-style architecture but is adapted for RodNIX.
+ * @note This implementation is adapted for RodNIX.
  * @note Interrupt handler is minimal - only reads scan code and adds to buffer.
  *       Translation is done in non-interrupt context.
  */
@@ -125,7 +125,7 @@ static const char scan_code_shift[128] = {
  * 
  * @return 0 on success, -1 if buffer is full
  * 
- * @note XNU-style: Minimal operation in interrupt context
+ * @note Minimal operation in interrupt context
  * @note Uses bitwise AND instead of modulo (buffer size is power of 2)
  */
 static int keyboard_buffer_put(uint8_t c)
@@ -152,7 +152,7 @@ static int keyboard_buffer_put(uint8_t c)
  * 
  * @return Character, or 0 if buffer is empty
  * 
- * @note XNU-style: Safe to call from non-interrupt context
+ * @note Safe to call from non-interrupt context
  */
 static uint8_t keyboard_buffer_get(void)
 {
@@ -178,7 +178,7 @@ static uint8_t keyboard_buffer_get(void)
  * 
  * @return ASCII character, or 0 if not a printable character
  * 
- * @note XNU-style: Translation done in non-interrupt context
+ * @note Translation done in non-interrupt context
  * @note No division operations - only table lookups and bitwise operations
  */
 static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
@@ -266,12 +266,12 @@ static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
 }
 
 /* ============================================================================
- * Interrupt Handler (XNU-style: Minimal work in interrupt context)
+ * Interrupt Handler (Minimal work in interrupt context)
  * ============================================================================ */
 
 /**
  * @function keyboard_interrupt_handler
- * @brief Keyboard interrupt handler (XNU-style minimal implementation)
+ * @brief Keyboard interrupt handler (minimal implementation)
  * 
  * This function is called on each keyboard interrupt (IRQ 1). It:
  * 1. Reads scan code from keyboard (I/O operation)
@@ -281,7 +281,7 @@ static char keyboard_translate_scan_code(uint8_t scan_code, bool is_release)
  * 
  * @param ctx Interrupt context
  * 
- * @note XNU-style: Minimal work in interrupt handler
+ * @note Minimal work in interrupt handler
  * @note No division, no complex operations, only I/O and buffer management
  */
 static void keyboard_interrupt_handler(interrupt_context_t* ctx)
@@ -298,7 +298,7 @@ static void keyboard_interrupt_handler(interrupt_context_t* ctx)
         return;
     }
     
-    /* XNU-style: Add raw scan code to buffer, translate later */
+    /* Add raw scan code to buffer, translate later */
     /* This avoids any complex operations in interrupt context */
     if (kb_state.buffer_count < KEYBOARD_BUFFER_SIZE) {
         kb_state.buffer[kb_state.buffer_tail] = scan_code;
@@ -368,7 +368,7 @@ void keyboard_buffer_put_raw(uint8_t scan_code)
  * @return Character, or 0 if no character available
  * 
  * @note This is a non-blocking function. Returns 0 if buffer is empty.
- * @note XNU-style: Translation done here, not in interrupt handler
+ * @note Translation done here, not in interrupt handler
  */
 char keyboard_read_char(void)
 {
@@ -393,7 +393,7 @@ char keyboard_read_char(void)
  * 
  * @return Number of characters read, or -1 on error
  * 
- * @note XNU-style: Blocks until Enter is pressed
+ * @note Blocks until Enter is pressed
  * @note Translation and echo done in non-interrupt context
  */
 int keyboard_read_line(char* buffer, uint32_t size)
