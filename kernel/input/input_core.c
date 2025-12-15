@@ -320,6 +320,10 @@ void input_push_scancode(uint16_t scancode, bool pressed)
  */
 bool input_has_char(void)
 {
+    /* XNU-style: Process queued scan codes first */
+    extern void input_process_queue(void);
+    input_process_queue();
+    
     bool result;
     
     spinlock_lock(&input_state.lock);
@@ -339,6 +343,10 @@ bool input_has_char(void)
  */
 int input_read_char(void)
 {
+    /* XNU-style: Process queued scan codes first */
+    extern void input_process_queue(void);
+    input_process_queue();
+    
     int result = -1;
     
     spinlock_lock(&input_state.lock);
@@ -346,10 +354,7 @@ int input_read_char(void)
     if (input_state.buffer_count > 0) {
         uint8_t c = input_buffer_get();
         result = (int)c;
-        /* DIAGNOSTIC: Print when character is read */
-        extern void kprintf(const char* fmt, ...);
-        kprintf("[InputCore] read_char: '%c' (0x%02X), buffer_count=%u\n", 
-                (c >= 32 && c < 127) ? c : '?', (unsigned char)c, input_state.buffer_count);
+        /* Character read - no diagnostic output to avoid cluttering console */
     }
     
     spinlock_unlock(&input_state.lock);
@@ -374,9 +379,6 @@ size_t input_read_line(char *buf, size_t n)
         return 0;
     }
     
-    extern void kprintf(const char* fmt, ...);
-    kprintf("[InputCore] read_line: starting, buf_size=%u\n", n);
-    
     size_t pos = 0;
     buf[0] = '\0';
     
@@ -384,12 +386,20 @@ size_t input_read_line(char *buf, size_t n)
     extern void kputc(char c);
     
     while (pos < n - 1) {
+        /* XNU-style: Process queued scan codes first */
+        extern void input_process_queue(void);
+        input_process_queue();
+        
         /* Get character */
         int c = input_read_char();
         
         if (c == -1) {
             /* No character available, wait for interrupt */
-            __asm__ volatile ("hlt"); /* Wait for next interrupt */
+            /* Use interrupt_wait() which properly handles interrupts */
+            extern void interrupt_wait(void);
+            interrupt_wait();
+            /* Process queue again after interrupt - scan codes may have arrived */
+            input_process_queue();
             continue;
         }
         
@@ -418,8 +428,16 @@ size_t input_read_line(char *buf, size_t n)
             buf[pos] = (char)c;
             pos++;
             buf[pos] = '\0';
-            /* Display character as user types */
+            /* Display character as user types (echo) */
             kputc((char)c);
+            /* Ensure character is displayed immediately */
+            __asm__ volatile ("" ::: "memory");
+        } else if (c != 0) {
+            /* Non-printable but valid character (like control chars) */
+            /* Still add to buffer but don't echo */
+            buf[pos] = (char)c;
+            pos++;
+            buf[pos] = '\0';
         }
     }
     

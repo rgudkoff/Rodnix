@@ -355,22 +355,20 @@ void shell_run(void)
     extern void kputs(const char* str);
     extern void kputc(char c);
     
+    kputs("[SHELL] shell_run() called\n");
+    __asm__ volatile ("" ::: "memory");
+    
     kputs("\nRodNIX Shell v0.1\n");
     kputs("Type 'help' for available commands.\n\n");
+    __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
         /* Display prompt */
         kputs(SHELL_PROMPT);
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
         
-        /* DIAGNOSTIC: Print when shell starts reading */
-        kputs("[SHELL] Waiting for input...\n");
-        
         /* Read command line */
         size_t len = input_read_line(line, SHELL_MAX_LINE_LENGTH);
-        
-        /* DIAGNOSTIC: Print what was read */
-        kprintf("[SHELL] Read line: len=%u, line='%s'\n", len, line);
         
         if (len == 0) {
             kputc('\n');

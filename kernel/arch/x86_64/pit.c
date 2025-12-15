@@ -357,13 +357,21 @@ void pit_enable(void)
 {
     /* Enable PIT IRQ 0 */
     /* Use I/O APIC if available, otherwise fallback to PIC */
+    extern bool apic_is_available(void);
     extern bool ioapic_is_available(void);
     extern void apic_enable_irq(uint8_t irq);
     extern void pic_enable_irq(uint8_t irq);
     
-    if (ioapic_is_available()) {
-        apic_enable_irq(0);
+    /* XNU-style: If LAPIC is available, PIC should be disabled */
+    if (apic_is_available()) {
+        if (ioapic_is_available()) {
+            apic_enable_irq(0);
+        } else {
+            /* LAPIC available but I/O APIC not - cannot enable IRQ via PIC */
+            /* PIT timer will not work without I/O APIC when LAPIC is active */
+        }
     } else {
+        /* No APIC - use PIC */
         pic_enable_irq(0);
     }
 }

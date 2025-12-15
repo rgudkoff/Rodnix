@@ -55,25 +55,44 @@ static void fabric_irq_wrapper(interrupt_context_t* ctx)
     int vector = ctx->vector;
     
     /* DIAGNOSTIC: Simple output to avoid kprintf in IRQ context */
-    /* Use direct VGA output for critical diagnostics */
+    /* Use direct VGA output for critical diagnostics (bottom of screen, RED) */
     static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
     static uint32_t debug_pos = 0;
     
-    /* Simple character output at fixed position */
-    if (debug_pos < 80) {
-        vga_debug[80 * 10 + debug_pos] = 0x0F00 | ('0' + (vector % 10));
-        debug_pos++;
+    /* DIAGNOSTIC: Mark that wrapper was called (RED) */
+    if (debug_pos < 40) {
+        vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('F');  /* RED */
+        vga_debug[80 * 20 + debug_pos + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
+        debug_pos += 2;
     }
     
     /* Call all registered handlers for this vector */
     /* XNU-style: Avoid any operations that might use FPU */
     /* Use simple integer operations only */
     uint32_t i = 0;
+    uint32_t handler_count = 0;
     while (i < MAX_IRQ_HANDLERS) {
         if (irq_handlers[i].active && irq_handlers[i].vector == vector) {
+            /* DIAGNOSTIC: Mark before calling handler (RED) */
+            if (debug_pos < 40) {
+                vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('H');  /* RED */
+                debug_pos++;
+            }
             irq_handlers[i].handler(vector, irq_handlers[i].arg);
+            /* DIAGNOSTIC: Mark after calling handler (RED) */
+            if (debug_pos < 40) {
+                vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('D');  /* RED */
+                debug_pos++;
+            }
+            handler_count++;
         }
         i++; /* Increment manually to avoid potential FPU usage */
+    }
+    
+    /* DIAGNOSTIC: Mark wrapper exit (RED) */
+    if (debug_pos < 40) {
+        vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('E');  /* RED */
+        debug_pos++;
     }
 }
 
@@ -158,6 +177,7 @@ int fabric_driver_register(fabric_driver_t *driver)
     fabric_log("[fabric] driver registered: %s\n", driver->name);
     
     /* Try to match with existing devices */
+    fabric_log("[fabric] Matching driver with devices (device_count=%u)\n", device_count);
     spinlock_lock(&fabric_lock);
     for (uint32_t i = 0; i < device_count; i++) {
         fabric_device_t *dev = device_registry[i];
@@ -168,18 +188,36 @@ int fabric_driver_register(fabric_driver_t *driver)
         /* Release lock before probe/attach */
         spinlock_unlock(&fabric_lock);
         
+        fabric_log("[fabric] Trying to probe device %u: %s\n", i, dev->name ? dev->name : "(null)");
         if (driver->probe && driver->probe(dev)) {
+            fabric_log("[fabric] Probe matched, calling attach\n");
             if (driver->attach && driver->attach(dev) == 0) {
+                fabric_log("[fabric] Attach successful, will mark device as attached\n");
+                /* Mark device as attached - need to reacquire lock first */
+                extern void kputs(const char* str);
+                kputs("[FABRIC] Reacquiring lock to mark device as attached...\n");
+                spinlock_lock(&fabric_lock);
+                kputs("[FABRIC] Lock reacquired, marking device as attached...\n");
                 dev->driver_state = driver; /* Mark as attached */
+                spinlock_unlock(&fabric_lock);
+                kputs("[FABRIC] Device marked as attached, lock released\n");
                 fabric_log("[fabric] driver attached: %s -> %s\n", 
                          driver->name, dev->name);
+            } else {
+                fabric_log("[fabric] Attach failed\n");
             }
+        } else {
+            fabric_log("[fabric] Probe did not match\n");
         }
         
+        /* Reacquire lock for next iteration */
+        kputs("[FABRIC] Reacquiring lock for next iteration...\n");
         spinlock_lock(&fabric_lock);
+        kputs("[FABRIC] Lock reacquired for next iteration\n");
     }
     spinlock_unlock(&fabric_lock);
     
+    fabric_log("[fabric] Driver registration complete\n");
     return 0;
 }
 
@@ -235,22 +273,40 @@ int fabric_device_publish(fabric_device_t *device)
 /* Publish a service */
 int fabric_service_publish(fabric_service_t *service)
 {
+    extern void kputs(const char* str);
+    
+    kputs("[FABRIC-SVC] fabric_service_publish() called\n");
+    
     if (!service || !service->name) {
+        kputs("[FABRIC-SVC] ERROR: Invalid service or name\n");
         return -1;
     }
     
+    kputs("[FABRIC-SVC] Service name: ");
+    kputs(service->name);
+    kputs("\n");
+    
+    fabric_log("[fabric] Publishing service: %s\n", service->name);
+    kputs("[FABRIC-SVC] Acquiring lock...\n");
     spinlock_lock(&fabric_lock);
+    kputs("[FABRIC-SVC] Lock acquired\n");
     
     if (service_count >= MAX_SERVICES) {
         spinlock_unlock(&fabric_lock);
+        fabric_log("[fabric] ERROR: Service registry full\n");
+        kputs("[FABRIC-SVC] ERROR: Service registry full\n");
         return -1;
     }
     
+    kputs("[FABRIC-SVC] Adding service to registry...\n");
     service_registry[service_count++] = service;
+    kputs("[FABRIC-SVC] Service added to registry\n");
     
     spinlock_unlock(&fabric_lock);
+    kputs("[FABRIC-SVC] Lock released\n");
     
-    fabric_log("[fabric] service published: %s\n", service->name);
+    fabric_log("[fabric] service published: %s (count=%u)\n", service->name, service_count);
+    kputs("[FABRIC-SVC] fabric_service_publish() returning 0\n");
     
     return 0;
 }

@@ -178,8 +178,8 @@ int interrupts_init(void)
     pic_disable();
     __asm__ volatile ("" ::: "memory");
     
-    /* If APIC is available, disable PIC completely */
-    /* External IRQ will route through I/O APIC */
+    /* XNU-style: If LAPIC is available, PIC should be disabled */
+    /* But if I/O APIC is not available, keep PIC for external IRQ routing */
     if (use_apic) {
         extern bool ioapic_is_available(void);
         if (ioapic_is_available()) {
@@ -189,9 +189,12 @@ int interrupts_init(void)
             pic_disable();
             __asm__ volatile ("" ::: "memory");
         } else {
-            kputs("[INT-5.1] I/O APIC not available, keep PIC for external IRQ\n");
+            /* LAPIC available but I/O APIC not - keep PIC enabled for external IRQ */
+            /* EOI will be sent via LAPIC, but IRQ routing goes through PIC */
+            kputs("[INT-5.1] LAPIC available, I/O APIC not - keep PIC for external IRQ\n");
             __asm__ volatile ("" ::: "memory");
-            /* Keep PIC enabled for external IRQ until I/O APIC is ready */
+            /* Keep PIC enabled - we need it for external IRQ routing */
+            /* PIC is already masked (pic_disable() was called earlier), we'll enable specific IRQs later */
         }
     }
     

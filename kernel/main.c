@@ -190,10 +190,26 @@ void kmain(uint32_t magic, void* mbi)
     extern void hid_kbd_init(void);
     
     fabric_init();
+    kputs("[INIT-9.1] Fabric initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    
     virt_bus_init();
+    kputs("[INIT-9.2] Virt bus initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    
     pci_bus_init();
+    kputs("[INIT-9.3] PCI bus initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    
     ps2_bus_init();  /* PS/2 bus for keyboard */
+    kputs("[INIT-9.4] PS/2 bus initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    
     hid_kbd_init();  /* HID keyboard driver */
+    kputs("[INIT-9.5] HID keyboard driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[INIT-9-OK] Fabric initialization complete\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Step 10: Enable interrupts (XNU-style: set IRQL to PASSIVE) */
@@ -266,8 +282,14 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-12] Starting shell...\n");
     __asm__ volatile ("" ::: "memory");
     
+    kputs("[INIT-12.1] About to call shell_run()\n");
+    __asm__ volatile ("" ::: "memory");
+    
     /* Run shell (blocks) */
     shell_run();
+    
+    kputs("[INIT-12.2] shell_run() returned (should not happen)\n");
+    __asm__ volatile ("" ::: "memory");
     
     /* Should never reach here */
     for (;;) {

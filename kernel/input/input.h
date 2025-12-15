@@ -29,3 +29,7 @@ bool input_has_char(void);
 int  input_read_char(void);                  /* -1 если нет символа */
 size_t input_read_line(char *buf, size_t n); /* блокирующее чтение строки */
 
+/* XNU-style: Process queued scan codes from interrupt handler */
+void input_process_queue(void);
+
+

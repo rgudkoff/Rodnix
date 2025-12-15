@@ -82,6 +82,15 @@ static void interrupt_dispatch(struct registers* regs)
 {
     uint32_t vector = regs->int_no;
     
+    /* DIAGNOSTIC: Mark interrupt dispatch (VGA only, bottom of screen, RED) */
+    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
+    static uint32_t dispatch_count = 0;
+    if (dispatch_count < 20 && vector >= 32 && vector < 48) {
+        vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('I');  /* RED */
+        vga_debug[80 * 21 + dispatch_count + 1] = 0x0C00 | ('0' + ((vector - 32) % 10));  /* RED */
+        dispatch_count += 2;
+    }
+    
     /* Handle IRQ (32-47) - XNU maps PIC IRQs to these vectors */
     if (vector >= 32 && vector < 48) {
         uint32_t irq = vector - 32;
@@ -95,6 +104,11 @@ static void interrupt_dispatch(struct registers* regs)
         
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
+            if (dispatch_count < 20) {
+                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('C');  /* RED */
+                dispatch_count++;
+            }
+            
             interrupt_context_t ctx;
             ctx.pc = regs->rip;
             ctx.sp = regs->rsp;
@@ -105,26 +119,66 @@ static void interrupt_dispatch(struct registers* regs)
             ctx.arch_specific = (void*)regs;
             
             interrupt_handlers[vector](&ctx);
+            
+            if (dispatch_count < 20) {
+                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('H');  /* RED */
+                dispatch_count++;
+            }
         } else {
             /* Unhandled IRQ - mask it silently (XNU-style: no panic) */
+            if (dispatch_count < 20) {
+                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('U');  /* RED */
+                dispatch_count++;
+            }
             pic_disable_irq(irq);
         }
         
         /* Send EOI - CRITICAL: Must be sent before returning */
-        /* When APIC is available, use LAPIC EOI (works for all interrupts) */
-        /* PIC EOI is only needed if I/O APIC is not available */
+        if (dispatch_count < 20) {
+            vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('E');  /* RED */
+            dispatch_count++;
+        }
+        
+        /* EOI logic:
+         * - If I/O APIC is available: use only LAPIC EOI (I/O APIC routes to LAPIC)
+         * - If LAPIC is available but I/O APIC not: use both PIC and LAPIC EOI
+         *   (PIC routes to CPU, but LAPIC is active, so need both)
+         * - If no APIC: use only PIC EOI
+         */
+        extern bool ioapic_is_available(void);
         if (apic_is_available()) {
-            /* Use LAPIC EOI (works for all interrupts when LAPIC is active) */
-            apic_send_eoi();
+            if (ioapic_is_available()) {
+                /* I/O APIC available - use only LAPIC EOI */
+                apic_send_eoi();
+            } else {
+                /* LAPIC available but I/O APIC not - use both PIC and LAPIC EOI */
+                /* PIC routes interrupt, but LAPIC is active, so need both */
+                pic_send_eoi(irq);
+                apic_send_eoi();
+            }
         } else {
-            /* PIC only - send PIC EOI */
+            /* No APIC - use only PIC EOI */
             pic_send_eoi(irq);
+        }
+        
+        if (dispatch_count < 20) {
+            vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('X');  /* RED */
+            dispatch_count++;
         }
         return;
     }
     
     /* Handle exception (0-31) */
     if (vector < 32) {
+        /* DIAGNOSTIC: Mark exception on VGA (RED) - CRITICAL */
+        static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
+        static uint32_t exc_count = 0;
+        if (exc_count < 10) {
+            vga_debug[80 * 15 + exc_count * 2] = 0x0C00 | ('E');  /* RED - Exception */
+            vga_debug[80 * 15 + exc_count * 2 + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
+            exc_count += 2;
+        }
+        
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -144,6 +198,9 @@ static void interrupt_dispatch(struct registers* regs)
         /* Exception 21 (Control Protection Exception) - can occur on some CPUs, ignore */
         if (vector == 15 || vector == 21 || (vector >= 22 && vector <= 31)) {
             /* These are reserved or can occur spuriously and should not cause panic */
+            if (exc_count < 10) {
+                vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('I');  /* RED - Ignored */
+            }
             return;
         }
         
@@ -152,10 +209,16 @@ static void interrupt_dispatch(struct registers* regs)
         if (vector == 7) {
             /* This can occur if FPU is used in interrupt handler */
             /* Just return silently - FPU operations should not be done in interrupt context */
+            if (exc_count < 10) {
+                vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('7');  /* RED - Exception 7 ignored */
+            }
             return;
         }
         
         /* Critical exceptions - panic (XNU-style: exceptions must be handled) */
+        if (exc_count < 10) {
+            vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('P');  /* RED - Panic */
+        }
         kputs("\n*** Exception ***\n");
         kprintf("Exception: %s (%x)\n", 
                 exception_names[vector] ? exception_names[vector] : "Unknown",
@@ -189,6 +252,21 @@ void isr_handler(struct registers* regs)
 /* IRQ handler (called from assembly for IRQ 32-47) */
 void irq_handler(struct registers* regs)
 {
+    /* DIAGNOSTIC: Mark that irq_handler was called (VGA only, bottom of screen, RED) */
+    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
+    static uint32_t irq_handler_count = 0;
+    if (irq_handler_count < 10) {
+        uint32_t vector = regs->int_no;
+        vga_debug[80 * 22 + irq_handler_count * 2] = 0x0C00 | ('A');  /* RED */
+        vga_debug[80 * 22 + irq_handler_count * 2 + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
+        irq_handler_count++;
+    }
+    
     interrupt_dispatch(regs);
+    
+    /* DIAGNOSTIC: Mark that irq_handler is returning (RED) */
+    if (irq_handler_count < 10) {
+        vga_debug[80 * 22 + (irq_handler_count - 1) * 2] = 0x0C00 | ('R');  /* RED */
+    }
 }
 

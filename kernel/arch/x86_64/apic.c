@@ -62,8 +62,45 @@
  * I/O APIC Register Definitions
  * ============================================================================ */
 
-/* I/O APIC Base Address (typically 0xFEC00000, from ACPI) */
-#define IOAPIC_BASE_ADDR       0xFEC00000
+/* I/O APIC Base Address (default, will be overridden from ACPI MADT if available) */
+#define IOAPIC_BASE_ADDR_DEFAULT   0xFEC00000
+
+/* ACPI table signatures */
+#define ACPI_SIG_RSDP     "RSD PTR "
+#define ACPI_SIG_MADT     "APIC"
+
+/* ACPI MADT structure (XNU-style) */
+struct acpi_madt {
+    uint32_t signature;      /* "APIC" */
+    uint32_t length;
+    uint8_t  revision;
+    uint8_t  checksum;
+    char     oem_id[6];
+    char     oem_table_id[8];
+    uint32_t oem_revision;
+    uint32_t creator_id;
+    uint32_t creator_revision;
+    uint32_t lapic_addr;     /* Local APIC address */
+    uint32_t flags;
+    /* Variable entries follow */
+} __attribute__((packed));
+
+/* MADT entry header */
+struct madt_entry {
+    uint8_t type;
+    uint8_t length;
+    /* Variable data follows */
+} __attribute__((packed));
+
+/* MADT I/O APIC entry (type 1) */
+struct madt_ioapic {
+    uint8_t  type;           /* 1 */
+    uint8_t  length;         /* 12 */
+    uint8_t  ioapic_id;
+    uint8_t  reserved;
+    uint32_t ioapic_addr;    /* I/O APIC base address */
+    uint32_t gsi_base;       /* Global System Interrupt base */
+} __attribute__((packed));
 
 /* I/O APIC Registers (memory-mapped) */
 #define IOAPIC_REGSEL         0x00    /* Register Select */
@@ -111,6 +148,7 @@ static bool ioapic_available = false;
 static uint8_t ioapic_id = 0;
 static uint8_t ioapic_version = 0;
 static uint8_t ioapic_max_redir = 0;
+static uint64_t ioapic_base_addr = IOAPIC_BASE_ADDR_DEFAULT;  /* Will be set from MADT */
 
 /* LAPIC Timer State */
 static uint32_t apic_timer_ticks_per_ms = 0;  /* Calibrated ticks per millisecond */
@@ -123,6 +161,131 @@ static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
 
 /* Forward declarations */
 static int ioapic_init(void);
+
+/* XNU-style: Find I/O APIC address from ACPI MADT */
+static uint64_t find_ioapic_from_madt(void)
+{
+    extern void kputs(const char* str);
+    extern void kprintf(const char* fmt, ...);
+    extern void kprint_hex(uint64_t value);
+    
+    kputs("[MADT-1] Searching for ACPI MADT table...\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    /* XNU-style: Search for RSDP in BIOS memory area (0xE0000-0xFFFFF) */
+    /* RSDP signature: "RSD PTR " (8 bytes) */
+    uint64_t rsdp_addr = 0;
+    
+    /* Search in EBDA and BIOS ROM area */
+    for (uint64_t addr = 0xE0000; addr < 0x100000; addr += 16) {
+        const char* sig = (const char*)addr;
+        if (sig[0] == 'R' && sig[1] == 'S' && sig[2] == 'D' && 
+            sig[3] == ' ' && sig[4] == 'P' && sig[5] == 'T' && 
+            sig[6] == 'R' && sig[7] == ' ') {
+            rsdp_addr = addr;
+            kprintf("[MADT-1.1] Found RSDP at 0x%llX\n", (unsigned long long)addr);
+            break;
+        }
+    }
+    
+    if (rsdp_addr == 0) {
+        kputs("[MADT-1.2] RSDP not found in BIOS area, trying Multiboot2...\n");
+        /* TODO: Try to get RSDP from Multiboot2 ACPI tag */
+        /* For now, return 0 to use default address */
+        return 0;
+    }
+    
+    /* Read RSDT/XSDT address from RSDP */
+    /* RSDP structure: signature(8), checksum(1), oem_id(6), revision(1), 
+     *                  rsdt_addr(4 for v1) or xsdt_addr(8 for v2) */
+    uint8_t revision = *((uint8_t*)(rsdp_addr + 15));
+    uint64_t table_addr = 0;
+    
+    if (revision >= 2) {
+        /* XSDT (64-bit addresses) */
+        table_addr = *((uint64_t*)(rsdp_addr + 24));
+        kputs("[MADT-1.3] Using XSDT (ACPI 2.0+)\n");
+    } else {
+        /* RSDT (32-bit addresses) */
+        table_addr = (uint64_t)*((uint32_t*)(rsdp_addr + 16));
+        kputs("[MADT-1.4] Using RSDT (ACPI 1.0)\n");
+    }
+    
+    if (table_addr == 0) {
+        kputs("[MADT-1.5] RSDT/XSDT address is NULL\n");
+        return 0;
+    }
+    
+    kprintf("[MADT-2] RSDT/XSDT at 0x%llX, searching for MADT...\n", 
+            (unsigned long long)table_addr);
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Read table header to get entry count */
+    uint32_t* header = (uint32_t*)table_addr;
+    uint32_t signature = header[0];  /* Should be "RSDT" or "XSDT" */
+    uint32_t length = header[1];
+    
+    /* Calculate number of entries */
+    uint32_t entry_count = (length - 36) / (revision >= 2 ? 8 : 4);
+    kprintf("[MADT-2.1] Found %u entries in RSDT/XSDT\n", entry_count);
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Search for MADT table */
+    uint64_t madt_addr = 0;
+    for (uint32_t i = 0; i < entry_count && i < 32; i++) {  /* Limit to 32 entries */
+        uint64_t entry_addr;
+        if (revision >= 2) {
+            entry_addr = ((uint64_t*)table_addr)[9 + i];  /* Skip header (9 qwords) */
+        } else {
+            entry_addr = (uint64_t)((uint32_t*)table_addr)[9 + i];  /* Skip header (9 dwords) */
+        }
+        
+        /* Check signature */
+        uint32_t* entry_sig = (uint32_t*)entry_addr;
+        if (entry_sig[0] == 0x43495041) {  /* "APIC" in little-endian */
+            madt_addr = entry_addr;
+            kprintf("[MADT-2.2] Found MADT at 0x%llX\n", (unsigned long long)entry_addr);
+            break;
+        }
+    }
+    
+    if (madt_addr == 0) {
+        kputs("[MADT-2.3] MADT table not found in RSDT/XSDT\n");
+        return 0;
+    }
+    
+    /* Parse MADT to find I/O APIC entry */
+    struct acpi_madt* madt = (struct acpi_madt*)madt_addr;
+    uint32_t madt_length = madt->length;
+    uint8_t* madt_data = (uint8_t*)madt_addr;
+    uint32_t offset = sizeof(struct acpi_madt);
+    
+    kputs("[MADT-3] Parsing MADT entries for I/O APIC...\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    while (offset < madt_length) {
+        struct madt_entry* entry = (struct madt_entry*)(madt_data + offset);
+        
+        if (entry->type == 1) {  /* I/O APIC entry */
+            struct madt_ioapic* ioapic_entry = (struct madt_ioapic*)entry;
+            uint64_t ioapic_addr = (uint64_t)ioapic_entry->ioapic_addr;
+            kprintf("[MADT-3.1] Found I/O APIC entry: ID=0x%02X, addr=0x%llX, GSI_base=%u\n",
+                    ioapic_entry->ioapic_id, 
+                    (unsigned long long)ioapic_addr,
+                    ioapic_entry->gsi_base);
+            __asm__ volatile ("" ::: "memory");
+            return ioapic_addr;
+        }
+        
+        offset += entry->length;
+        if (entry->length == 0) {
+            break;  /* Prevent infinite loop */
+        }
+    }
+    
+    kputs("[MADT-3.2] I/O APIC entry not found in MADT\n");
+    return 0;
+}
 
 /**
  * @function apic_read_msr
@@ -421,12 +584,30 @@ int apic_init(void)
     
     kputs("[APIC-11] Init I/O APIC\n");
     __asm__ volatile ("" ::: "memory");
+    
+    /* XNU-style: Find I/O APIC address from ACPI MADT */
+    kputs("[APIC-11.0] Searching for I/O APIC in ACPI MADT...\n");
+    __asm__ volatile ("" ::: "memory");
+    uint64_t ioapic_addr = find_ioapic_from_madt();
+    if (ioapic_addr != 0) {
+        ioapic_base_addr = ioapic_addr;
+        kprintf("[APIC-11.0.1] Found I/O APIC at 0x%llX (from MADT)\n", 
+                (unsigned long long)ioapic_addr);
+    } else {
+        kputs("[APIC-11.0.2] I/O APIC not found in MADT, using default 0xFEC00000\n");
+        ioapic_base_addr = IOAPIC_BASE_ADDR_DEFAULT;
+    }
+    __asm__ volatile ("" ::: "memory");
+    
     /* Initialize I/O APIC for external IRQ routing */
-    if (ioapic_init() == 0) {
-        kputs("[APIC-11.1] I/O APIC initialized\n");
+    int ioapic_result = ioapic_init();
+    if (ioapic_result == 0) {
+        kputs("[APIC-11.1] I/O APIC initialized successfully\n");
         __asm__ volatile ("" ::: "memory");
     } else {
-        kputs("[APIC-11.2] I/O APIC init failed (will use PIC for external IRQ)\n");
+        kputs("[APIC-11.2] I/O APIC init failed (error code above)\n");
+        kputs("[APIC-11.3] Will use PIC for external IRQ routing\n");
+        kputs("[APIC-11.4] Check [IOAPIC-*] logs above for failure details\n");
         __asm__ volatile ("" ::: "memory");
     }
     
@@ -542,46 +723,112 @@ static void ioapic_write_register(uint8_t reg, uint32_t value)
 int ioapic_init(void)
 {
     extern void kputs(const char* str);
+    extern void kprintf(const char* fmt, ...);
     extern void kprint_hex(uint64_t value);
     extern int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags);
     
-    kputs("[IOAPIC-1] Map I/O APIC registers\n");
+    kputs("[IOAPIC-1] Starting I/O APIC initialization\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Map I/O APIC registers (4KB, uncached MMIO) */
-    uint64_t ioapic_phys = IOAPIC_BASE_ADDR;
+    /* Use address found from MADT or default */
+    uint64_t ioapic_phys = ioapic_base_addr;
     uint64_t ioapic_virt = ioapic_phys; /* Identity mapping */
     uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
     
-    if (paging_map_page_4kb(ioapic_virt, ioapic_phys, mmio_flags) != 0) {
-        kputs("[IOAPIC-1.1] Failed to map I/O APIC\n");
+    kprintf("[IOAPIC-1.1] Attempting to map I/O APIC at phys=0x%llX, virt=0x%llX\n", 
+            (unsigned long long)ioapic_phys, (unsigned long long)ioapic_virt);
+    __asm__ volatile ("" ::: "memory");
+    
+    int map_result = paging_map_page_4kb(ioapic_virt, ioapic_phys, mmio_flags);
+    if (map_result != 0) {
+        kprintf("[IOAPIC-1.2] ERROR: Failed to map I/O APIC page (error=%d)\n", map_result);
+        kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
+        __asm__ volatile ("" ::: "memory");
         return -1;
     }
+    
+    kputs("[IOAPIC-1.4] I/O APIC page mapped successfully\n");
+    __asm__ volatile ("" ::: "memory");
     
     ioapic_base = (volatile uint32_t*)ioapic_virt;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[IOAPIC-2] Read I/O APIC ID\n");
-    __asm__ volatile ("" ::: "memory");
-    ioapic_id = (uint8_t)((ioapic_read_register(IOAPIC_ID) >> 24) & 0xFF);
+    kputs("[IOAPIC-2] Reading I/O APIC ID register\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[IOAPIC-3] Read I/O APIC Version\n");
+    /* Try to read I/O APIC ID register to verify it's accessible */
+    uint32_t id_reg = 0;
     __asm__ volatile ("" ::: "memory");
-    uint32_t ver = ioapic_read_register(IOAPIC_VER);
+    id_reg = ioapic_read_register(IOAPIC_ID);
+    __asm__ volatile ("" ::: "memory");
+    
+    kprintf("[IOAPIC-2.1] I/O APIC ID register value: 0x%08X\n", id_reg);
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Check if ID register is readable (should not be all 0xFF or 0x00) */
+    if (id_reg == 0xFFFFFFFF || id_reg == 0x00000000) {
+        kputs("[IOAPIC-2.2] WARNING: I/O APIC ID register returns invalid value\n");
+        kputs("[IOAPIC-2.3] I/O APIC may not be present at this address\n");
+        __asm__ volatile ("" ::: "memory");
+        /* Continue anyway - some systems may have different behavior */
+    }
+    
+    ioapic_id = (uint8_t)((id_reg >> 24) & 0xFF);
+    kprintf("[IOAPIC-2.4] I/O APIC ID extracted: 0x%02X\n", ioapic_id);
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[IOAPIC-3] Reading I/O APIC Version register\n");
+    __asm__ volatile ("" ::: "memory");
+    
+    uint32_t ver = 0;
+    __asm__ volatile ("" ::: "memory");
+    ver = ioapic_read_register(IOAPIC_VER);
+    __asm__ volatile ("" ::: "memory");
+    
+    kprintf("[IOAPIC-3.1] I/O APIC Version register value: 0x%08X\n", ver);
+    __asm__ volatile ("" ::: "memory");
+    
+    /* Check if Version register is readable */
+    if (ver == 0xFFFFFFFF) {
+        kputs("[IOAPIC-3.2] ERROR: I/O APIC Version register returns 0xFFFFFFFF\n");
+        kputs("[IOAPIC-3.3] This usually means I/O APIC is not present or not accessible\n");
+        kputs("[IOAPIC-3.4] Possible causes:\n");
+        kputs("[IOAPIC-3.5]   1. I/O APIC not enabled in QEMU (use -machine q35)\n");
+        kputs("[IOAPIC-3.6]   2. Wrong base address (check ACPI/MADT)\n");
+        kputs("[IOAPIC-3.7]   3. Page mapping failed (check [IOAPIC-1.2] above)\n");
+        __asm__ volatile ("" ::: "memory");
+        return -1;
+    }
+    
+    if (ver == 0x00000000) {
+        kputs("[IOAPIC-3.2] ERROR: I/O APIC Version register returns 0x00000000\n");
+        kputs("[IOAPIC-3.3] I/O APIC may not be initialized or not present\n");
+        __asm__ volatile ("" ::: "memory");
+        return -1;
+    }
+    
     ioapic_version = (uint8_t)(ver & 0xFF);
     ioapic_max_redir = (uint8_t)((ver >> 16) & 0xFF);
+    
+    kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
+    __asm__ volatile ("" ::: "memory");
+    kprintf("[IOAPIC-4.1] ID=0x%02X\n", ioapic_id);
+    kprintf("[IOAPIC-4.2] Version=0x%02X\n", ioapic_version);
+    kprintf("[IOAPIC-4.3] Max Redir Entries=%u\n", ioapic_max_redir);
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[IOAPIC-4] I/O APIC initialized\n");
-    __asm__ volatile ("" ::: "memory");
-    kputs("[IOAPIC-4.1] ID="); kprint_hex(ioapic_id); kputs("\n");
-    kputs("[IOAPIC-4.2] Version="); kprint_hex(ioapic_version); kputs("\n");
-    kputs("[IOAPIC-4.3] Max Redir="); kprint_hex(ioapic_max_redir); kputs("\n");
-    __asm__ volatile ("" ::: "memory");
+    /* Validate extracted values */
+    if (ioapic_max_redir == 0 || ioapic_max_redir > 24) {
+        kputs("[IOAPIC-4.4] WARNING: Invalid max redir entries, using default 24\n");
+        ioapic_max_redir = 24;
+    }
     
     ioapic_initialized = true;
     ioapic_available = true;
+    __asm__ volatile ("" ::: "memory");
+    
+    kputs("[IOAPIC-OK] I/O APIC is now available for interrupt routing\n");
     __asm__ volatile ("" ::: "memory");
     
     return 0;

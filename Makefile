@@ -94,7 +94,9 @@ else
   endif
 endif
 
-QEMU_FLAGS       = -m 64M -boot d -cdrom $(ISO_OUT) -serial stdio -no-reboot -no-shutdown
+# QEMU flags: enable APIC and I/O APIC for modern interrupt handling
+QEMU_FLAGS       = -m 64M -boot d -cdrom $(ISO_OUT) -serial stdio -no-reboot -no-shutdown \
+                   -machine q35 -cpu qemu64,+apic,+x2apic
 QEMU_DEBUG_FLAGS = -s -S
 
 
