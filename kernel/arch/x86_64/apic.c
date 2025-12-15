@@ -14,7 +14,7 @@
 #include "types.h"
 #include "config.h"
 #include "paging.h"
-#include "../../include/debug.h"
+#include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -302,7 +302,7 @@ static uint64_t apic_read_msr(uint32_t msr)
     __asm__ volatile ("" ::: "memory");
     
     uint32_t low, high;
-    __asm__ volatile ("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
+    __asm__ volatile ("rdmsr" : "=a" (low), "=d" (high) : "c" (msr));
     __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-RDMSR-2] After RDMSR\n");
@@ -327,7 +327,7 @@ static void apic_write_msr(uint32_t msr, uint64_t value)
 {
     uint32_t low = (uint32_t)(value & 0xFFFFFFFF);
     uint32_t high = (uint32_t)(value >> 32);
-    __asm__ volatile ("wrmsr" : : "a"(low), "d"(high), "c"(msr));
+    __asm__ volatile ("wrmsr" : : "a" (low), "d" (high), "c" (msr));
 }
 
 /**
@@ -418,9 +418,8 @@ static bool apic_check_cpuid(void)
     __asm__ volatile ("" ::: "memory");
     /* Check CPUID feature flags */
     __asm__ volatile ("cpuid"
-                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-                      : "a"(1));
-    __asm__ volatile ("" ::: "memory");
+                      : "=a" (eax), "=b" (ebx), "=c" (ecx), "=d" (edx)
+                      : "a" (1));
     
     kputs("[APIC-CPUID-3] Check bit\n");
     __asm__ volatile ("" ::: "memory");

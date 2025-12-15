@@ -21,13 +21,8 @@ typedef int16_t  i16_t;
 typedef int32_t  i32_t;
 typedef int64_t  i64_t;
 
-/* Указатели (64-битные) */
-typedef uint64_t uintptr_t;
-typedef int64_t  intptr_t;
-
-/* Размеры */
-typedef uint64_t size_t;
-typedef int64_t  ssize_t;
+/* Указатели и размеры уже определены в <stdint.h> и <stddef.h> */
+/* В 64-битном режиме они автоматически 64-битные */
 
 /* NULL */
 #ifndef NULL

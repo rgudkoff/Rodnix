@@ -9,8 +9,8 @@
  * - No panic on unhandled IRQ (mask instead)
  */
 
-#include "../../include/console.h"
-#include "../../include/debug.h"
+#include "../../../include/console.h"
+#include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "types.h"
 #include "pic.h"
