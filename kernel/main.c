@@ -7,6 +7,7 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "core/interrupts.h"
+#include "fs/vfs.h"
 
 static void idle_thread(void* arg)
 {
@@ -255,6 +256,15 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INIT-9-OK] Fabric initialization complete\n");
+    __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT-9.6] VFS/RAMFS\n");
+    __asm__ volatile ("" ::: "memory");
+    if (vfs_init() != 0) {
+        kputs("[INIT-9.6] VFS init failed\n");
+    } else {
+        kputs("[INIT-9.6] VFS ready\n");
+    }
     __asm__ volatile ("" ::: "memory");
     
     /* Step 10: Enable interrupts (set IRQL to PASSIVE) */

@@ -1,0 +1,53 @@
+/**
+ * @file vfs.h
+ * @brief Minimal VFS interface (RAM-backed implementation)
+ */
+
+#pragma once
+
+#include <stddef.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef enum {
+    VFS_NODE_FILE = 0,
+    VFS_NODE_DIR  = 1
+} vfs_node_type_t;
+
+typedef struct vfs_node {
+    char name[32];
+    vfs_node_type_t type;
+    struct vfs_node* parent;
+    struct vfs_node* sibling;
+    struct vfs_node* children;
+    uint8_t* data;
+    size_t size;
+    size_t capacity;
+} vfs_node_t;
+
+typedef struct vfs_file {
+    vfs_node_t* node;
+    size_t pos;
+    bool writable;
+} vfs_file_t;
+
+typedef void (*vfs_list_cb_t)(const vfs_node_t* node, void* ctx);
+
+enum {
+    VFS_OPEN_READ   = 1 << 0,
+    VFS_OPEN_WRITE  = 1 << 1,
+    VFS_OPEN_CREATE = 1 << 2,
+    VFS_OPEN_TRUNC  = 1 << 3
+};
+
+int vfs_init(void);
+int vfs_is_ready(void);
+
+int vfs_mkdir(const char* path);
+int vfs_unlink(const char* path);
+int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
+
+int vfs_open(const char* path, int flags, vfs_file_t* out_file);
+int vfs_close(vfs_file_t* file);
+int vfs_read(vfs_file_t* file, void* buffer, size_t size);
+int vfs_write(vfs_file_t* file, const void* buffer, size_t size);

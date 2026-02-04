@@ -15,6 +15,7 @@
 #include "shell.h"
 #include "../input/input.h"
 #include "../core/boot.h"
+#include "../fs/vfs.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
@@ -322,12 +323,95 @@ static int shell_cmd_timer(int argc, char** argv)
 static int shell_cmd_echo(int argc, char** argv)
 {
     for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], ">") == 0 && i + 1 < argc) {
+            const char* path = argv[i + 1];
+            extern int vfs_open(const char* path, int flags, vfs_file_t* out_file);
+            extern int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
+            extern int vfs_close(vfs_file_t* file);
+
+            vfs_file_t file;
+            if (vfs_open(path, VFS_OPEN_WRITE | VFS_OPEN_CREATE | VFS_OPEN_TRUNC, &file) != 0) {
+                kputs("echo: open failed\n");
+                return -1;
+            }
+            for (int j = 1; j < i; j++) {
+                vfs_write(&file, argv[j], strlen(argv[j]));
+                if (j < i - 1) {
+                    char space = ' ';
+                    vfs_write(&file, &space, 1);
+                }
+            }
+            vfs_close(&file);
+            return 0;
+        }
+    }
+
+    for (int i = 1; i < argc; i++) {
         kputs(argv[i]);
         if (i < argc - 1) {
             kputc(' ');
         }
     }
     kputc('\n');
+    return 0;
+}
+
+static void shell_ls_cb(const vfs_node_t* node, void* ctx)
+{
+    (void)ctx;
+    if (node->type == VFS_NODE_DIR) {
+        kprintf("%s/\n", node->name);
+    } else {
+        kprintf("%s\n", node->name);
+    }
+}
+
+static int shell_cmd_ls(int argc, char** argv)
+{
+    const char* path = "/";
+    if (argc > 1) {
+        path = argv[1];
+    }
+
+    if (!vfs_is_ready()) {
+        kputs("VFS not initialized\n");
+        return -1;
+    }
+    if (vfs_list_dir(path, shell_ls_cb, NULL) != 0) {
+        kputs("ls: failed to list directory\n");
+        return -1;
+    }
+    return 0;
+}
+
+static int shell_cmd_cat(int argc, char** argv)
+{
+    if (argc < 2) {
+        kputs("Usage: cat <file>\n");
+        return -1;
+    }
+
+    extern int vfs_open(const char* path, int flags, vfs_file_t* out_file);
+    extern int vfs_read(vfs_file_t* file, void* buffer, size_t size);
+    extern int vfs_close(vfs_file_t* file);
+
+    vfs_file_t file;
+    if (vfs_open(argv[1], VFS_OPEN_READ | VFS_OPEN_CREATE, &file) != 0) {
+        kputs("cat: open failed\n");
+        return -1;
+    }
+
+    char buf[128];
+    for (;;) {
+        int r = vfs_read(&file, buf, sizeof(buf) - 1);
+        if (r <= 0) {
+            break;
+        }
+        buf[r] = '\0';
+        kputs(buf);
+    }
+    kputc('\n');
+    vfs_close(&file);
     return 0;
 }
 
@@ -377,7 +461,9 @@ static const struct shell_command commands[] = {
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
     {"mem",     shell_cmd_memory,  "Alias for memory"},
     {"timer",   shell_cmd_timer,   "Show timer information"},
-    {"echo",    shell_cmd_echo,    "Echo arguments"},
+    {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
+    {"ls",      shell_cmd_ls,      "List directory"},
+    {"cat",     shell_cmd_cat,     "Show file contents"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };
@@ -482,7 +568,6 @@ void shell_run(void)
     char* argv[SHELL_MAX_ARGS];
     static bool prompt_logged = false;
     static bool loop_logged = false;
-    uint64_t loop_counter = 0;
     
     extern void kputs(const char* str);
     extern void kputc(char c);
@@ -510,9 +595,7 @@ void shell_run(void)
             kputs("[SHELL] prompt shown\n");
             prompt_logged = true;
         }
-        loop_counter++;
-        /* Display prompt with loop counter */
-        kprintf("  rodnix[%llu]> ", (unsigned long long)loop_counter);
+        kputs(SHELL_PROMPT);
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
 
         

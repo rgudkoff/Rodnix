@@ -515,7 +515,6 @@ size_t input_read_line(char *buf, size_t n)
     
     size_t pos = 0;
     buf[0] = '\0';
-    int last_c = -1;
     
     /* External console functions */
     extern void kputc(char c);
@@ -528,7 +527,6 @@ size_t input_read_line(char *buf, size_t n)
         
         /* Get character */
         int c = input_read_char();
-        last_c = c;
         
         if (c == -1) {
             /* No character available. In polling mode IRQs may be disabled,
@@ -544,11 +542,6 @@ size_t input_read_line(char *buf, size_t n)
         }
         
         if (c == '\n' || c == '\r') {
-            if (pos == 0) {
-                extern void kprintf(const char* fmt, ...);
-                kprintf("[InputCore] empty-line char=0x%x last_c=0x%x\n",
-                        (unsigned)c, (unsigned)last_c);
-            }
             /* Enter pressed */
             buf[pos] = '\0';
             kputc('\n');
@@ -587,10 +580,5 @@ size_t input_read_line(char *buf, size_t n)
     }
     
     buf[n - 1] = '\0';
-    {
-        extern void kprintf(const char* fmt, ...);
-        kprintf("[InputCore] line exit pos=%llu last_c=0x%x\n",
-                (unsigned long long)pos, (unsigned)last_c);
-    }
     return pos;
 }

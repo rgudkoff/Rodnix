@@ -25,7 +25,8 @@ CFLAGS = -m64 \
          -I./kernel/common \
          -I./kernel/arch/x86_64 \
          -I./kernel/fabric \
-         -I./kernel/input
+         -I./kernel/input \
+         -I./kernel/fs
 
 ASFLAGS = -f elf64
 LDFLAGS = -m elf_x86_64 -T link.ld --no-warn-mismatch -z max-page-size=0x1000
@@ -36,6 +37,7 @@ ISO_DIR   = iso
 # ===== Sources =====
 KERNEL_C_SRCS = \
 	kernel/main.c \
+	kernel/fs/vfs.c \
 	kernel/common/scheduler.c \
 	kernel/common/ipc.c \
 	kernel/common/console.c \
