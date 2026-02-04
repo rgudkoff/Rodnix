@@ -9,6 +9,7 @@
  */
 
 #include "../../core/memory.h"
+#include "../../core/boot.h"
 #include "types.h"
 #include "config.h"
 #include "pmm.h"
@@ -53,6 +54,7 @@ int memory_init(void)
     extern int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt);
     extern int paging_init(void);
     extern void kputs(const char* str);
+    extern boot_info_t* boot_get_info(void);
     
     kputs("[MEM-1] Start\n");
     __asm__ volatile ("" ::: "memory");
@@ -71,13 +73,18 @@ int memory_init(void)
     
     kputs("[MEM-4] Setup PMM params\n");
     __asm__ volatile ("" ::: "memory");
-    /* For PMM, we need to allocate a bitmap. For now, use a simple approach:
-     * Use a fixed location in low memory that's already identity-mapped.
-     * In a real system, we'd parse Multiboot2 memory map and allocate properly.
+    /* For PMM, we need to allocate a bitmap. For now, use a fixed location
+     * in low memory that's already identity-mapped.
      */
-    #define PMM_BITMAP_PHYS_ADDR  0x50000                 /* 320KB (after boot code, before 1MB) */
-    #define PMM_MEMORY_START      0x100000                /* 1MB (after boot code) */
-    #define PMM_MEMORY_END        0x4000000               /* 64MB (conservative estimate) */
+    #define PMM_BITMAP_PHYS_ADDR  0x50000  /* 320KB (after boot code, before 1MB) */
+    #define PMM_MEMORY_START      0x100000 /* 1MB (after boot code) */
+    #define PMM_MEMORY_FALLBACK_END 0x4000000 /* 64MB (fallback) */
+    
+    boot_info_t* bi = boot_get_info();
+    uint64_t mem_end = PMM_MEMORY_FALLBACK_END;
+    if (bi && bi->mem_upper > PMM_MEMORY_START) {
+        mem_end = bi->mem_upper;
+    }
     
     /* Bitmap is in low memory, already identity-mapped by boot.S */
     void* bitmap_virt = (void*)PMM_BITMAP_PHYS_ADDR;
@@ -86,7 +93,7 @@ int memory_init(void)
     kputs("[MEM-5] Call pmm_init\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize PMM */
-    if (pmm_init(PMM_MEMORY_START, PMM_MEMORY_END, bitmap_virt) != 0) {
+    if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
         kputs("[MEM-ERR] pmm_init failed\n");
         return -1;
     }

@@ -33,6 +33,7 @@ focused on x86_64 today, with placeholders for other 64-bit ISAs.
   - riscv64: placeholder
 - kernel/fabric: Fabric core (bus/device/driver/service)
 - kernel/input: InputCore (scancode to ASCII)
+- input path: polling-based today, IRQ path planned via Fabric
 - kernel/interrupts: shared interrupt helpers
 - boot: boot code
 - drivers: Fabric drivers
@@ -70,6 +71,7 @@ Memory
 - Page mapping
 - Allocation and free
 - Address translation
+- Multiboot2 memory map parsing at boot
 
 CPU
 - CPU info
@@ -93,5 +95,6 @@ CPU
 - [ ] Task scheduler
 - [ ] Memory management
 - [ ] IPC subsystem
-- [ ] Device drivers via Fabric
+- [ ] Device drivers via Fabric (expand beyond HID keyboard)
+- [ ] IRQ-based input path through Fabric
 - [ ] Consumers of Fabric services (service lookup)

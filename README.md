@@ -31,12 +31,13 @@ Implemented so far (x86_64 focus):
 - PIT timer initialization
 - VGA text-mode console
 - Minimal interactive shell
-- PS/2 keyboard input (polling fallback via InputCore; IRQ path prepared)
+- PS/2 keyboard input (polling via InputCore; IRQ path prepared)
 - Physical memory manager (bitmap, early fixed map) and paging groundwork
+- Multiboot2 memory map parsing (boot-time)
 - Fabric core: bus/device/driver/service registries and matching
 - Buses: virtual bus, PCI enumeration (minimal), PS/2 keyboard publication
 - HID keyboard driver (via Fabric) publishing a "keyboard" service
-- ISO image generation and QEMU support
+- ISO image generation (GRUB-based) and QEMU support
 
 Expect frequent changes and refactoring.
 
@@ -77,7 +78,7 @@ Toolchain:
 - qemu-system-x86_64
 - xorriso
 - mtools
-- grub-mkrescue
+- grub-mkrescue (i686-elf-grub-mkrescue on macOS/Homebrew)
 
 ## Keyboard and Shell
 
@@ -87,7 +88,8 @@ Toolchain:
 - Simple interactive shell
 - Line-based input with basic editing
 
-The keyboard logic is currently low-level and architecture-specific by design.
+The keyboard input path is currently polling-based through InputCore. IRQ-based
+input is planned via Fabric.
 
 ## Roadmap
 
