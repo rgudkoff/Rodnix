@@ -6,11 +6,15 @@
 #include "../include/kernel.h"
 #include "../include/console.h"
 #include "../include/debug.h"
+#include "core/interrupts.h"
 
 static void idle_thread(void* arg)
 {
     (void)arg;
     for (;;) {
+        interrupts_enable();
+        /* Yield if any ready thread exists */
+        scheduler_yield();
         cpu_idle();
     }
 }
@@ -158,15 +162,11 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
 
-    /* If LAPIC is available, PIC should be disabled */
-    /* But if I/O APIC is not available, keep PIC for external IRQ routing */
+    /* If LAPIC is available, keep PIC enabled for legacy IRQs (PS/2) */
     if (apic_is_available()) {
         extern bool ioapic_is_available(void);
-        extern void pic_disable(void);
         if (ioapic_is_available()) {
-            kputs("[INIT-5.3] I/O APIC available, disable PIC completely\n");
-            __asm__ volatile ("" ::: "memory");
-            pic_disable();
+            kputs("[INIT-5.3] I/O APIC available, keep PIC enabled for legacy IRQs\n");
             __asm__ volatile ("" ::: "memory");
         } else {
             kputs("[INIT-5.3] LAPIC available, I/O APIC not - keep PIC for external IRQ\n");

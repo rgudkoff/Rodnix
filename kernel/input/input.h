@@ -35,3 +35,5 @@ void input_process_queue(void);
 /* Control PS/2 polling fallback */
 void input_set_polling_enabled(bool enabled);
 
+/* Flush any pending input from the buffer */
+void input_flush(void);

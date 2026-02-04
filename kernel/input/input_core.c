@@ -21,6 +21,51 @@
 #include <stdint.h>
 
 /* ============================================================================
+ * Serial Input (COM1) - optional fallback for headless QEMU
+ * ============================================================================ */
+
+#define SERIAL_COM1_BASE 0x3F8
+#define SERIAL_DATA      0
+#define SERIAL_LSR       5
+
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+#ifndef SERIAL_INPUT_ENABLED
+#define SERIAL_INPUT_ENABLED 0
+#endif
+
+static int serial_read_char(void)
+{
+    uint8_t lsr = inb(SERIAL_COM1_BASE + SERIAL_LSR);
+    /* If port absent, LSR may read as 0xFF */
+    if (lsr == 0xFF) {
+        return -1;
+    }
+    if ((lsr & 0x01) == 0) {
+        return -1;
+    }
+    uint8_t c = inb(SERIAL_COM1_BASE + SERIAL_DATA);
+    if (c == '\r') {
+        c = '\n';
+    }
+    return (int)c;
+}
+
+static bool serial_has_char(void)
+{
+    uint8_t lsr = inb(SERIAL_COM1_BASE + SERIAL_LSR);
+    if (lsr == 0xFF) {
+        return false;
+    }
+    return (lsr & 0x01) != 0;
+}
+
+/* ============================================================================
  * InputCore Constants
  * ============================================================================ */
 
@@ -109,6 +154,7 @@ static const char scan_code_shift[128] = {
  */
 static int input_buffer_put(uint8_t c)
 {
+    (void)c;
     /* Check if buffer is full */
     if (input_state.buffer_count >= INPUT_BUFFER_SIZE) {
         return -1; /* Buffer full */
@@ -284,7 +330,7 @@ void input_init_keyboard(void)
  * @param scancode Raw scan code from keyboard
  * @param pressed Whether key is pressed (true) or released (false)
  * 
- * @note This is called from IRQ context by drivers
+ * @note Called from non-IRQ context (IRQ handlers should enqueue and defer)
  * @note Handles extended scan code prefix (0xE0)
  * @note Translation to ASCII is done here
  */
@@ -298,7 +344,7 @@ void input_push_scancode(uint16_t scancode, bool pressed)
         return;
     }
     
-    /* Lock for thread safety */
+    /* Lock for thread safety (non-IRQ context) */
     spinlock_lock(&input_state.lock);
     
     /* Translate scan code to character */
@@ -350,6 +396,7 @@ static void input_poll_keyboard_ps2(void)
     
     extern void input_push_scancode(uint16_t scancode, bool pressed);
     input_push_scancode(code, pressed);
+
 }
 
 /**
@@ -360,6 +407,13 @@ static void input_poll_keyboard_ps2(void)
  */
 bool input_has_char(void)
 {
+    /* Serial fallback (useful for headless QEMU with -serial stdio) */
+#if SERIAL_INPUT_ENABLED
+    if (serial_has_char()) {
+        return true;
+    }
+#endif
+
     /* Сначала опросить клавиатуру в поллинговом режиме (fallback без IRQ) */
     if (input_polling_enabled) {
         input_poll_keyboard_ps2();
@@ -388,6 +442,14 @@ bool input_has_char(void)
  */
 int input_read_char(void)
 {
+    /* Serial fallback (useful for headless QEMU with -serial stdio) */
+#if SERIAL_INPUT_ENABLED
+    int serial_c = serial_read_char();
+    if (serial_c != -1) {
+        return serial_c;
+    }
+#endif
+
     /* Сначала опросить клавиатуру (fallback без IRQ) */
     if (input_polling_enabled) {
         input_poll_keyboard_ps2();
@@ -417,6 +479,23 @@ void input_set_polling_enabled(bool enabled)
     input_polling_enabled = enabled;
 }
 
+void input_flush(void)
+{
+    extern void input_process_queue(void);
+    extern void hid_kbd_flush_queue(void) __attribute__((weak));
+
+    if (hid_kbd_flush_queue) {
+        hid_kbd_flush_queue();
+    }
+    input_process_queue();
+    spinlock_lock(&input_state.lock);
+    input_state.buffer_head = 0;
+    input_state.buffer_tail = 0;
+    input_state.buffer_count = 0;
+    spinlock_unlock(&input_state.lock);
+}
+
+
 /**
  * @function input_read_line
  * @brief Read a line from input (blocking)
@@ -436,9 +515,11 @@ size_t input_read_line(char *buf, size_t n)
     
     size_t pos = 0;
     buf[0] = '\0';
+    int last_c = -1;
     
     /* External console functions */
     extern void kputc(char c);
+    
     
     while (pos < n - 1) {
         /* Process queued scan codes first */
@@ -447,6 +528,7 @@ size_t input_read_line(char *buf, size_t n)
         
         /* Get character */
         int c = input_read_char();
+        last_c = c;
         
         if (c == -1) {
             /* No character available. In polling mode IRQs may be disabled,
@@ -462,6 +544,11 @@ size_t input_read_line(char *buf, size_t n)
         }
         
         if (c == '\n' || c == '\r') {
+            if (pos == 0) {
+                extern void kprintf(const char* fmt, ...);
+                kprintf("[InputCore] empty-line char=0x%x last_c=0x%x\n",
+                        (unsigned)c, (unsigned)last_c);
+            }
             /* Enter pressed */
             buf[pos] = '\0';
             kputc('\n');
@@ -500,5 +587,10 @@ size_t input_read_line(char *buf, size_t n)
     }
     
     buf[n - 1] = '\0';
+    {
+        extern void kprintf(const char* fmt, ...);
+        kprintf("[InputCore] line exit pos=%llu last_c=0x%x\n",
+                (unsigned long long)pos, (unsigned)last_c);
+    }
     return pos;
 }

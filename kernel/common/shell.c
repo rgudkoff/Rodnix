@@ -18,6 +18,8 @@
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
+#include "../common/scheduler.h"
+#include "../core/interrupts.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -72,12 +74,37 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  mem       - Alias for memory\n");
     kputs("  timer     - Show timer information\n");
     kputs("  echo      - Echo arguments\n");
+    kputs("  sched     - Show scheduler statistics\n");
     kputs("  exit      - Exit shell (reboot)\n");
     kputs("\n");
     
     return 0;
 }
 
+/**
+ * @function shell_cmd_sched
+ * @brief Show scheduler statistics
+ */
+static int shell_cmd_sched(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    extern int scheduler_get_stats(scheduler_stats_t* out_stats);
+    scheduler_stats_t stats;
+    if (scheduler_get_stats(&stats) != 0) {
+        kputs("scheduler stats unavailable\n");
+        return -1;
+    }
+
+    kprintf("Scheduler Stats:\n");
+    kprintf("  total_switches: %llu\n", (unsigned long long)stats.total_switches);
+    kprintf("  total_tasks:    %llu\n", (unsigned long long)stats.total_tasks);
+    kprintf("  running_tasks:  %llu\n", (unsigned long long)stats.running_tasks);
+    kprintf("  ready_tasks:    %llu\n", (unsigned long long)stats.ready_tasks);
+    kprintf("  blocked_tasks:  %llu\n", (unsigned long long)stats.blocked_tasks);
+    return 0;
+}
 /**
  * @function shell_cmd_clear
  * @brief Clear the screen
@@ -344,6 +371,7 @@ struct shell_command {
 /* Built-in commands table */
 static const struct shell_command commands[] = {
     {"help",    shell_cmd_help,    "Show help information"},
+    {"sched",   shell_cmd_sched,   "Show scheduler statistics"},
     {"clear",   shell_cmd_clear,    "Clear the screen"},
     {"info",    shell_cmd_info,    "Show system information"},
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
@@ -452,6 +480,9 @@ void shell_run(void)
 {
     char line[SHELL_MAX_LINE_LENGTH];
     char* argv[SHELL_MAX_ARGS];
+    static bool prompt_logged = false;
+    static bool loop_logged = false;
+    uint64_t loop_counter = 0;
     
     extern void kputs(const char* str);
     extern void kputc(char c);
@@ -459,6 +490,8 @@ void shell_run(void)
     /* Disable log prefixes for interactive shell output */
     extern void console_set_log_prefix_enabled(bool enabled);
     console_set_log_prefix_enabled(false);
+    extern void input_flush(void);
+    input_flush();
 
     kputs("[SHELL] shell_run() called\n");
     __asm__ volatile ("" ::: "memory");
@@ -468,15 +501,25 @@ void shell_run(void)
     __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
-        /* Display prompt */
-        kputs(SHELL_PROMPT);
+        interrupts_enable();
+        if (!loop_logged) {
+            kputs("[SHELL] loop entered\n");
+            loop_logged = true;
+        }
+        if (!prompt_logged) {
+            kputs("[SHELL] prompt shown\n");
+            prompt_logged = true;
+        }
+        loop_counter++;
+        /* Display prompt with loop counter */
+        kprintf("  rodnix[%llu]> ", (unsigned long long)loop_counter);
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
+
         
         /* Read command line */
         size_t len = input_read_line(line, SHELL_MAX_LINE_LENGTH);
         
         if (len == 0) {
-            kputc('\n');
             continue; /* Empty line */
         }
         
@@ -488,6 +531,7 @@ void shell_run(void)
             shell_execute_command(argc, argv);
             shell_state.command_count++;
         }
+        scheduler_ast_check();
     }
 }
 

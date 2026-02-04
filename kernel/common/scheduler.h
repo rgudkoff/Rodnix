@@ -164,6 +164,12 @@ int scheduler_set_policy(sched_policy_t policy);
 void scheduler_tick(void);
 
 /**
+ * Configure scheduler tick rate (Hz) for time slicing.
+ * Should be called by the active timer source.
+ */
+void scheduler_set_tick_rate(uint32_t hz);
+
+/**
  * Check pending reschedule at safe points (AST-like)
  * Should be called from non-IRQ context
  */

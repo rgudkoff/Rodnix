@@ -295,6 +295,23 @@ void kputc(char c)
     }
     serial_write_char(c);
 
+    /* Handle backspace */
+    if (c == '\b') {
+        if (vga_col > 0) {
+            vga_col--;
+        } else if (vga_row > 0) {
+            vga_row--;
+            vga_col = VGA_WIDTH - 1;
+        } else {
+            update_cursor(vga_row, vga_col);
+            return;
+        }
+        uint32_t index = vga_row * VGA_WIDTH + vga_col;
+        vga_buffer[index] = (uint16_t)' ' | ((uint16_t)vga_color << 8);
+        update_cursor(vga_row, vga_col);
+        return;
+    }
+
     /* Handle newline */
     if (c == '\n') {
         vga_col = 0;

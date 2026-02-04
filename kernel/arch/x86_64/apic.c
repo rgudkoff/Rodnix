@@ -14,6 +14,7 @@
 #include "types.h"
 #include "config.h"
 #include "paging.h"
+#include "pic.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
@@ -654,6 +655,15 @@ int apic_init(void)
     __asm__ volatile ("" ::: "memory");
     apic_write_register(APIC_SVR, svr);
     __asm__ volatile ("" ::: "memory");
+
+    /* Route legacy PIC interrupts via LINT0 (ExtINT) */
+    kputs("[APIC-9.1] Configure LINT0 for ExtINT\n");
+    __asm__ volatile ("" ::: "memory");
+    /* Delivery mode ExtINT (0b111 << 8), unmasked (bit 16 = 0) */
+    apic_write_register(APIC_LVT_LINT0, (0x7u << 8));
+    /* Mask LINT1 (optional) */
+    apic_write_register(APIC_LVT_LINT1, (1u << 16));
+    __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-10] Set initialized\n");
     __asm__ volatile ("" ::: "memory");
@@ -686,6 +696,8 @@ int apic_init(void)
         kputs("[APIC-11.2] I/O APIC init failed (error code above)\n");
         kputs("[APIC-11.3] Will use PIC for external IRQ routing\n");
         kputs("[APIC-11.4] Check [IOAPIC-*] logs above for failure details\n");
+        /* Route external IRQs to PIC (IMCR PIC mode) */
+        pic_set_imcr(false);
         __asm__ volatile ("" ::: "memory");
     }
     
@@ -861,9 +873,9 @@ int ioapic_init(void)
     /* Check if ID register is readable (should not be all 0xFF or 0x00) */
     if (id_reg == 0xFFFFFFFF || id_reg == 0x00000000) {
         kputs("[IOAPIC-2.2] WARNING: I/O APIC ID register returns invalid value\n");
-        kputs("[IOAPIC-2.3] I/O APIC may not be present at this address\n");
+        kputs("[IOAPIC-2.3] I/O APIC may not be present at this address; using PIC for external IRQs\n");
         __asm__ volatile ("" ::: "memory");
-        /* Continue anyway - some systems may have different behavior */
+        return -1;
     }
     
     ioapic_id = (uint8_t)((id_reg >> 24) & 0xFF);
@@ -1157,6 +1169,7 @@ int apic_timer_init(uint32_t frequency)
     }
     
     apic_timer_frequency = frequency;
+    scheduler_set_tick_rate(frequency);
     
     /* Calibrate LAPIC timer using PIT */
     if (apic_timer_calibrate() != 0) {

@@ -6,6 +6,7 @@
 #include "../core/task.h"
 #include "heap.h"
 #include "../core/cpu.h"
+#include "../core/interrupts.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -19,6 +20,7 @@ static uint64_t next_thread_id = 1;
 static void thread_trampoline(void)
 {
     thread_t* self = current_thread;
+    interrupts_enable();
     if (!self || !self->entry) {
         for (;;) {
             cpu_idle();
@@ -104,7 +106,8 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
 
     uintptr_t sp = (uintptr_t)stack + KERNEL_STACK_SIZE;
     sp &= ~(uintptr_t)0xF; /* 16-byte align */
-    sp -= sizeof(uint64_t); /* return address for initial thread start */
+    /* Keep ABI alignment: after 'ret' into thread_trampoline, RSP % 16 == 8. */
+    sp -= 16;
     *((uint64_t*)sp) = (uint64_t)(uintptr_t)thread_trampoline;
 
     thread->thread_id = next_thread_id++;

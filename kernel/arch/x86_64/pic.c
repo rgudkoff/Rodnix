@@ -43,6 +43,29 @@
 #define PIC_CASCADE_IRQ      0x02    /* IRQ line used for master-slave cascade */
 #define PIC_ICW4_8086_MODE   0x01    /* ICW4: 8086/8088 mode (not 8080/8085) */
 
+/* IMCR (Interrupt Mode Configuration Register) ports */
+#define IMCR_SELECT_PORT 0x22
+#define IMCR_DATA_PORT   0x23
+
+static void imcr_select(void)
+{
+    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)0x70), "Nd"((uint16_t)IMCR_SELECT_PORT));
+}
+
+static uint8_t imcr_read(void)
+{
+    uint8_t value;
+    imcr_select();
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"((uint16_t)IMCR_DATA_PORT));
+    return value;
+}
+
+static void imcr_write(uint8_t value)
+{
+    imcr_select();
+    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"((uint16_t)IMCR_DATA_PORT));
+}
+
 /* ============================================================================
  * Public Interface
  * ============================================================================ */
@@ -189,4 +212,22 @@ void pic_disable_irq(uint8_t irq)
     __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
     value |= (1 << irq);
     __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
+}
+
+/* Set IMCR mode: false = route IRQs to PIC, true = route to APIC */
+void pic_set_imcr(bool apic_mode)
+{
+    /* Some platforms do not implement IMCR; reading may return 0xFF. */
+    uint8_t value = imcr_read();
+    if (value == 0xFF) {
+        kputs("[PIC] IMCR not present, cannot switch IRQ routing\n");
+        return;
+    }
+
+    if (apic_mode) {
+        value |= 0x01;
+    } else {
+        value &= (uint8_t)~0x01;
+    }
+    imcr_write(value);
 }

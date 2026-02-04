@@ -171,6 +171,7 @@ int pit_init(uint32_t frequency)
     if (pit_set_frequency(frequency) != 0) {
         return -1;
     }
+    scheduler_set_tick_rate(frequency);
     
     /* Register timer interrupt handler (IRQ 0 = vector 32) */
     if (interrupt_register(32, pit_timer_handler) != 0) {
@@ -193,7 +194,11 @@ int pit_init(uint32_t frequency)
  */
 int pit_set_frequency_public(uint32_t frequency)
 {
-    return pit_set_frequency(frequency);
+    int rc = pit_set_frequency(frequency);
+    if (rc == 0) {
+        scheduler_set_tick_rate(frequency);
+    }
+    return rc;
 }
 
 /**

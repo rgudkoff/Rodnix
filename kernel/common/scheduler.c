@@ -5,6 +5,7 @@
 
 #include "scheduler.h"
 #include "../core/interrupts.h"
+#include "../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -21,6 +22,7 @@ static thread_t* ready_tail = NULL;
 
 static volatile bool in_scheduler = false;
 static uint32_t ticks_until_preempt = 1;
+static uint32_t ticks_per_slice = 1;
 static volatile bool resched_pending = false;
 
 static void ready_enqueue(thread_t* thread);
@@ -29,6 +31,7 @@ static void scheduler_switch_to(thread_t* next);
 
 static void scheduler_yield_internal(bool irq_context)
 {
+    (void)irq_context;
     if (!scheduler_running) {
         return;
     }
@@ -38,14 +41,8 @@ static void scheduler_yield_internal(bool irq_context)
     }
 
     in_scheduler = true;
-    if (!irq_context) {
-        interrupts_disable();
-    }
 
     if (!ready_head) {
-        if (!irq_context) {
-            interrupts_enable();
-        }
         in_scheduler = false;
         return;
     }
@@ -56,14 +53,17 @@ static void scheduler_yield_internal(bool irq_context)
     }
 
     thread_t* next = ready_dequeue();
-    if (next) {
-        scheduler_switch_to(next);
+    if (!next || next == current_thread) {
+        if (current_thread) {
+            current_thread->state = THREAD_STATE_RUNNING;
+        }
+        in_scheduler = false;
+        return;
     }
 
-    if (!irq_context) {
-        interrupts_enable();
-    }
+    /* Clear guard before switching so the next thread can yield. */
     in_scheduler = false;
+    scheduler_switch_to(next);
 }
 
 static void ready_enqueue(thread_t* thread)
@@ -72,6 +72,9 @@ static void ready_enqueue(thread_t* thread)
         return;
     }
 
+    if (thread->sched_next) {
+        DEBUG_WARN("ready_enqueue: thread %llu already queued", (unsigned long long)thread->thread_id);
+    }
     thread->sched_next = NULL;
     if (!ready_tail) {
         ready_head = thread;
@@ -90,6 +93,9 @@ static thread_t* ready_dequeue(void)
         return NULL;
     }
 
+    if (thread->state != THREAD_STATE_READY) {
+        DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+    }
     ready_head = thread->sched_next;
     if (!ready_head) {
         ready_tail = NULL;
@@ -107,6 +113,15 @@ static void scheduler_switch_to(thread_t* next)
         return;
     }
 
+    if (current_thread &&
+        current_thread->state != THREAD_STATE_RUNNING &&
+        current_thread->state != THREAD_STATE_READY) {
+        DEBUG_WARN("switch_to: current thread %llu state=%d",
+                   (unsigned long long)current_thread->thread_id, current_thread->state);
+    }
+    if (next->state != THREAD_STATE_READY) {
+        DEBUG_WARN("switch_to: next thread %llu state=%d", (unsigned long long)next->thread_id, next->state);
+    }
     thread_t* prev = current_thread;
     current_thread = next;
     thread_set_current(next);
@@ -133,7 +148,8 @@ int scheduler_init(void)
     scheduler_running = false;
     ready_head = NULL;
     ready_tail = NULL;
-    ticks_until_preempt = 1;
+    ticks_per_slice = 1;
+    ticks_until_preempt = ticks_per_slice;
     resched_pending = false;
     stats.running_tasks = 0;
     stats.ready_tasks = 0;
@@ -150,6 +166,7 @@ void scheduler_start(void)
     }
     
     scheduler_running = true;
+    ticks_until_preempt = ticks_per_slice;
     
     if (!current_thread) {
         thread_t* next = ready_dequeue();
@@ -196,9 +213,12 @@ int scheduler_add_thread(thread_t* thread)
     if (!thread) {
         return -1;
     }
-    
+    if (thread->state != THREAD_STATE_NEW && thread->state != THREAD_STATE_READY) {
+        DEBUG_WARN("add_thread: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+    }
     thread->state = THREAD_STATE_READY;
     ready_enqueue(thread);
+    stats.total_tasks++;
     
     return 0;
 }
@@ -235,22 +255,25 @@ void scheduler_block(void)
     }
 
     in_scheduler = true;
-    interrupts_disable();
 
+    if (current_thread->state != THREAD_STATE_RUNNING) {
+        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)current_thread->thread_id, current_thread->state);
+    }
     current_thread->state = THREAD_STATE_BLOCKED;
     stats.blocked_tasks++;
 
     thread_t* next = ready_dequeue();
     if (next) {
+        /* Clear guard before switching so the next thread can yield. */
+        in_scheduler = false;
         scheduler_switch_to(next);
-    } else {
-        current_thread->state = THREAD_STATE_RUNNING;
-        if (stats.blocked_tasks > 0) {
-            stats.blocked_tasks--;
-        }
+        return;
     }
 
-    interrupts_enable();
+    current_thread->state = THREAD_STATE_RUNNING;
+    if (stats.blocked_tasks > 0) {
+        stats.blocked_tasks--;
+    }
     in_scheduler = false;
 }
 
@@ -266,6 +289,8 @@ void scheduler_unblock(thread_t* thread)
             stats.blocked_tasks--;
         }
         ready_enqueue(thread);
+    } else {
+        DEBUG_WARN("unblock: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
     }
 }
 
@@ -314,8 +339,24 @@ void scheduler_tick(void)
     }
 
     if (ticks_until_preempt == 0) {
-        ticks_until_preempt = 1;
+        ticks_until_preempt = ticks_per_slice;
         resched_pending = true;
+    }
+}
+
+void scheduler_set_tick_rate(uint32_t hz)
+{
+    if (hz == 0) {
+        return;
+    }
+
+    uint32_t ticks = (hz * SCHEDULER_TIME_SLICE_MS + 999) / 1000;
+    if (ticks == 0) {
+        ticks = 1;
+    }
+    ticks_per_slice = ticks;
+    if (ticks_until_preempt > ticks_per_slice) {
+        ticks_until_preempt = ticks_per_slice;
     }
 }
 
