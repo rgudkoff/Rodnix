@@ -181,6 +181,16 @@ typedef struct {
 int memory_get_info(memory_info_t* info);
 
 /* ============================================================================
+ * Kernel Heap (simple allocator)
+ * ============================================================================ */
+
+int heap_init(size_t initial_pages);
+void* kmalloc(size_t size);
+void kfree(void* ptr);
+void* kcalloc(size_t count, size_t size);
+void* krealloc(void* ptr, size_t new_size);
+
+/* ============================================================================
  * Макросы для преобразования адресов
  * ============================================================================ */
 
@@ -188,4 +198,3 @@ int memory_get_info(memory_info_t* info);
 #define PHYS_TO_VIRT(addr) ((void*)page_get_virtual((uint64_t)(addr)))
 
 #endif /* _RODNIX_CORE_MEMORY_H */
-

@@ -143,6 +143,13 @@ int memory_init(void)
     vga_dbg[80 * 0 + 22] = 0x0F50; /* 'P' */
     vga_dbg[80 * 0 + 23] = 0x0F32; /* '2' */
 
+    /* Initialize simple kernel heap */
+    extern int heap_init(size_t initial_pages);
+    if (heap_init(16) != 0) {
+        kputs("[MEM-ERR] heap_init failed\n");
+        return -1;
+    }
+
     /* Log PMM summary */
     extern uint64_t pmm_get_total_pages(void);
     extern uint64_t pmm_get_free_pages(void);
@@ -280,23 +287,13 @@ void vmm_free_page(void* virt)
  */
 void* vmm_alloc_pages(uint32_t count, uint64_t flags)
 {
-    void* first_page = vmm_alloc_page(flags);
-    if (!first_page) {
+    (void)flags;
+    extern uint64_t pmm_alloc_pages(uint32_t pages);
+    uint64_t phys = pmm_alloc_pages(count);
+    if (!phys) {
         return NULL;
     }
-    
-    for (uint32_t i = 1; i < count; i++) {
-        void* page = vmm_alloc_page(flags);
-        if (!page) {
-            /* Free already allocated pages */
-            for (uint32_t j = 0; j < i; j++) {
-                vmm_free_page((void*)((uintptr_t)first_page + j * PAGE_SIZE));
-            }
-            return NULL;
-        }
-    }
-    
-    return first_page;
+    return (void*)phys;
 }
 
 /**
@@ -308,9 +305,11 @@ void* vmm_alloc_pages(uint32_t count, uint64_t flags)
  */
 void vmm_free_pages(void* virt, uint32_t count)
 {
-    for (uint32_t i = 0; i < count; i++) {
-        vmm_free_page((void*)((uintptr_t)virt + i * PAGE_SIZE));
+    if (!virt || count == 0) {
+        return;
     }
+    extern void pmm_free_pages(uint64_t phys, uint32_t pages);
+    pmm_free_pages((uint64_t)virt, count);
 }
 
 /**
