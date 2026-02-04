@@ -4,19 +4,16 @@ This directory contains public header files for the kernel.
 
 ## Structure
 
-```
-include/
-├── types.h          # Basic types
-├── kernel.h         # Main kernel header (includes everything)
-├── console.h        # Console output interface
-├── debug.h          # Debugging utilities
-├── common.h         # Common utilities
-└── README.md        # This file
-```
+- types.h: basic types
+- kernel.h: main kernel header (includes everything)
+- console.h: console output interface
+- debug.h: debugging utilities
+- common.h: common utilities
+- README.md: this file
 
 ## Usage
 
-For kernel development, include `kernel.h` which includes all necessary headers:
+For kernel development, include kernel.h which includes all necessary headers:
 
 ```c
 #include "kernel.h"
@@ -31,9 +28,8 @@ For specific functionality, include individual headers:
 
 ## Headers
 
-- **types.h**: Basic data types (uint8_t, uint64_t, etc.)
-- **kernel.h**: Main header that includes all kernel headers
-- **console.h**: Console output functions
-- **debug.h**: Debugging macros and functions
-- **common.h**: Common utility functions (string, memory, etc.)
-
+- types.h: basic data types (uint8_t, uint64_t, etc.)
+- kernel.h: main header that includes all kernel headers
+- console.h: console output functions
+- debug.h: debugging macros and functions
+- common.h: common utility functions (string, memory, etc.)

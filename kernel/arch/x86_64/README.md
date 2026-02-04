@@ -4,19 +4,19 @@ Kernel implementation for Intel/AMD x86_64 processors (CISC architecture).
 
 ## Features
 
-- **CISC architecture**: Complex Instruction Set Computer
-- **64-bit mode**: Long Mode (x86-64)
-- **4-level page structure**: PML4 → PDPT → PD → PT
-- **Canonical addresses**: Kernel in high-half (0xFFFFFFFF80000000)
+- CISC architecture
+- 64-bit mode (long mode)
+- 4-level page structure (PML4, PDPT, PD, PT)
+- Canonical addresses (kernel high-half at 0xFFFFFFFF80000000)
 
 ## Components
 
-- `config.h` - x86_64 configuration
-- `types.h` - x86_64 data types
-- `interrupts.c` - interrupt handling
-- `memory.c` - memory management
-- `cpu.c` - CPU operations
-- `boot.S` - boot code
+- config.h: x86_64 configuration
+- types.h: x86_64 data types
+- interrupts.c: interrupt handling
+- memory.c: memory management
+- cpu.c: CPU operations
+- boot.S: boot code
 
 ## Registers
 
@@ -26,9 +26,7 @@ x86_64 uses 16 64-bit general purpose registers:
 
 ## Page Structure
 
-```
-PML4 (512 entries) → PDPT (512 entries) → PD (512 entries) → PT (512 entries)
-```
+- PML4, PDPT, PD, PT (512 entries each)
 
 Page sizes:
 - 4KB (regular pages)

@@ -1,99 +1,97 @@
-# Архитектура RodNIX
+# RodNIX Architecture
 
-RodNIX — экспериментальное 64-битное ядро ОС. Фактическая реализация сегодня сосредоточена на **x86_64**, при этом в дереве есть заготовки под другие 64‑битные ISA.
+RodNIX is an experimental 64-bit OS kernel. The working implementation is
+focused on x86_64 today, with placeholders for other 64-bit ISAs.
 
-## Основные принципы
+## Core Principles
 
-### 1. Только 64-битные архитектуры
-RodNIX ориентирован только на 64-битные процессоры. Это упрощает код и позволяет использовать современные возможности CPU.
+1. 64-bit only
+   The codebase targets 64-bit CPUs only to simplify design and use modern
+   CPU features.
 
-### 2. Архитектурная абстракция
-Ядро разделено на архитектурно-независимые и архитектурно-зависимые части:
-- **kernel/core/**: архитектурно-независимые интерфейсы
-- **kernel/arch/**: архитектурно-зависимые реализации
+2. Architecture abstraction
+   The kernel is split into architecture-independent interfaces and
+   architecture-specific implementations:
+   - kernel/core: arch-independent interfaces
+   - kernel/arch: arch-specific implementations
 
-### 3. Поддержка разных ISA
-В кодовой базе присутствуют заготовки для CISC (x86_64) и RISC (ARM64, RISC‑V64), но реальная работоспособность сейчас сфокусирована на x86_64.
+3. Multiple ISA placeholders
+   The tree contains placeholders for CISC (x86_64) and RISC (ARM64, RISC-V64),
+   but x86_64 is the only actively working target.
 
-### 4. Fabric (шины/устройства/драйверы/сервисы)
-Поверх архитектурного слоя строится Fabric — простой каркас для регистрации шин, публикации устройств, матчинг‑драйверов и публикации сервисов.
+4. Fabric (bus/device/driver/service)
+   A small Fabric layer manages bus registration, device publication,
+   driver matching, and service publication.
 
-## Структура проекта
+## Project Layout (simplified)
 
-```
-RodNIX/
-├── kernel/
-│   ├── core/            # Архитектурно-независимые интерфейсы
-│   ├── common/          # Общие компоненты ядра
-│   ├── arch/            # Архитектурно-зависимые реализации
-│   │   ├── x86_64/       # x86_64 (реально используется)
-│   │   ├── arm64/        # ARM64 (заготовки)
-│   │   └── riscv64/      # RISC-V64 (заготовки)
-│   ├── fabric/          # Fabric: bus/device/driver/service
-│   ├── input/           # InputCore (сканкоды → ASCII)
-│   └── interrupts/      # Общие части IRQ/IDT
-├── boot/                # Код загрузки
-├── drivers/             # Fabric-драйверы (например HID‑клавиатура)
-├── include/             # Заголовочные файлы
-└── docs/                # Документы дизайна и миграций
-```
+- kernel/core: arch-independent interfaces
+- kernel/common: shared kernel subsystems
+- kernel/arch: architecture-specific implementations
+  - x86_64: active implementation
+  - arm64: placeholder
+  - riscv64: placeholder
+- kernel/fabric: Fabric core (bus/device/driver/service)
+- kernel/input: InputCore (scancode to ASCII)
+- kernel/interrupts: shared interrupt helpers
+- boot: boot code
+- drivers: Fabric drivers
+- include: public headers
+- docs: design and migration documents
 
-## Архитектурные различия
+## Architecture Differences
 
-### x86_64 (CISC)
-- Сложные инструкции
-- Переменная длина инструкций
-- Много режимов адресации
-- 4-уровневая страничная структура (PML4)
+x86_64 (CISC)
+- Complex instruction set
+- Variable instruction length
+- Multiple addressing modes
+- 4-level page tables (PML4)
 
-### ARM64 (RISC)
-- Простые инструкции фиксированной длины
-- Load/Store архитектура
-- 4-уровневая страничная структура
+ARM64 (RISC)
+- Fixed-length instructions
+- Load/store architecture
+- 4-level page tables
 - Exception Levels (EL)
 
-### RISC-V64 (RISC)
-- Минималистичный набор инструкций
-- Модульная архитектура
-- Страничная структура Sv39/Sv48/Sv57
-- Привилегии: User, Supervisor, Machine
+RISC-V64 (RISC)
+- Minimal instruction set
+- Modular ISA extensions
+- Page tables: Sv39/Sv48/Sv57
+- Privilege levels: User, Supervisor, Machine
 
-## Абстракции
+## Abstractions
 
-### Прерывания
-Все архитектуры используют единый интерфейс для работы с прерываниями:
-- Регистрация обработчиков
-- Управление уровнем прерываний (IRQL)
+Interrupts
+- Handler registration
+- IRQL management
 - IPI (Inter-Processor Interrupts)
 
-### Память
-Единый интерфейс для управления памятью:
-- Отображение страниц
-- Выделение/освобождение памяти
-- Преобразование адресов
+Memory
+- Page mapping
+- Allocation and free
+- Address translation
 
-### Процессор
-Абстракции для работы с процессором:
-- Получение информации о CPU
-- Переключение контекста
-- Атомарные операции
-- Барьеры памяти
+CPU
+- CPU info
+- Context switching
+- Atomic ops
+- Memory barriers
 
-## Преимущества архитектуры
+## Benefits
 
-1. **Переносимость**: Легко добавить поддержку новой архитектуры
-2. **Модульность**: Четкое разделение ответственности
-3. **Тестируемость**: Архитектурно-независимый код легко тестировать
-4. **Поддерживаемость**: Изменения в одной архитектуре не влияют на другие
+1. Portability: easier to add a new architecture
+2. Modularity: clear separation of responsibilities
+3. Testability: arch-independent code is easier to test
+4. Maintainability: changes in one arch do not spill into others
 
-## Планы развития
+## Roadmap
 
-- [x] Базовая структура директорий
-- [x] Базовые компоненты для x86_64 (boot, IDT/IRQ, PIC/APIC, PIT, paging/PMM)
-- [ ] Реализация базовых компонентов для ARM64
-- [ ] Реализация базовых компонентов для RISC-V64
-- [ ] Планировщик задач
-- [ ] Управление памятью
-- [ ] IPC система
-- [ ] Драйверы устройств через Fabric
-- [ ] Использование Fabric сервисов потребителями (service lookup)
+- [x] Base directory structure
+- [x] x86_64 base components (boot, IDT/IRQ, PIC/APIC, PIT, paging/PMM)
+- [ ] ARM64 base components
+- [ ] RISC-V64 base components
+- [ ] Task scheduler
+- [ ] Memory management
+- [ ] IPC subsystem
+- [ ] Device drivers via Fabric
+- [ ] Consumers of Fabric services (service lookup)
