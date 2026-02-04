@@ -131,6 +131,12 @@ void cpu_restore_context(thread_context_t* ctx)
 
     __asm__ volatile (
         "mov 8(%0), %%rsp\n\t"
+        "pop %%r15\n\t"
+        "pop %%r14\n\t"
+        "pop %%r13\n\t"
+        "pop %%r12\n\t"
+        "pop %%rbp\n\t"
+        "pop %%rbx\n\t"
         "ret\n\t"
         :
         : "r"(ctx)
@@ -141,8 +147,20 @@ void cpu_restore_context(thread_context_t* ctx)
 __attribute__((naked)) void cpu_switch_thread(thread_context_t* from, thread_context_t* to)
 {
     __asm__ volatile (
+        "push %rbx\n\t"
+        "push %rbp\n\t"
+        "push %r12\n\t"
+        "push %r13\n\t"
+        "push %r14\n\t"
+        "push %r15\n\t"
         "mov %rsp, 8(%rdi)\n\t"
         "mov 8(%rsi), %rsp\n\t"
+        "pop %r15\n\t"
+        "pop %r14\n\t"
+        "pop %r13\n\t"
+        "pop %r12\n\t"
+        "pop %rbp\n\t"
+        "pop %rbx\n\t"
         "ret\n\t"
     );
 }

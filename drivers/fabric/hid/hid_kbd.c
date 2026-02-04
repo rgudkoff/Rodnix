@@ -191,12 +191,22 @@ static void keyboard_irq_handler(int vector, void *arg)
      * Processing happens later in safe context */
     
     /* Read scan code from keyboard port */
+    uint8_t status = kbd_read_status();
+    if ((status & 0x01) == 0) {
+        return;
+    }
+
     uint8_t scan_code;
     __asm__ volatile ("inb %%dx, %%al" : "=a"(scan_code) : "d"((uint16_t)0x60));
 
     (void)scan_code;
+
     
-    
+    /* Ignore controller responses (ACK/RESEND/SELF-TEST) */
+    if (scan_code == 0xFA || scan_code == 0xFE || scan_code == 0xAA) {
+        return;
+    }
+
     /* Determine if key is pressed or released */
     bool pressed = (scan_code & 0x80) == 0;
     uint8_t key_code = scan_code & 0x7F;

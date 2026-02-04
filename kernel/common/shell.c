@@ -566,8 +566,6 @@ void shell_run(void)
 {
     char line[SHELL_MAX_LINE_LENGTH];
     char* argv[SHELL_MAX_ARGS];
-    static bool prompt_logged = false;
-    static bool loop_logged = false;
     
     extern void kputs(const char* str);
     extern void kputc(char c);
@@ -578,23 +576,12 @@ void shell_run(void)
     extern void input_flush(void);
     input_flush();
 
-    kputs("[SHELL] shell_run() called\n");
-    __asm__ volatile ("" ::: "memory");
-    
     kputs("\nRodNIX Shell v0.1\n");
     kputs("Type 'help' for available commands.\n\n");
     __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
         interrupts_enable();
-        if (!loop_logged) {
-            kputs("[SHELL] loop entered\n");
-            loop_logged = true;
-        }
-        if (!prompt_logged) {
-            kputs("[SHELL] prompt shown\n");
-            prompt_logged = true;
-        }
         kputs(SHELL_PROMPT);
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
 

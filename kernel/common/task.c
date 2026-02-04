@@ -106,9 +106,17 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
 
     uintptr_t sp = (uintptr_t)stack + KERNEL_STACK_SIZE;
     sp &= ~(uintptr_t)0xF; /* 16-byte align */
-    /* Keep ABI alignment: after 'ret' into thread_trampoline, RSP % 16 == 8. */
-    sp -= 16;
-    *((uint64_t*)sp) = (uint64_t)(uintptr_t)thread_trampoline;
+    /* Reserve space for saved regs + return address + padding (64 bytes). */
+    sp -= 64;
+    uint64_t* frame = (uint64_t*)sp;
+    frame[0] = 0; /* r15 */
+    frame[1] = 0; /* r14 */
+    frame[2] = 0; /* r13 */
+    frame[3] = 0; /* r12 */
+    frame[4] = 0; /* rbp */
+    frame[5] = 0; /* rbx */
+    frame[6] = (uint64_t)(uintptr_t)thread_trampoline; /* ret */
+    frame[7] = 0; /* padding */
 
     thread->thread_id = next_thread_id++;
     thread->task = task;
