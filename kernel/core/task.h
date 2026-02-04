@@ -70,8 +70,11 @@ typedef struct thread {
     thread_context_t context;   /* Контекст выполнения */
     thread_state_t state;      /* Состояние потока */
     uint8_t priority;          /* Приоритет потока */
+    void (*entry)(void*);      /* Точка входа потока */
+    void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
+    struct thread* sched_next; /* Следующий в очереди планировщика */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } thread_t;
 
@@ -161,4 +164,3 @@ void thread_unblock(thread_t* thread);
 void thread_set_priority(thread_t* thread, uint8_t priority);
 
 #endif /* _RODNIX_CORE_TASK_H */
-

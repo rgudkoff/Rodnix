@@ -111,41 +111,40 @@ uint32_t cpu_get_count(void)
 
 void cpu_save_context(thread_context_t* ctx)
 {
-    if (!ctx) return;
-    
-    /* Save registers to context */
+    if (!ctx) {
+        return;
+    }
+
     __asm__ volatile (
-        "mov %%rsp, %0\n\t"
-        "mov $., %1\n\t"
-        : "=r"(ctx->stack_pointer), "=r"(ctx->program_counter)
+        "mov %%rsp, 8(%0)\n\t"
         :
+        : "r"(ctx)
         : "memory"
     );
 }
 
 void cpu_restore_context(thread_context_t* ctx)
 {
-    if (!ctx) return;
-    
-    /* Restore registers from context */
+    if (!ctx) {
+        return;
+    }
+
     __asm__ volatile (
-        "mov %0, %%rsp\n\t"
-        "jmp *%1\n\t"
+        "mov 8(%0), %%rsp\n\t"
+        "ret\n\t"
         :
-        : "r"(ctx->stack_pointer), "r"(ctx->program_counter)
+        : "r"(ctx)
         : "memory"
     );
 }
 
-void cpu_switch_thread(thread_context_t* from, thread_context_t* to)
+__attribute__((naked)) void cpu_switch_thread(thread_context_t* from, thread_context_t* to)
 {
-    if (!from || !to) return;
-    
-    /* Save current context */
-    cpu_save_context(from);
-    
-    /* Restore new context */
-    cpu_restore_context(to);
+    __asm__ volatile (
+        "mov %rsp, 8(%rdi)\n\t"
+        "mov 8(%rsi), %rsp\n\t"
+        "ret\n\t"
+    );
 }
 
 void cpu_memory_barrier(void)

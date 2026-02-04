@@ -163,6 +163,12 @@ int scheduler_set_policy(sched_policy_t policy);
  */
 void scheduler_tick(void);
 
+/**
+ * Check pending reschedule at safe points (AST-like)
+ * Should be called from non-IRQ context
+ */
+void scheduler_ast_check(void);
+
 /* ============================================================================
  * Statistics
  * ============================================================================ */
@@ -175,4 +181,3 @@ void scheduler_tick(void);
 int scheduler_get_stats(scheduler_stats_t* stats);
 
 #endif /* _RODNIX_COMMON_SCHEDULER_H */
-

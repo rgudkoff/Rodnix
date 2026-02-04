@@ -7,6 +7,24 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 
+static void idle_thread(void* arg)
+{
+    (void)arg;
+    for (;;) {
+        cpu_idle();
+    }
+}
+
+static void shell_thread(void* arg)
+{
+    (void)arg;
+    extern void shell_run(void);
+    shell_run();
+    for (;;) {
+        cpu_idle();
+    }
+}
+
 /**
  * Kernel main function
  * @param magic Multiboot2 magic number
@@ -297,7 +315,6 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-11] Shell\n");
     __asm__ volatile ("" ::: "memory");
     extern int shell_init(void);
-    extern void shell_run(void);
     if (shell_init() != 0) {
         panic("Shell init failed");
     }
@@ -306,20 +323,30 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-OK] Kernel ready\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INIT-12] Starting shell...\n");
+    kputs("[INIT-12] Starting scheduler threads...\n");
     __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-12.1] About to call shell_run()\n");
+
+    task_t* kernel_task = task_create();
+    if (!kernel_task) {
+        panic("Kernel task create failed");
+    }
+    kernel_task->state = TASK_STATE_READY;
+
+    thread_t* shell = thread_create(kernel_task, shell_thread, NULL);
+    thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
+    if (!shell || !idle) {
+        panic("Kernel thread create failed");
+    }
+
+    scheduler_add_thread(shell);
+    scheduler_add_thread(idle);
+
+    kputs("[INIT-12.1] scheduler_start()\n");
     __asm__ volatile ("" ::: "memory");
-    
-    /* Run shell (blocks) */
-    shell_run();
-    
-    kputs("[INIT-11.2] shell_run() returned (should not happen)\n");
-    __asm__ volatile ("" ::: "memory");
-    
+    scheduler_start();
+
     /* Should never reach here */
     for (;;) {
         interrupt_wait();
     }
-    }
+}

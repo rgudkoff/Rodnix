@@ -16,6 +16,7 @@
 #include "paging.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
+#include "../../common/scheduler.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -1044,6 +1045,7 @@ void apic_timer_handler(interrupt_context_t* ctx)
     (void)ctx;
     /* Increment tick counter */
     apic_timer_ticks++;
+    scheduler_tick();
 }
 
 /**

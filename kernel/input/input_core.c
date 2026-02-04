@@ -14,6 +14,7 @@
 
 #include "input.h"
 #include "../fabric/spin.h"
+#include "../common/scheduler.h"
 #include "../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -450,11 +451,13 @@ size_t input_read_line(char *buf, size_t n)
         if (c == -1) {
             /* No character available. In polling mode IRQs may be disabled,
              * so avoid HLT which can block forever. Use a short pause loop. */
+            scheduler_ast_check();
             for (volatile int i = 0; i < 10000; i++) {
                 __asm__ volatile ("pause");
             }
             /* Process queue again after a short delay */
             input_process_queue();
+            scheduler_ast_check();
             continue;
         }
         

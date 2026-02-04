@@ -12,6 +12,7 @@
 #include "../../../include/console.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
+#include "../../common/scheduler.h"
 #include "types.h"
 #include "pic.h"
 #include "apic.h"

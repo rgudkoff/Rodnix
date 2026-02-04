@@ -16,6 +16,7 @@
 #include "types.h"
 #include "pic.h"
 #include "../../core/interrupts.h"
+#include "../../common/scheduler.h"
 #include "../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -136,6 +137,7 @@ static void pit_timer_handler(interrupt_context_t* ctx)
     /* Minimal handler - just increment counter (fast interrupt handler) */
     /* No protection, no callbacks - just increment counter */
     timer_ticks++;
+    scheduler_tick();
     
     /* Handler returns - EOI is sent by interrupt_dispatch in isr_handlers.c */
 }
@@ -375,4 +377,3 @@ void pit_enable(void)
         pic_enable_irq(0);
     }
 }
-
