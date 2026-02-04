@@ -34,12 +34,17 @@
  * PMM State
  * ============================================================================ */
 
-/* Multiboot2 mmap available type */
+/* Multiboot2 mmap types */
 #define MB2_MMAP_AVAILABLE 1
+#define MB2_MMAP_RESERVED  2
+#define MB2_MMAP_ACPI      3
+#define MB2_MMAP_NVS       4
+#define MB2_MMAP_BADRAM    5
 
 /* Fixed bitmap storage cap (matches low-memory placement) */
 #define PMM_BITMAP_MAX_SIZE 0x100000ULL
 #define PMM_MAX_FREE_RANGES 128
+#define PMM_MAX_REGIONS     128
 
 /* Page descriptor states */
 typedef enum {
@@ -81,6 +86,11 @@ struct pmm_state {
         uint32_t free_range_count;
         pmm_free_range_t free_ranges[PMM_MAX_FREE_RANGES];
     } zones[PMM_ZONE_COUNT];
+
+    pmm_region_t usable_regions[PMM_MAX_REGIONS];
+    pmm_region_t reserved_regions[PMM_MAX_REGIONS];
+    uint32_t usable_count;
+    uint32_t reserved_count;
 };
 
 /* Global PMM state */
@@ -198,6 +208,26 @@ static inline pmm_zone_t pmm_zone_for_addr(uint64_t addr)
         return PMM_ZONE_LOW;
     }
     return PMM_ZONE_NORMAL;
+}
+
+static void pmm_regions_clear(void)
+{
+    pmm_state.usable_count = 0;
+    pmm_state.reserved_count = 0;
+}
+
+static void pmm_add_region(pmm_region_t* regions, uint32_t* count,
+                           uint64_t start, uint64_t length)
+{
+    if (!regions || !count || length == 0) {
+        return;
+    }
+    if (*count >= PMM_MAX_REGIONS) {
+        return;
+    }
+    regions[*count].base = start;
+    regions[*count].length = length;
+    (*count)++;
 }
 
 static void pmm_mark_range_mmio(uint64_t start, uint64_t end)
@@ -581,6 +611,8 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     pmm_state.memory_end = memory_end;
     __asm__ volatile ("" ::: "memory");
 
+    pmm_regions_clear();
+
     for (int z = 0; z < PMM_ZONE_COUNT; z++) {
         pmm_state.zones[z].total_pages = 0;
         pmm_state.zones[z].free_pages = 0;
@@ -636,6 +668,9 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
         }
     }
 
+    pmm_add_region(pmm_state.usable_regions, &pmm_state.usable_count,
+                   memory_start, memory_end - memory_start);
+
     pmm_rebuild_free_lists();
     return 0;
 }
@@ -678,6 +713,8 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     /* Mark all pages as used, then free only available ranges */
     pmm_bitmap_set_all();
 
+    pmm_regions_clear();
+
     for (int z = 0; z < PMM_ZONE_COUNT; z++) {
         pmm_state.zones[z].total_pages = 0;
         pmm_state.zones[z].free_pages = 0;
@@ -700,11 +737,14 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         uint32_t mmio_off = offset;
         for (uint32_t i = 0; i < max_entries; i++) {
             const struct mb2_mmap_entry* e = (const struct mb2_mmap_entry*)(base + mmio_off);
-            if (e->type != MB2_MMAP_AVAILABLE) {
-                uint64_t addr = e->addr;
-                uint64_t len = e->len;
-                if (len != 0 && addr + len >= addr) {
-                    pmm_mark_range_mmio(addr, addr + len);
+            if (e->len != 0 && e->addr + e->len >= e->addr) {
+                if (e->type == MB2_MMAP_AVAILABLE) {
+                    pmm_add_region(pmm_state.usable_regions, &pmm_state.usable_count,
+                                   e->addr, e->len);
+                } else {
+                    pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
+                                   e->addr, e->len);
+                    pmm_mark_range_mmio(e->addr, e->addr + e->len);
                 }
             }
             mmio_off += entry_size;
@@ -733,10 +773,14 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
 
     /* Keep bitmap and descriptors reserved */
     pmm_mark_range_used(bitmap_phys, bitmap_phys + bitmap_size);
+    pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
+                   bitmap_phys, bitmap_size);
     if (pmm_state.pages_count > 0) {
         uint64_t desc_size = pmm_state.pages_count * sizeof(pmm_page_desc_t);
         uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
         pmm_mark_range_used(desc_phys, desc_phys + desc_size);
+        pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
+                       desc_phys, desc_size);
     }
 
     pmm_rebuild_free_lists();
@@ -990,6 +1034,42 @@ int pmm_get_free_regions(pmm_zone_t zone, pmm_region_t* out, uint32_t max,
         const pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
         out[i].base = pmm_index_to_page(r->start);
         out[i].length = r->count * PAGE_SIZE;
+    }
+    *out_count = count;
+    return 0;
+}
+
+int pmm_get_usable_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count)
+{
+    if (!out_count) {
+        return -1;
+    }
+    uint32_t n = pmm_state.usable_count;
+    if (!out || max == 0) {
+        *out_count = n;
+        return 0;
+    }
+    uint32_t count = (n < max) ? n : max;
+    for (uint32_t i = 0; i < count; i++) {
+        out[i] = pmm_state.usable_regions[i];
+    }
+    *out_count = count;
+    return 0;
+}
+
+int pmm_get_reserved_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count)
+{
+    if (!out_count) {
+        return -1;
+    }
+    uint32_t n = pmm_state.reserved_count;
+    if (!out || max == 0) {
+        *out_count = n;
+        return 0;
+    }
+    uint32_t count = (n < max) ? n : max;
+    for (uint32_t i = 0; i < count; i++) {
+        out[i] = pmm_state.reserved_regions[i];
     }
     *out_count = count;
     return 0;

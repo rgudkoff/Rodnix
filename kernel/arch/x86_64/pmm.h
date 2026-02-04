@@ -47,5 +47,7 @@ uint64_t pmm_get_used_pages(void);
 int pmm_get_zone_stats(pmm_zone_t zone, pmm_zone_stats_t* out);
 int pmm_get_free_regions(pmm_zone_t zone, pmm_region_t* out, uint32_t max,
                          uint32_t* out_count);
+int pmm_get_usable_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count);
+int pmm_get_reserved_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count);
 
 #endif /* _RODNIX_ARCH_X86_64_PMM_H */

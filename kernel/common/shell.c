@@ -137,6 +137,8 @@ static int shell_cmd_memory(int argc, char** argv)
     extern uint64_t pmm_get_used_pages(void);
     extern int pmm_get_zone_stats(int zone, void* out);
     extern int pmm_get_free_regions(int zone, void* out, uint32_t max, uint32_t* out_count);
+    extern int pmm_get_usable_regions(void* out, uint32_t max, uint32_t* out_count);
+    extern int pmm_get_reserved_regions(void* out, uint32_t max, uint32_t* out_count);
     extern boot_info_t* boot_get_info(void);
     
     uint64_t total = pmm_get_total_pages();
@@ -204,6 +206,40 @@ static int shell_cmd_memory(int argc, char** argv)
         }
         if (total_ranges > show) {
             kprintf("    ... (%u more)\n", (unsigned)(total_ranges - show));
+        }
+    }
+
+    kprintf("Regions:\n");
+    uint32_t usable_total = 0;
+    uint32_t reserved_total = 0;
+    pmm_get_usable_regions(NULL, 0, &usable_total);
+    pmm_get_reserved_regions(NULL, 0, &reserved_total);
+    kprintf("  Usable:   %u\n", (unsigned)usable_total);
+    kprintf("  Reserved: %u\n", (unsigned)reserved_total);
+
+    pmm_region_t regions[6];
+    uint32_t returned = 0;
+    if (usable_total > 0) {
+        if (pmm_get_usable_regions(regions, 5, &returned) == 0) {
+            kprintf("  Usable (first %u):\n", (unsigned)returned);
+            for (uint32_t i = 0; i < returned; i++) {
+                kprintf("    [%u] base=%llx len=%llx\n",
+                        i,
+                        (unsigned long long)regions[i].base,
+                        (unsigned long long)regions[i].length);
+            }
+        }
+    }
+    returned = 0;
+    if (reserved_total > 0) {
+        if (pmm_get_reserved_regions(regions, 5, &returned) == 0) {
+            kprintf("  Reserved (first %u):\n", (unsigned)returned);
+            for (uint32_t i = 0; i < returned; i++) {
+                kprintf("    [%u] base=%llx len=%llx\n",
+                        i,
+                        (unsigned long long)regions[i].base,
+                        (unsigned long long)regions[i].length);
+            }
         }
     }
     kputs("\n");
