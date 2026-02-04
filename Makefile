@@ -76,9 +76,14 @@ ISO_OUT    = rodnix.iso
 UNAME_S := $(shell uname -s)
 
 # ===== Tools =====
-GRUB_MKRESCUE := i686-elf-grub-mkrescue
+GRUB_MKRESCUE := grub-mkrescue
+GRUB_MKRESCUE_ALT := i686-elf-grub-mkrescue
+GRUB_MKRESCUE_ALT_PATH := /opt/homebrew/opt/i686-elf-grub/bin/i686-elf-grub-mkrescue
+GRUB_FILE := grub-file
+GRUB_FILE_ALT := i686-elf-grub-file
+GRUB_FILE_ALT_PATH := /opt/homebrew/opt/i686-elf-grub/bin/i686-elf-grub-file
 XORRISO := xorriso
-GRUB_FILE := i686-elf-grub-file
+LIMINE := limine
 
 # QEMU accel
 # По умолчанию не используем аппаратное ускорение (TCG), чтобы избежать
@@ -122,19 +127,63 @@ $(BUILD_DIR)/%.o: %.S
 
 # ===== ISO =====
 iso: $(KERNEL_BIN)
-	@mkdir -p $(ISO_DIR)/boot/grub
+	@rm -rf $(ISO_DIR)
+	@mkdir -p $(ISO_DIR)/boot
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/rodnix.kernel
-	@if [ -f boot/grub/grub.cfg ]; then \
-		cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
-	elif [ -f grub.cfg ]; then \
-		cp grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
+	@GRUB_MKRESCUE_CMD=""; \
+	if [ -x "$(GRUB_MKRESCUE_ALT_PATH)" ]; then \
+		GRUB_MKRESCUE_CMD="$(GRUB_MKRESCUE_ALT_PATH)"; \
+	elif command -v $(GRUB_MKRESCUE_ALT) >/dev/null 2>&1; then \
+		GRUB_MKRESCUE_CMD="$(GRUB_MKRESCUE_ALT)"; \
+	elif command -v $(GRUB_MKRESCUE) >/dev/null 2>&1; then \
+		GRUB_MKRESCUE_CMD="$(GRUB_MKRESCUE)"; \
+	fi; \
+	if [ -n "$$GRUB_MKRESCUE_CMD" ]; then \
+		mkdir -p $(ISO_DIR)/boot/grub; \
+		if [ -f boot/grub/grub.cfg ]; then \
+			cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
+		elif [ -f grub.cfg ]; then \
+			cp grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
+		else \
+			echo "[!] No grub.cfg found (expected boot/grub/grub.cfg or ./grub.cfg)"; exit 1; \
+		fi; \
+		echo "[*] Creating ISO with GRUB ($$GRUB_MKRESCUE_CMD)..."; \
+		$$GRUB_MKRESCUE_CMD -o $(ISO_OUT) $(ISO_DIR) 2>/dev/null || \
+		$$GRUB_MKRESCUE_CMD --compress=xz -o $(ISO_OUT) $(ISO_DIR); \
+		echo "[+] Built ISO (GRUB): $(ISO_OUT)"; \
+	elif command -v $(LIMINE) >/dev/null 2>&1; then \
+		echo "[*] Creating ISO with Limine..."; \
+		LIMINE_DIR="$$( $(LIMINE) --print-datadir )"; \
+		if [ ! -f boot/limine.cfg ]; then \
+			echo "[!] No limine.cfg found (expected boot/limine.cfg)"; exit 1; \
+		fi; \
+		cp boot/limine.cfg $(ISO_DIR)/limine.cfg; \
+		mkdir -p $(ISO_DIR)/boot/limine; \
+		mkdir -p $(ISO_DIR)/limine; \
+		cp boot/limine.cfg $(ISO_DIR)/boot/limine.cfg; \
+		cp boot/limine.cfg $(ISO_DIR)/boot/limine/limine.cfg; \
+		cp boot/limine.cfg $(ISO_DIR)/limine/limine.cfg; \
+		cp "$$LIMINE_DIR/limine-bios.sys" $(ISO_DIR)/; \
+		cp "$$LIMINE_DIR/limine-bios-cd.bin" $(ISO_DIR)/; \
+		cp "$$LIMINE_DIR/limine-uefi-cd.bin" $(ISO_DIR)/; \
+		mkdir -p $(ISO_DIR)/EFI/BOOT; \
+		cp "$$LIMINE_DIR/BOOTX64.EFI" $(ISO_DIR)/EFI/BOOT/; \
+		cp boot/limine.cfg $(ISO_DIR)/EFI/BOOT/limine.cfg; \
+		if command -v mcopy >/dev/null 2>&1; then \
+			mcopy -i $(ISO_DIR)/limine-uefi-cd.bin boot/limine.cfg ::/limine.cfg; \
+			mcopy -i $(ISO_DIR)/limine-uefi-cd.bin boot/limine.cfg ::/EFI/BOOT/limine.cfg; \
+		fi; \
+		$(XORRISO) -as mkisofs \
+			-b limine-bios-cd.bin \
+			-no-emul-boot -boot-load-size 4 -boot-info-table \
+			--efi-boot limine-uefi-cd.bin \
+			-efi-boot-part --efi-boot-image --protective-msdos-label \
+			-o $(ISO_OUT) $(ISO_DIR); \
+		$(LIMINE) bios-install $(ISO_OUT); \
+		echo "[+] Built ISO (Limine): $(ISO_OUT)"; \
 	else \
-		echo "[!] No grub.cfg found (expected boot/grub/grub.cfg or ./grub.cfg)"; exit 1; \
+		echo "[!] Neither GRUB nor Limine found for ISO creation."; exit 1; \
 	fi
-	@echo "[*] Creating ISO with GRUB..."
-	$(GRUB_MKRESCUE) -o $(ISO_OUT) $(ISO_DIR) 2>/dev/null || \
-	$(GRUB_MKRESCUE) --compress=xz -o $(ISO_OUT) $(ISO_DIR)
-	@echo "[+] Built ISO: $(ISO_OUT)"
 
 # ===== Run / Debug =====
 run: iso

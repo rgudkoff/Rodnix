@@ -437,11 +437,12 @@ size_t input_read_line(char *buf, size_t n)
         int c = input_read_char();
         
         if (c == -1) {
-            /* No character available, wait for interrupt */
-            /* Use interrupt_wait() which properly handles interrupts */
-            extern void interrupt_wait(void);
-            interrupt_wait();
-            /* Process queue again after interrupt - scan codes may have arrived */
+            /* No character available. In polling mode IRQs may be disabled,
+             * so avoid HLT which can block forever. Use a short pause loop. */
+            for (volatile int i = 0; i < 10000; i++) {
+                __asm__ volatile ("pause");
+            }
+            /* Process queue again after a short delay */
             input_process_queue();
             continue;
         }
@@ -487,4 +488,3 @@ size_t input_read_line(char *buf, size_t n)
     buf[n - 1] = '\0';
     return pos;
 }
-

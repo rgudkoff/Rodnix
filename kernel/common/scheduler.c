@@ -143,6 +143,7 @@ void scheduler_sleep(uint64_t milliseconds)
         return;
     }
     
+    (void)milliseconds;
     /* TODO: Implement sleep */
     /* Add thread to sleep queue with wake time */
     /* Block thread */
@@ -152,10 +153,6 @@ void scheduler_set_priority(thread_t* thread, uint8_t priority)
 {
     if (!thread) {
         return;
-    }
-    
-    if (priority > SCHEDULER_MAX_PRIORITY) {
-        priority = SCHEDULER_MAX_PRIORITY;
     }
     
     thread_set_priority(thread, priority);
@@ -196,4 +193,3 @@ int scheduler_get_stats(scheduler_stats_t* out_stats)
     *out_stats = stats;
     return 0;
 }
-

@@ -119,7 +119,7 @@ void input_process_queue(void)
 }
 
 /* Keyboard IRQ handler for Fabric - minimal processing */
-static void keyboard_irq_handler(int vector, void *arg)
+static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
 {
     (void)vector;
     (void)arg;
@@ -366,4 +366,3 @@ void hid_kbd_init(void)
     }
     kputs("[HID-KBD] Driver registered\n");
 }
-

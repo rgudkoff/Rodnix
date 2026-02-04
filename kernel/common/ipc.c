@@ -110,6 +110,7 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
+    (void)timeout;
     /* TODO: Add message to port's queue */
     /* TODO: Wake up any threads waiting on this port */
     
@@ -126,6 +127,7 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
+    (void)timeout;
     /* TODO: Wait for message in port's queue */
     /* TODO: Copy message to buffer */
     /* TODO: Handle timeout */
@@ -216,10 +218,10 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
+    (void)timeout;
     /* TODO: Wait for message on any port in set */
     /* TODO: Receive message from first available port */
     /* TODO: Handle timeout */
     
     return 0;
 }
-

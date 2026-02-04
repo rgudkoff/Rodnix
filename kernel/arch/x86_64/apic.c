@@ -223,6 +223,7 @@ static uint64_t find_ioapic_from_madt(void)
     /* Read table header to get entry count */
     uint32_t* header = (uint32_t*)table_addr;
     uint32_t signature = header[0];  /* Should be "RSDT" or "XSDT" */
+    (void)signature;
     uint32_t length = header[1];
     
     /* Calculate number of entries */
@@ -1193,4 +1194,3 @@ uint32_t apic_timer_get_frequency(void)
 {
     return apic_timer_frequency;
 }
-

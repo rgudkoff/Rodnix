@@ -86,7 +86,7 @@ int boot_memory_init(boot_info_t* info)
         if (!boot_info_valid) {
             return -1;
         }
-        info = &boot_info_storage;
+        info = (boot_info_t*)(uintptr_t)(&boot_info_storage);
     }
     
     /* Early memory initialization */
@@ -116,4 +116,3 @@ boot_info_t* boot_get_info(void)
     /* Cast away volatile for return (caller knows it's safe) */
     return (boot_info_t*)&boot_info_storage;
 }
-

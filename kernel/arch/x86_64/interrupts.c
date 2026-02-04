@@ -99,7 +99,7 @@ static void convert_interrupt_context(struct registers* regs, interrupt_context_
 }
 
 /* Wrapper for x86_64 interrupt handlers */
-static void interrupt_wrapper(struct registers* regs)
+static void __attribute__((unused)) interrupt_wrapper(struct registers* regs)
 {
     interrupt_context_t ctx;
     convert_interrupt_context(regs, &ctx);
@@ -324,4 +324,3 @@ int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
     (void)vector;
     return -1;
 }
-
