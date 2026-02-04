@@ -670,61 +670,6 @@ void apic_send_eoi(void)
  * I/O APIC Helper Functions
  * ============================================================================ */
 
-/* Вспомогательный вывод 8 hex-цифр на VGA (одна строка, красный текст) */
-static void ioapic_vga_print_hex8(uint8_t row, uint8_t start_col, uint32_t value, uint16_t attr)
-{
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-    static const char* hex = "0123456789ABCDEF";
-
-    for (int i = 7; i >= 0; i--) {
-        uint8_t nibble = (value >> (i * 4)) & 0xF;
-        uint8_t col = start_col + (7 - i);
-        if (col >= 80) break;
-        vga[row * 80 + col] = (uint16_t)hex[nibble] | attr;
-    }
-}
-
-/* Минимальный VGA-логгер состояния I/O APIC (нижняя строка экрана, КРАСНЫЙ).
- * Печатает ОДНУ стабильную строку вида:
- *   IOAPIC ID=XXXXXXXX VER=XXXXXXXX
- * и затирает предыдущий мусор на этой строке.
- */
-static void ioapic_vga_state(uint32_t id_reg, uint32_t ver)
-{
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-    const uint8_t row = 24; /* последняя строка (0-based) */
-    const uint16_t attr = 0x0C00; /* красный на чёрном */
-
-    /* Очистить всю строку */
-    for (uint8_t c = 0; c < 80; c++) {
-        vga[row * 80 + c] = (uint16_t)(' ') | attr;
-    }
-
-    /* Текст: "IOAPIC ID=" */
-    const char* prefix = "IOAPIC ID=";
-    uint8_t col = 0;
-    while (*prefix && col < 80) {
-        vga[row * 80 + col] = (uint16_t)(*prefix) | attr;
-        prefix++;
-        col++;
-    }
-
-    /* ID */
-    ioapic_vga_print_hex8(row, col, id_reg, attr);
-    col += 8;
-
-    /* Разделитель и " VER=" */
-    const char* mid = " VER=";
-    while (*mid && col < 80) {
-        vga[row * 80 + col] = (uint16_t)(*mid) | attr;
-        mid++;
-        col++;
-    }
-
-    /* VER */
-    ioapic_vga_print_hex8(row, col, ver, attr);
-}
-
 /**
  * @function ioapic_read_register
  * @brief Read I/O APIC register
@@ -853,7 +798,6 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
 
     /* Зафиксировать на экране текущее состояние ID/VER (даже если они «битые») */
-    ioapic_vga_state(id_reg, ver);
     
     /* Check if Version register is readable */
     if (ver == 0xFFFFFFFF) {

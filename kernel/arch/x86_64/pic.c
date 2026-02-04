@@ -153,18 +153,6 @@ void pic_disable(void)
 /* Enable specific IRQ (use direct port constants) */
 void pic_enable_irq(uint8_t irq)
 {
-    /* DIAGNOSTIC: Mark on VGA (RED) */
-    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
-    static uint32_t enable_count = 0;
-    if (enable_count < 10) {
-        vga_debug[80 * 17 + enable_count] = 0x0C00 | ('P');  /* RED - PIC enable */
-        vga_debug[80 * 17 + enable_count + 1] = 0x0C00 | ('0' + irq);  /* RED */
-        enable_count += 2;
-    }
-    
-    /* NOTE: Do NOT use kprintf here - it may be called from interrupt context! */
-    /* Use only VGA output for diagnostics */
-    
     uint8_t value;
     uint8_t bit = irq;
     
@@ -172,29 +160,16 @@ void pic_enable_irq(uint8_t irq)
     /* In x86_64, outb requires port to be constant or in dx register */
     if (irq < 8) {
         /* Master PIC - use constant port directly */
-        if (enable_count < 10) {
-            vga_debug[80 * 17 + enable_count] = 0x0C00 | ('M');  /* RED - Master */
-            enable_count++;
-        }
         __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(PIC1_DATA));
         value &= ~(1 << bit);
         /* Use simple outb with constant port (same as pic_init) */
         __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(PIC1_DATA));
-        if (enable_count < 10) {
-            vga_debug[80 * 17 + enable_count] = 0x0C00 | ('D');  /* RED - Done */
-            enable_count++;
-        }
     } else {
         /* Slave PIC - use constant port directly */
         bit = irq - 8;
         __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(PIC2_DATA));
         value &= ~(1 << bit);
         __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(PIC2_DATA));
-    }
-    
-    if (enable_count < 10) {
-        vga_debug[80 * 17 + enable_count] = 0x0C00 | ('E');  /* RED - Enabled */
-        enable_count++;
     }
 }
 
@@ -215,4 +190,3 @@ void pic_disable_irq(uint8_t irq)
     value |= (1 << irq);
     __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
 }
-

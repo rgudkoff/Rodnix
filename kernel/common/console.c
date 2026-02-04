@@ -11,6 +11,16 @@
 #define VGA_HEIGHT 25
 #define VGA_MEMORY 0xB8000
 
+/* Serial (COM1) */
+#define SERIAL_COM1_BASE 0x3F8
+#define SERIAL_DATA      0x0
+#define SERIAL_IER       0x1
+#define SERIAL_LCR       0x3
+#define SERIAL_MCR       0x4
+#define SERIAL_LSR       0x5
+
+static bool serial_enabled = false;
+
 /* VGA cursor control ports */
 #define VGA_CRTC_INDEX  0x3D4
 #define VGA_CRTC_DATA   0x3D5
@@ -22,6 +32,54 @@ static uint8_t vga_row = 0;
 static uint8_t vga_col = 0;
 static uint8_t vga_color = 0x0F; /* White on black */
 static volatile bool kputs_in_progress = false; /* Prevent recursive calls from exception handlers */
+
+static inline void outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static void serial_init(void)
+{
+    /* Disable interrupts */
+    outb(SERIAL_COM1_BASE + SERIAL_IER, 0x00);
+    /* Enable DLAB */
+    outb(SERIAL_COM1_BASE + SERIAL_LCR, 0x80);
+    /* Set divisor to 3 (38400 baud) */
+    outb(SERIAL_COM1_BASE + SERIAL_DATA, 0x03);
+    outb(SERIAL_COM1_BASE + SERIAL_IER, 0x00);
+    /* 8 bits, no parity, one stop bit */
+    outb(SERIAL_COM1_BASE + SERIAL_LCR, 0x03);
+    /* Enable FIFO, clear, 14-byte threshold */
+    outb(SERIAL_COM1_BASE + 2, 0xC7);
+    /* IRQs enabled, RTS/DSR set */
+    outb(SERIAL_COM1_BASE + SERIAL_MCR, 0x0B);
+
+    /* Basic presence check: LSR should not read as 0xFF on absent port. */
+    if (inb(SERIAL_COM1_BASE + SERIAL_LSR) != 0xFF) {
+        serial_enabled = true;
+    }
+}
+
+static void serial_write_char(char c)
+{
+    if (!serial_enabled) {
+        return;
+    }
+    /* Wait for transmitter holding register empty */
+    for (int i = 0; i < 10000; i++) {
+        if (inb(SERIAL_COM1_BASE + SERIAL_LSR) & 0x20) {
+            break;
+        }
+    }
+    outb(SERIAL_COM1_BASE + SERIAL_DATA, (uint8_t)c);
+}
 
 /**
  * @function update_cursor
@@ -54,6 +112,7 @@ void console_init(void)
     vga_row = 0;
     vga_col = 0;
     vga_color = 0x0F;
+    serial_init();
     /* Initialize cursor position */
     update_cursor(vga_row, vga_col);
 }
@@ -106,6 +165,12 @@ static void scroll_screen(void)
 
 void kputc(char c)
 {
+    /* Mirror output to serial for logging */
+    if (c == '\n') {
+        serial_write_char('\r');
+    }
+    serial_write_char(c);
+
     /* Handle newline */
     if (c == '\n') {
         vga_col = 0;
@@ -174,6 +239,11 @@ void kputs(const char* str)
         static uint8_t safe_col = 0;
         
         while (*str && safe_row < VGA_HEIGHT) {
+            /* Still mirror to serial in the safe path */
+            if (*str == '\n') {
+                serial_write_char('\r');
+            }
+            serial_write_char(*str);
             if (*str == '\n') {
                 safe_col = 0;
                 safe_row++;
@@ -320,6 +390,11 @@ void kvprintf(const char* fmt, va_list args)
                     kputs(str ? str : "(null)");
                     break;
                 }
+                case 'p': {
+                    void* ptr = va_arg(args, void*);
+                    kprint_hex((uint64_t)(uintptr_t)ptr);
+                    break;
+                }
                 case 'c': {
                     char c = (char)va_arg(args, int);
                     kputc(c);
@@ -361,4 +436,3 @@ void console_reset_color(void)
 {
     vga_color = 0x0F;
 }
-

@@ -10,6 +10,7 @@
  */
 
 #include "types.h"
+#include "pmm.h"
 #include "config.h"
 #include "../../../include/debug.h"
 #include <stddef.h>
@@ -36,6 +37,22 @@
 /* Multiboot2 mmap available type */
 #define MB2_MMAP_AVAILABLE 1
 
+/* Fixed bitmap storage cap (matches low-memory placement) */
+#define PMM_BITMAP_MAX_SIZE 0x100000ULL
+
+/* Page descriptor states */
+typedef enum {
+    PMM_PAGE_FREE = 0,
+    PMM_PAGE_USED = 1
+} pmm_page_state_t;
+
+typedef struct {
+    uint64_t phys;
+    uint8_t zone;
+    uint8_t state;
+    uint16_t reserved;
+} pmm_page_desc_t;
+
 /**
  * @struct pmm_state
  * @brief PMM internal state
@@ -49,6 +66,13 @@ struct pmm_state {
     uint32_t* bitmap;            /* Pointer to bitmap (virtual address) */
     uint64_t memory_start;       /* Start of managed memory */
     uint64_t memory_end;         /* End of managed memory */
+    pmm_page_desc_t* pages;      /* Page descriptors */
+    uint64_t pages_count;        /* Number of page descriptors */
+    struct {
+        uint64_t total_pages;
+        uint64_t free_pages;
+        uint64_t used_pages;
+    } zones[PMM_ZONE_COUNT];
 };
 
 /* Global PMM state */
@@ -151,6 +175,44 @@ static void pmm_bitmap_set_all(void)
     }
 }
 
+static inline pmm_zone_t pmm_zone_for_addr(uint64_t addr)
+{
+    /* Simple split: low memory below 16MB, everything else is normal. */
+    if (addr < 0x1000000ULL) {
+        return PMM_ZONE_LOW;
+    }
+    return PMM_ZONE_NORMAL;
+}
+
+static void pmm_setup_page_descs(uint64_t memory_start, uint64_t memory_end,
+                                 uint64_t bitmap_phys,
+                                 uint64_t bitmap_size)
+{
+    uint64_t total_bytes = memory_end - memory_start;
+    uint64_t total_pages = total_bytes / PAGE_SIZE;
+    uint64_t desc_size = total_pages * sizeof(pmm_page_desc_t);
+    uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
+
+    /* If descriptors do not fit safely in low memory, skip for now. */
+    if (desc_phys + desc_size > 0x1000000ULL) {
+        pmm_state.pages = NULL;
+        pmm_state.pages_count = 0;
+        return;
+    }
+
+    /* Descriptors are placed in low memory and accessed via identity mapping. */
+    pmm_state.pages = (pmm_page_desc_t*)(desc_phys);
+    pmm_state.pages_count = total_pages;
+
+    for (uint64_t i = 0; i < total_pages; i++) {
+        uint64_t phys = memory_start + (i * PAGE_SIZE);
+        pmm_state.pages[i].phys = phys;
+        pmm_state.pages[i].zone = (uint8_t)pmm_zone_for_addr(phys);
+        pmm_state.pages[i].state = PMM_PAGE_USED;
+        pmm_state.pages[i].reserved = 0;
+    }
+}
+
 static void pmm_mark_range_free(uint64_t start, uint64_t end)
 {
     if (end <= start) {
@@ -173,6 +235,12 @@ static void pmm_mark_range_free(uint64_t start, uint64_t end)
             pmm_bitmap_clear(index);
             pmm_state.free_pages++;
             pmm_state.used_pages--;
+            if (index < pmm_state.pages_count) {
+                pmm_state.pages[index].state = PMM_PAGE_FREE;
+                pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
+                pmm_state.zones[zone].free_pages++;
+                pmm_state.zones[zone].used_pages--;
+            }
         }
     }
 }
@@ -199,6 +267,12 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
             pmm_bitmap_set(index);
             pmm_state.free_pages--;
             pmm_state.used_pages++;
+            if (index < pmm_state.pages_count) {
+                pmm_state.pages[index].state = PMM_PAGE_USED;
+                pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
+                pmm_state.zones[zone].free_pages--;
+                pmm_state.zones[zone].used_pages++;
+            }
         }
     }
 }
@@ -226,7 +300,7 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
 int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
 {
     extern void kputs(const char* str);
-    
+
     kputs("[PMM-1] Entry\n");
     __asm__ volatile ("" ::: "memory");
     
@@ -313,6 +387,12 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     __asm__ volatile ("" ::: "memory");
     pmm_state.memory_end = memory_end;
     __asm__ volatile ("" ::: "memory");
+
+    for (int z = 0; z < 1; z++) {
+        pmm_state.zones[z].total_pages = 0;
+        pmm_state.zones[z].free_pages = 0;
+        pmm_state.zones[z].used_pages = 0;
+    }
     
     kputs("[PMM-6.8] State initialized\n");
     __asm__ volatile ("" ::: "memory");
@@ -350,6 +430,19 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[PMM-OK] Done\n");
+
+    pmm_setup_page_descs(memory_start, memory_end,
+                         (uint64_t)((uintptr_t)bitmap_virt),
+                         bitmap_size);
+    if (pmm_state.pages_count > 0) {
+        for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
+            pmm_state.pages[i].state = PMM_PAGE_FREE;
+            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
+            pmm_state.zones[zone].total_pages++;
+            pmm_state.zones[zone].free_pages++;
+        }
+    }
+
     return 0;
 }
 
@@ -368,13 +461,19 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     /* Align to page boundaries */
     memory_start = (memory_start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     memory_end = memory_end & ~(PAGE_SIZE - 1);
-
     uint64_t total_bytes = memory_end - memory_start;
     uint64_t total_pages = total_bytes / PAGE_SIZE;
 
     uint64_t bitmap_size = (total_pages + BITS_PER_BYTE - 1) / BITS_PER_BYTE;
     bitmap_size = (bitmap_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-
+    if (bitmap_size > PMM_BITMAP_MAX_SIZE) {
+        uint64_t max_pages = PMM_BITMAP_MAX_SIZE * 8ULL;
+        memory_end = memory_start + (max_pages * PAGE_SIZE);
+        total_bytes = memory_end - memory_start;
+        total_pages = total_bytes / PAGE_SIZE;
+        bitmap_size = (total_pages + BITS_PER_BYTE - 1) / BITS_PER_BYTE;
+        bitmap_size = (bitmap_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    }
     pmm_state.total_pages = total_pages;
     pmm_state.free_pages = 0;
     pmm_state.used_pages = total_pages;
@@ -382,9 +481,23 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     pmm_state.bitmap_size = bitmap_size;
     pmm_state.memory_start = memory_start;
     pmm_state.memory_end = memory_end;
-
     /* Mark all pages as used, then free only available ranges */
     pmm_bitmap_set_all();
+
+    for (int z = 0; z < PMM_ZONE_COUNT; z++) {
+        pmm_state.zones[z].total_pages = 0;
+        pmm_state.zones[z].free_pages = 0;
+        pmm_state.zones[z].used_pages = 0;
+    }
+    pmm_setup_page_descs(memory_start, memory_end, bitmap_phys, bitmap_size);
+    if (pmm_state.pages_count > 0) {
+        for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
+            pmm_state.pages[i].state = PMM_PAGE_USED;
+            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
+            pmm_state.zones[zone].total_pages++;
+            pmm_state.zones[zone].used_pages++;
+        }
+    }
 
     const uint8_t* base = (const uint8_t*)mmap_tag;
     uint32_t offset = sizeof(uint32_t) * 4; /* type, size, entry_size, entry_version */
@@ -409,8 +522,13 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         offset += entry_size;
     }
 
-    /* Keep bitmap storage reserved */
+    /* Keep bitmap and descriptors reserved */
     pmm_mark_range_used(bitmap_phys, bitmap_phys + bitmap_size);
+    if (pmm_state.pages_count > 0) {
+        uint64_t desc_size = pmm_state.pages_count * sizeof(pmm_page_desc_t);
+        uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
+        pmm_mark_range_used(desc_phys, desc_phys + desc_size);
+    }
 
     return 0;
 }
@@ -450,6 +568,15 @@ uint64_t pmm_alloc_page(void)
                 ((uint64_t*)virt)[j] = 0;
             }
             
+            if (i < pmm_state.pages_count) {
+                pmm_state.pages[i].state = PMM_PAGE_USED;
+                pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
+                if (pmm_state.zones[zone].free_pages > 0) {
+                    pmm_state.zones[zone].free_pages--;
+                    pmm_state.zones[zone].used_pages++;
+                }
+            }
+
             return phys;
         }
     }
@@ -482,6 +609,14 @@ void pmm_free_page(uint64_t phys)
         pmm_bitmap_clear(index);
         pmm_state.free_pages++;
         pmm_state.used_pages--;
+        if (index < pmm_state.pages_count) {
+            pmm_state.pages[index].state = PMM_PAGE_FREE;
+            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
+            pmm_state.zones[zone].free_pages++;
+            if (pmm_state.zones[zone].used_pages > 0) {
+                pmm_state.zones[zone].used_pages--;
+            }
+        }
     }
 }
 
@@ -534,6 +669,18 @@ uint64_t pmm_alloc_pages(uint32_t count)
                 void* virt = (void*)(first_page + i * PAGE_SIZE + X86_64_KERNEL_VIRT_BASE);
                 for (uint64_t j = 0; j < PAGE_SIZE / sizeof(uint64_t); j++) {
                     ((uint64_t*)virt)[j] = 0;
+                }
+            }
+
+            for (uint32_t i = 0; i < count; i++) {
+                uint64_t idx = start + i;
+                if (idx < pmm_state.pages_count) {
+                    pmm_state.pages[idx].state = PMM_PAGE_USED;
+                    pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[idx].zone;
+                    if (pmm_state.zones[zone].free_pages > 0) {
+                        pmm_state.zones[zone].free_pages--;
+                        pmm_state.zones[zone].used_pages++;
+                    }
                 }
             }
             
@@ -589,4 +736,15 @@ uint64_t pmm_get_free_pages(void)
 uint64_t pmm_get_used_pages(void)
 {
     return pmm_state.used_pages;
+}
+
+int pmm_get_zone_stats(pmm_zone_t zone, pmm_zone_stats_t* out)
+{
+    if (!out || zone < 0 || zone >= PMM_ZONE_COUNT) {
+        return -1;
+    }
+    out->total_pages = pmm_state.zones[zone].total_pages;
+    out->free_pages = pmm_state.zones[zone].free_pages;
+    out->used_pages = pmm_state.zones[zone].used_pages;
+    return 0;
 }

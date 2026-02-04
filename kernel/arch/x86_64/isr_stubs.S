@@ -117,15 +117,13 @@ isr_common_stub:
     mov rdi, rsp    ; Pass pointer to registers
     call isr_handler
     
-    ; Restore segment registers
-    pop rax
-    mov gs, ax
-    pop rax
-    mov fs, ax
-    pop rax
-    mov es, ax
-    pop rax
+    ; Restore segment registers (use kernel data selector)
+    add rsp, 32
+    mov ax, 0x10
     mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
     
     ; Restore all registers
     pop r15
@@ -192,15 +190,13 @@ irq_common_stub:
     call irq_handler
     
 irq_done:
-    ; Restore segment registers
-    pop rax
-    mov gs, ax
-    pop rax
-    mov fs, ax
-    pop rax
-    mov es, ax
-    pop rax
+    ; Restore segment registers (use kernel data selector)
+    add rsp, 32
+    mov ax, 0x10
     mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
     
     ; Restore all registers
     pop r15

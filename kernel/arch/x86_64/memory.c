@@ -79,14 +79,29 @@ int memory_init(void)
     /* For PMM, we need to allocate a bitmap. For now, use a fixed location
      * in low memory that's already identity-mapped.
      */
-    #define PMM_BITMAP_PHYS_ADDR  0x50000  /* 320KB (after boot code, before 1MB) */
+    #define PMM_BITMAP_PHYS_ADDR  0x200000 /* 2MB (above kernel start, identity-mapped) */
     #define PMM_MEMORY_START      0x100000 /* 1MB (after boot code) */
     #define PMM_MEMORY_FALLBACK_END 0x4000000 /* 64MB (fallback) */
+    #define PMM_BITMAP_MAX_SIZE    0x100000  /* 1MB bitmap cap */
     
     boot_info_t* bi = boot_get_info();
     uint64_t mem_end = PMM_MEMORY_FALLBACK_END;
     if (bi && bi->mem_upper > PMM_MEMORY_START) {
         mem_end = bi->mem_upper;
+    }
+    /* If no MMAP is available, clamp to a safe fallback to avoid huge bitmaps. */
+    /* Clamp memory range to what the fixed bitmap can represent. */
+    {
+        uint64_t max_pages = (uint64_t)PMM_BITMAP_MAX_SIZE * 8ULL;
+        uint64_t max_mem_end = PMM_MEMORY_START + (max_pages * PAGE_SIZE);
+        if (mem_end > max_mem_end) {
+            mem_end = max_mem_end;
+        }
+    }
+    if (!(bi && bi->mmap_addr && bi->mmap_size && bi->mmap_entry_size)) {
+        if (mem_end > PMM_MEMORY_FALLBACK_END) {
+            mem_end = PMM_MEMORY_FALLBACK_END;
+        }
     }
     
     /* Bitmap is in low memory, already identity-mapped by boot.S */
@@ -95,18 +110,29 @@ int memory_init(void)
     
     kputs("[MEM-5] Call pmm_init\n");
     __asm__ volatile ("" ::: "memory");
+    /* VGA marker before PMM call (top row) */
+    volatile uint16_t* vga_dbg = (volatile uint16_t*)0xB8000;
+    vga_dbg[80 * 0 + 20] = 0x0F50; /* 'P' */
+    vga_dbg[80 * 0 + 21] = 0x0F31; /* '1' */
+    /* Disable interrupts during early PMM init to avoid reentrancy */
+    __asm__ volatile ("cli");
     /* Initialize PMM */
     if (bi && bi->mmap_addr && bi->mmap_size && bi->mmap_entry_size) {
         if (pmm_init_from_mmap(PMM_MEMORY_START, mem_end, bitmap_virt,
                                PMM_BITMAP_PHYS_ADDR, bi->mmap_addr,
                                bi->mmap_size, bi->mmap_entry_size) != 0) {
             kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
+            __asm__ volatile ("sti");
             return -1;
         }
     } else if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
         kputs("[MEM-ERR] pmm_init failed\n");
+        __asm__ volatile ("sti");
         return -1;
     }
+    __asm__ volatile ("sti");
+    vga_dbg[80 * 0 + 22] = 0x0F50; /* 'P' */
+    vga_dbg[80 * 0 + 23] = 0x0F32; /* '2' */
 
     /* Log PMM summary */
     extern uint64_t pmm_get_total_pages(void);

@@ -17,6 +17,50 @@
 #include "apic.h"
 #include <stddef.h>
 
+/* Minimal serial output for exception diagnostics (COM1). */
+#define SERIAL_COM1_BASE 0x3F8
+static inline void serial_outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t serial_inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static void serial_write_char(char c)
+{
+    /* Wait for THR empty (bit 5) */
+    for (int i = 0; i < 10000; i++) {
+        if (serial_inb(SERIAL_COM1_BASE + 5) & 0x20) {
+            break;
+        }
+    }
+    serial_outb(SERIAL_COM1_BASE + 0, (uint8_t)c);
+}
+
+static void serial_write_str(const char* s)
+{
+    while (*s) {
+        if (*s == '\n') {
+            serial_write_char('\r');
+        }
+        serial_write_char(*s++);
+    }
+}
+
+static void serial_write_hex64(uint64_t value)
+{
+    const char* hex = "0123456789abcdef";
+    serial_write_str("0x");
+    for (int i = 60; i >= 0; i -= 4) {
+        serial_write_char(hex[(value >> i) & 0xF]);
+    }
+}
+
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
 
@@ -187,15 +231,6 @@ static void interrupt_dispatch(struct registers* regs)
 {
     uint32_t vector = regs->int_no;
     
-    /* DIAGNOSTIC: Mark interrupt dispatch (VGA only, bottom of screen, RED) */
-    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
-    static uint32_t dispatch_count = 0;
-    if (dispatch_count < 20 && vector >= 32 && vector < 48) {
-        vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('I');  /* RED */
-        vga_debug[80 * 21 + dispatch_count + 1] = 0x0C00 | ('0' + ((vector - 32) % 10));  /* RED */
-        dispatch_count += 2;
-    }
-    
     /* Handle IRQ (32-47) - PIC IRQs are mapped to these vectors */
     if (vector >= 32 && vector < 48) {
         uint32_t irq = vector - 32;
@@ -209,11 +244,6 @@ static void interrupt_dispatch(struct registers* regs)
         
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
-            if (dispatch_count < 20) {
-                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('C');  /* RED */
-                dispatch_count++;
-            }
-            
             interrupt_context_t ctx;
             ctx.pc = regs->rip;
             ctx.sp = regs->rsp;
@@ -222,26 +252,10 @@ static void interrupt_dispatch(struct registers* regs)
             ctx.vector = vector;
             ctx.type = INTERRUPT_TYPE_IRQ;
             ctx.arch_specific = (void*)regs;
-            
             interrupt_handlers[vector](&ctx);
-            
-            if (dispatch_count < 20) {
-                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('H');  /* RED */
-                dispatch_count++;
-            }
         } else {
             /* Unhandled IRQ - mask it silently (no panic) */
-            if (dispatch_count < 20) {
-                vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('U');  /* RED */
-                dispatch_count++;
-            }
             pic_disable_irq(irq);
-        }
-        
-        /* Send EOI - CRITICAL: Must be sent before returning */
-        if (dispatch_count < 20) {
-            vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('E');  /* RED */
-            dispatch_count++;
         }
         
         /* EOI logic:
@@ -265,25 +279,11 @@ static void interrupt_dispatch(struct registers* regs)
             /* No APIC - use only PIC EOI */
             pic_send_eoi(irq);
         }
-        
-        if (dispatch_count < 20) {
-            vga_debug[80 * 21 + dispatch_count] = 0x0C00 | ('X');  /* RED */
-            dispatch_count++;
-        }
         return;
     }
     
     /* Handle exception (0-31) */
     if (vector < 32) {
-        /* DIAGNOSTIC: Mark exception on VGA (RED) - CRITICAL */
-        static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
-        static uint32_t exc_count = 0;
-        if (exc_count < 10) {
-            vga_debug[80 * 15 + exc_count * 2] = 0x0C00 | ('E');  /* RED - Exception */
-            vga_debug[80 * 15 + exc_count * 2 + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
-            exc_count += 2;
-        }
-        
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -303,9 +303,6 @@ static void interrupt_dispatch(struct registers* regs)
         /* Exception 21 (Control Protection Exception) - can occur on some CPUs, ignore */
         if (vector == 15 || vector == 21 || (vector >= 22 && vector <= 31)) {
             /* These are reserved or can occur spuriously and should not cause panic */
-            if (exc_count < 10) {
-                vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('I');  /* RED - Ignored */
-            }
             return;
         }
         
@@ -314,17 +311,33 @@ static void interrupt_dispatch(struct registers* regs)
         if (vector == 7) {
             /* This can occur if FPU is used in interrupt handler */
             /* Just return silently - FPU operations should not be done in interrupt context */
-            if (exc_count < 10) {
-                vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('7');  /* RED - Exception 7 ignored */
-            }
             return;
         }
-        
-        /* Critical exceptions - panic (exceptions must be handled) */
-        if (exc_count < 10) {
-            vga_debug[80 * 15 + exc_count - 1] = 0x0C00 | ('P');  /* RED - Panic */
+
+        /* Serial exception dump for boot.log */
+        serial_write_str("\n[EXC] v=");
+        serial_write_hex64(vector);
+        serial_write_str(" rip=");
+        serial_write_hex64(regs->rip);
+        serial_write_str(" err=");
+        serial_write_hex64(regs->err_code);
+        serial_write_str("\n");
+        if (vector == 14) {
+            uint64_t cr2;
+            __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            serial_write_str("[EXC] cr2=");
+            serial_write_hex64(cr2);
+            serial_write_str("\n");
         }
-        
+
+        /* Extra minimal dump at top-left to avoid being scrolled out */
+        safe_vga_puts(0, 0, "EXC v=", 0x0C);
+        safe_vga_hex(0, 6, vector, 0x0C);
+        safe_vga_puts(1, 0, "RIP=", 0x0C);
+        safe_vga_hex(1, 4, regs->rip, 0x0C);
+        safe_vga_puts(2, 0, "ERR=", 0x0C);
+        safe_vga_hex(2, 4, regs->err_code, 0x0C);
+
         /* Use safe VGA output to avoid recursion - do NOT call kputs/kprintf */
         safe_vga_puts(16, 0, "*** Exception ***", 0x0C); /* Red */
         safe_vga_puts(17, 0, "Exception: ", 0x0F); /* White */
@@ -379,21 +392,5 @@ void isr_handler(struct registers* regs)
 /* IRQ handler (called from assembly for IRQ 32-47) */
 void irq_handler(struct registers* regs)
 {
-    /* DIAGNOSTIC: Mark that irq_handler was called (VGA only, bottom of screen, RED) */
-    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
-    static uint32_t irq_handler_count = 0;
-    if (irq_handler_count < 10) {
-        uint32_t vector = regs->int_no;
-        vga_debug[80 * 22 + irq_handler_count * 2] = 0x0C00 | ('A');  /* RED */
-        vga_debug[80 * 22 + irq_handler_count * 2 + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
-        irq_handler_count++;
-    }
-    
     interrupt_dispatch(regs);
-    
-    /* DIAGNOSTIC: Mark that irq_handler is returning (RED) */
-    if (irq_handler_count < 10) {
-        vga_debug[80 * 22 + (irq_handler_count - 1) * 2] = 0x0C00 | ('R');  /* RED */
-    }
 }
-
