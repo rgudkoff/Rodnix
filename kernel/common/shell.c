@@ -456,6 +456,10 @@ void shell_run(void)
     extern void kputs(const char* str);
     extern void kputc(char c);
     
+    /* Disable log prefixes for interactive shell output */
+    extern void console_set_log_prefix_enabled(bool enabled);
+    console_set_log_prefix_enabled(false);
+
     kputs("[SHELL] shell_run() called\n");
     __asm__ volatile ("" ::: "memory");
     

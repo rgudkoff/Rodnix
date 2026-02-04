@@ -29,9 +29,9 @@ Goal: correct memory accounting and a safe allocation baseline.
 
 Goal: stable IRQ path without hacks.
 
-1. Remove diagnostic VGA spam from IRQ paths (keep optional debug mode)
-2. Normalize PIC/APIC EOI logic
-3. Route keyboard IRQ through Fabric
+1. Remove diagnostic VGA spam from IRQ paths (keep optional debug mode) ✅
+2. Normalize PIC/APIC EOI logic ✅
+3. Route keyboard IRQ through Fabric ✅
    - Use fabric_request_irq
    - Keep polling only as fallback
 

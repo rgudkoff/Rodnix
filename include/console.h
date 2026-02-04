@@ -119,5 +119,7 @@ void console_set_bg_color(uint8_t color);
  */
 void console_reset_color(void);
 
-#endif /* _RODNIX_CONSOLE_H */
+/* Log prefix control */
+void console_set_log_prefix_enabled(bool enabled);
 
+#endif /* _RODNIX_CONSOLE_H */

@@ -32,6 +32,123 @@ static uint8_t vga_row = 0;
 static uint8_t vga_col = 0;
 static uint8_t vga_color = 0x0F; /* White on black */
 static volatile bool kputs_in_progress = false; /* Prevent recursive calls from exception handlers */
+static bool log_prefix_enabled = true;
+static bool log_at_line_start = true;
+static bool log_prefix_in_progress = false;
+
+static uint64_t console_get_uptime_us(void)
+{
+    extern bool apic_is_available(void);
+    extern uint32_t apic_timer_get_ticks(void);
+    extern uint32_t apic_timer_get_frequency(void);
+    extern uint32_t pit_get_ticks(void);
+    extern uint32_t pit_get_frequency(void);
+
+    uint64_t ticks = 0;
+    uint32_t freq = 0;
+    if (apic_is_available()) {
+        ticks = apic_timer_get_ticks();
+        freq = apic_timer_get_frequency();
+    } else {
+        ticks = pit_get_ticks();
+        freq = pit_get_frequency();
+    }
+
+    if (freq == 0) {
+        return 0;
+    }
+
+    return (ticks * 1000000ULL) / (uint64_t)freq;
+}
+
+static void console_write_dec_fixed(uint64_t value, int width)
+{
+    char buf[32];
+    int idx = 0;
+    do {
+        buf[idx++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value && idx < (int)sizeof(buf));
+
+    while (idx < width && idx < (int)sizeof(buf)) {
+        buf[idx++] = '0';
+    }
+
+    for (int i = idx - 1; i >= 0; i--) {
+        kputc(buf[i]);
+    }
+}
+
+static void console_write_hex_fixed(uint64_t value, int width)
+{
+    const char* hex = "0123456789abcdef";
+    char buf[32];
+    int idx = 0;
+    do {
+        buf[idx++] = hex[value & 0xF];
+        value >>= 4;
+    } while (value && idx < (int)sizeof(buf));
+
+    while (idx < width && idx < (int)sizeof(buf)) {
+        buf[idx++] = '0';
+    }
+
+    for (int i = idx - 1; i >= 0; i--) {
+        kputc(buf[i]);
+    }
+}
+
+static void console_write_log_prefix(void)
+{
+    uint64_t us = console_get_uptime_us();
+    uint64_t sec = us / 1000000ULL;
+    uint64_t micros = us % 1000000ULL;
+    uint64_t hours = (sec / 3600ULL) % 24ULL;
+    uint64_t mins = (sec / 60ULL) % 60ULL;
+    uint64_t secs = sec % 60ULL;
+
+    /* Use fixed date until RTC is implemented */
+    console_write_dec_fixed(1970, 4);
+    kputc('-');
+    console_write_dec_fixed(1, 2);
+    kputc('-');
+    console_write_dec_fixed(1, 2);
+    kputc(' ');
+    console_write_dec_fixed(hours, 2);
+    kputc(':');
+    console_write_dec_fixed(mins, 2);
+    kputc(':');
+    console_write_dec_fixed(secs, 2);
+    kputc('.');
+    console_write_dec_fixed(micros, 6);
+    kputc('+');
+    console_write_dec_fixed(0, 4);
+    kputc(' ');
+
+    /* pid */
+    kputc('0');
+    kputc('x');
+    console_write_hex_fixed(0, 3);
+    kputs("      ");
+
+    /* level */
+    kputs("Info       ");
+
+    /* code */
+    kputc('0');
+    kputc('x');
+    console_write_hex_fixed(0, 3);
+    kputs("                ");
+
+    /* pid/tid placeholders */
+    console_write_dec_fixed(0, 3);
+    kputs("    ");
+    console_write_dec_fixed(0, 2);
+    kputs("   ");
+
+    /* process */
+    kputs("rodnix: ");
+}
 
 static inline void outb(uint16_t port, uint8_t value)
 {
@@ -165,6 +282,13 @@ static void scroll_screen(void)
 
 void kputc(char c)
 {
+    if (log_prefix_enabled && log_at_line_start && !log_prefix_in_progress) {
+        log_prefix_in_progress = true;
+        console_write_log_prefix();
+        log_prefix_in_progress = false;
+        log_at_line_start = false;
+    }
+
     /* Mirror output to serial for logging */
     if (c == '\n') {
         serial_write_char('\r');
@@ -181,6 +305,7 @@ void kputc(char c)
             vga_row = VGA_HEIGHT - 1;  /* Stay on last line after scroll */
         }
         update_cursor(vga_row, vga_col);
+        log_at_line_start = true;
         return;
     }
     
@@ -271,6 +396,12 @@ void kputs(const char* str)
     kputs_in_progress = false;
     /* Force immediate output - no buffering */
     __asm__ volatile ("" ::: "memory");
+}
+
+void console_set_log_prefix_enabled(bool enabled)
+{
+    log_prefix_enabled = enabled;
+    log_at_line_start = true;
 }
 
 static void kprint_uint(uint64_t num, uint64_t base)
