@@ -153,11 +153,6 @@ int interrupts_init(void)
     current_irql = IRQL_PASSIVE;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-3] Skip APIC (forced PIC)\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Temporary: force PIC to avoid early APIC issues. */
-    bool use_apic = false;
-    
     kputs("[INT-4] Init PIC (early, will disable if APIC works)\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize PIC early (required for boot) */
@@ -170,26 +165,6 @@ int interrupts_init(void)
     pic_disable();
     __asm__ volatile ("" ::: "memory");
     
-    /* If LAPIC is available, PIC should be disabled */
-    /* But if I/O APIC is not available, keep PIC for external IRQ routing */
-    if (use_apic) {
-        extern bool ioapic_is_available(void);
-        if (ioapic_is_available()) {
-            kputs("[INT-5.1] I/O APIC available, disable PIC completely\n");
-            __asm__ volatile ("" ::: "memory");
-            /* Disable PIC completely - all IRQ route through I/O APIC */
-            pic_disable();
-            __asm__ volatile ("" ::: "memory");
-        } else {
-            /* LAPIC available but I/O APIC not - keep PIC enabled for external IRQ */
-            /* EOI will be sent via LAPIC, but IRQ routing goes through PIC */
-            kputs("[INT-5.1] LAPIC available, I/O APIC not - keep PIC for external IRQ\n");
-            __asm__ volatile ("" ::: "memory");
-            /* Keep PIC enabled - we need it for external IRQ routing */
-            /* PIC is already masked (pic_disable() was called earlier), we'll enable specific IRQs later */
-        }
-    }
-    
     kputs("[INT-6] Init IDT\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize IDT: set up exception and IRQ handlers */
@@ -197,14 +172,9 @@ int interrupts_init(void)
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
-    
+
     kputs("[INT-OK] Done\n");
     __asm__ volatile ("" ::: "memory");
-    
-    /* TODO: Initialize APIC (Advanced Programmable Interrupt Controller)
-     *       if available. APIC is preferred on modern systems but PIC
-     *       initialization is still required for compatibility.
-     */
     
     return 0;
 }

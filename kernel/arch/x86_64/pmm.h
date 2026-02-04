@@ -39,6 +39,7 @@ void pmm_free_page(uint64_t phys);
 uint64_t pmm_alloc_pages(uint32_t count);
 uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count);
 void pmm_free_pages(uint64_t phys, uint32_t count);
+void pmm_reserve_range(uint64_t start, uint64_t end);
 
 /* Statistics */
 uint64_t pmm_get_total_pages(void);

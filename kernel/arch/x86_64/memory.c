@@ -143,6 +143,23 @@ int memory_init(void)
     vga_dbg[80 * 0 + 22] = 0x0F50; /* 'P' */
     vga_dbg[80 * 0 + 23] = 0x0F32; /* '2' */
 
+    /* Reserve kernel image before early page-table allocations */
+    extern void pmm_reserve_range(uint64_t start, uint64_t end);
+    extern char kernel_end;
+    uint64_t kernel_start = 0x100000ULL;
+    uint64_t kernel_end_phys = (uint64_t)(uintptr_t)&kernel_end;
+    pmm_reserve_range(kernel_start, kernel_end_phys);
+
+    /* Bootstrap higher-half direct map for low memory (64MB) */
+    kputs("[MEM-6] Bootstrap physmap (64MB)\n");
+    __asm__ volatile ("" ::: "memory");
+    extern int paging_bootstrap_physmap(uint64_t max_phys);
+    if (paging_bootstrap_physmap(0x4000000ULL) != 0) { /* 64MB */
+        kputs("[MEM-ERR] bootstrap physmap failed\n");
+        return -1;
+    }
+    __asm__ volatile ("" ::: "memory");
+
     /* Initialize simple kernel heap */
     extern int heap_init(size_t initial_pages);
     if (heap_init(16) != 0) {

@@ -61,6 +61,7 @@ struct input_state {
 
 /* Global input state */
 static struct input_state input_state = {0};
+static bool input_polling_enabled = true;
 
 /* ============================================================================
  * Scan Code Translation Tables
@@ -270,6 +271,7 @@ void input_init_keyboard(void)
     input_state.num_lock = false;
     input_state.scroll_lock = false;
     input_state.extended = false;
+    input_polling_enabled = true;
     
     kputs("[InputCore] Initialization complete\n");
 }
@@ -358,7 +360,9 @@ static void input_poll_keyboard_ps2(void)
 bool input_has_char(void)
 {
     /* Сначала опросить клавиатуру в поллинговом режиме (fallback без IRQ) */
-    input_poll_keyboard_ps2();
+    if (input_polling_enabled) {
+        input_poll_keyboard_ps2();
+    }
     
     /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);
@@ -384,7 +388,9 @@ bool input_has_char(void)
 int input_read_char(void)
 {
     /* Сначала опросить клавиатуру (fallback без IRQ) */
-    input_poll_keyboard_ps2();
+    if (input_polling_enabled) {
+        input_poll_keyboard_ps2();
+    }
     
     /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);
@@ -403,6 +409,11 @@ int input_read_char(void)
     spinlock_unlock(&input_state.lock);
     
     return result;
+}
+
+void input_set_polling_enabled(bool enabled)
+{
+    input_polling_enabled = enabled;
 }
 
 /**

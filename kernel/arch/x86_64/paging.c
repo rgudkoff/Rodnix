@@ -155,6 +155,22 @@ static uint64_t paging_alloc_page_table(void)
     return phys;
 }
 
+static uint64_t paging_alloc_page_table_identity(void)
+{
+    uint64_t phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
+    if (!phys) {
+        return 0;
+    }
+
+    /* Zero the page table via identity mapping (early-safe) */
+    uint64_t* virt = (uint64_t*)phys;
+    for (uint64_t i = 0; i < PAGE_SIZE / sizeof(uint64_t); i++) {
+        virt[i] = 0;
+    }
+
+    return phys;
+}
+
 /**
  * @function paging_get_pml4
  * @brief Get current PML4 virtual address
@@ -360,6 +376,330 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
 }
 
 /**
+ * @function paging_map_page_4kb_noalloc
+ * @brief Map a 4KB page without allocating new page tables
+ *
+ * This function only succeeds if all required page table levels
+ * already exist. It is intended for early/strict mappings such as MMIO
+ * where we don't want to allocate new page tables yet.
+ *
+ * @param virt Virtual address (must be 4KB aligned)
+ * @param phys Physical address (must be 4KB aligned)
+ * @param flags Page flags (PTE_* constants)
+ *
+ * @return 0 on success, -1 on failure
+ */
+int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
+        return -1; /* Not page-aligned */
+    }
+
+    uint64_t* pml4 = paging_get_pml4();
+    if (!pml4) {
+        return -1;
+    }
+
+    /* Get indices */
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+    uint64_t pt_idx = paging_get_pt_index(virt);
+
+    /* Require existing PML4 entry */
+    uint64_t pml4_entry = pml4[pml4_idx];
+    if (!(pml4_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    uint64_t* pdpt = paging_get_pdpt(pml4_entry);
+    if (!pdpt) {
+        return -1;
+    }
+
+    /* Require existing PDPT entry */
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    uint64_t* pd = paging_get_pd(pdpt_entry);
+    if (!pd) {
+        return -1;
+    }
+
+    /* Require existing PD entry and 4KB page table */
+    uint64_t pd_entry = pd[pd_idx];
+    if (!(pd_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    if (pd_entry & PTE_SIZE_2MB) {
+        return -1; /* Cannot map 4KB page where 2MB page exists */
+    }
+    uint64_t* pt = paging_get_pt(pd_entry);
+    if (!pt) {
+        return -1;
+    }
+
+    /* Set PT entry */
+    uint64_t pte = phys | flags | PTE_PRESENT;
+    pt[pt_idx] = pte;
+
+    /* Flush TLB for this page */
+    paging_flush_tlb((void*)virt);
+
+    return 0;
+}
+
+/**
+ * @function paging_map_page_4kb_noalloc_identity
+ * @brief Map a 4KB page without allocating and using identity-mapped tables
+ *
+ * This function walks page tables using physical addresses directly,
+ * assuming an identity mapping is still active for low memory. It avoids
+ * using the kernel higher-half mapping for page tables.
+ *
+ * @param virt Virtual address (must be 4KB aligned)
+ * @param phys Physical address (must be 4KB aligned)
+ * @param flags Page flags (PTE_* constants)
+ *
+ * @return 0 on success, -1 on failure
+ */
+int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
+        return -1; /* Not page-aligned */
+    }
+
+    if (!current_pml4_phys) {
+        return -1;
+    }
+
+    /* Get indices */
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+    uint64_t pt_idx = paging_get_pt_index(virt);
+
+    /* Identity-mapped access to tables */
+    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t pml4_entry = pml4[pml4_idx];
+    if (!(pml4_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    uint64_t* pdpt = (uint64_t*)(pml4_entry & ~0xFFF);
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    uint64_t* pd = (uint64_t*)(pdpt_entry & ~0xFFF);
+    uint64_t pd_entry = pd[pd_idx];
+    if (!(pd_entry & PTE_PRESENT)) {
+        return -1;
+    }
+    if (pd_entry & PTE_SIZE_2MB) {
+        return -1; /* Cannot map 4KB page where 2MB page exists */
+    }
+    uint64_t* pt = (uint64_t*)(pd_entry & ~0xFFF);
+
+    /* Set PT entry */
+    uint64_t pte = phys | flags | PTE_PRESENT;
+    pt[pt_idx] = pte;
+
+    /* Flush TLB for this page */
+    paging_flush_tlb((void*)virt);
+
+    return 0;
+}
+
+/**
+ * @function paging_map_page_4kb_identity_alloc
+ * @brief Map a 4KB page using identity-mapped tables with allocation
+ *
+ * This function walks/creates page tables using physical addresses directly,
+ * assuming an identity mapping is active for low memory. New tables are
+ * allocated from the LOW zone to keep identity access valid.
+ *
+ * @param virt Virtual address (must be 4KB aligned)
+ * @param phys Physical address (must be 4KB aligned)
+ * @param flags Page flags (PTE_* constants)
+ *
+ * @return 0 on success, -1 on failure
+ */
+int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
+        return -1; /* Not page-aligned */
+    }
+
+    if (!current_pml4_phys) {
+        return -1;
+    }
+
+    /* Get indices */
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+    uint64_t pt_idx = paging_get_pt_index(virt);
+
+    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t pml4_entry = pml4[pml4_idx];
+    uint64_t* pdpt;
+
+    if (!(pml4_entry & PTE_PRESENT)) {
+        uint64_t pdpt_phys = paging_alloc_page_table_identity();
+        if (!pdpt_phys) {
+            return -1;
+        }
+        pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
+        pml4[pml4_idx] = pml4_entry;
+        pdpt = (uint64_t*)pdpt_phys;
+    } else {
+        pdpt = (uint64_t*)(pml4_entry & ~0xFFF);
+    }
+
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    uint64_t* pd;
+
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        uint64_t pd_phys = paging_alloc_page_table_identity();
+        if (!pd_phys) {
+            return -1;
+        }
+        pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
+        pdpt[pdpt_idx] = pdpt_entry;
+        pd = (uint64_t*)pd_phys;
+    } else {
+        pd = (uint64_t*)(pdpt_entry & ~0xFFF);
+    }
+
+    uint64_t pd_entry = pd[pd_idx];
+    uint64_t* pt;
+
+    if (!(pd_entry & PTE_PRESENT)) {
+        uint64_t pt_phys = paging_alloc_page_table_identity();
+        if (!pt_phys) {
+            return -1;
+        }
+        pd_entry = pt_phys | PTE_PRESENT | PTE_RW;
+        pd[pd_idx] = pd_entry;
+        pt = (uint64_t*)pt_phys;
+    } else {
+        if (pd_entry & PTE_SIZE_2MB) {
+            return -1; /* Cannot map 4KB page where 2MB page exists */
+        }
+        pt = (uint64_t*)(pd_entry & ~0xFFF);
+    }
+
+    /* Set PT entry */
+    uint64_t pte = phys | flags | PTE_PRESENT;
+    pt[pt_idx] = pte;
+
+    /* Flush TLB for this page */
+    paging_flush_tlb((void*)virt);
+
+    return 0;
+}
+
+/**
+ * @function paging_map_page_2mb_identity_alloc
+ * @brief Map a 2MB page using identity-mapped tables with allocation
+ *
+ * This function walks/creates page tables using physical addresses directly,
+ * assuming an identity mapping is active for low memory. New tables are
+ * allocated from the LOW zone to keep identity access valid.
+ *
+ * @param virt Virtual address (must be 2MB aligned)
+ * @param phys Physical address (must be 2MB aligned)
+ * @param flags Page flags
+ *
+ * @return 0 on success, -1 on failure
+ */
+int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    if ((virt & 0x1FFFFF) != 0 || (phys & 0x1FFFFF) != 0) {
+        return -1; /* Not 2MB aligned */
+    }
+
+    if (!current_pml4_phys) {
+        return -1;
+    }
+
+    /* Get indices */
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+
+    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t pml4_entry = pml4[pml4_idx];
+    uint64_t* pdpt;
+
+    if (!(pml4_entry & PTE_PRESENT)) {
+        uint64_t pdpt_phys = paging_alloc_page_table_identity();
+        if (!pdpt_phys) {
+            return -1;
+        }
+        pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
+        pml4[pml4_idx] = pml4_entry;
+        pdpt = (uint64_t*)pdpt_phys;
+    } else {
+        pdpt = (uint64_t*)(pml4_entry & ~0xFFF);
+    }
+
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    uint64_t* pd;
+
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        uint64_t pd_phys = paging_alloc_page_table_identity();
+        if (!pd_phys) {
+            return -1;
+        }
+        pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
+        pdpt[pdpt_idx] = pdpt_entry;
+        pd = (uint64_t*)pd_phys;
+    } else {
+        pd = (uint64_t*)(pdpt_entry & ~0xFFF);
+    }
+
+    /* Set PD entry as 2MB page */
+    uint64_t pd_entry = phys | flags | PTE_PRESENT | PTE_SIZE_2MB;
+    pd[pd_idx] = pd_entry;
+
+    /* Flush TLB */
+    paging_flush_tlb((void*)virt);
+
+    return 0;
+}
+
+/**
+ * @function paging_bootstrap_physmap
+ * @brief Create a higher-half direct-map window for low physical memory
+ *
+ * Maps [0, max_phys) to X86_64_KERNEL_VIRT_BASE + phys using 2MB pages.
+ * This is intended for early/bootstrapping use before full VM is ready.
+ *
+ * @param max_phys Maximum physical address (bytes) to map (rounded down to 2MB)
+ *
+ * @return 0 on success, -1 on failure
+ */
+int paging_bootstrap_physmap(uint64_t max_phys)
+{
+    if (max_phys == 0) {
+        return 0;
+    }
+
+    /* Round down to 2MB */
+    max_phys &= ~0x1FFFFFULL;
+
+    for (uint64_t phys = 0; phys < max_phys; phys += 0x200000ULL) {
+        uint64_t virt = X86_64_KERNEL_VIRT_BASE + phys;
+        if (paging_map_page_2mb_identity_alloc(virt, phys, PTE_RW) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/**
  * @function paging_unmap_page
  * @brief Unmap a page
  * 
@@ -541,4 +881,3 @@ int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
     
     return 0;
 }
-

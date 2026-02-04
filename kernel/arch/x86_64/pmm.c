@@ -960,6 +960,18 @@ uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
     return 0;
 }
 
+void pmm_reserve_range(uint64_t start, uint64_t end)
+{
+    if (end <= start) {
+        return;
+    }
+
+    pmm_mark_range_used(start, end);
+    pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
+                   start, end - start);
+    pmm_rebuild_free_lists();
+}
+
 /**
  * @function pmm_free_pages
  * @brief Free multiple physical pages

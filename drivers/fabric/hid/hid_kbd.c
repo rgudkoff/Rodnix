@@ -14,10 +14,15 @@
 #include "../../../kernel/core/interrupts.h"
 #include "../../../kernel/input/input.h"
 #include "../../../kernel/arch/x86_64/pic.h"
+#include "../../../kernel/arch/x86_64/apic.h"
 #include "../../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#ifndef KBD_IRQ_VGA_DEBUG
+#define KBD_IRQ_VGA_DEBUG 0
+#endif
 
 /* Keyboard service state */
 static keyboard_ops_t keyboard_ops = {0};
@@ -119,11 +124,12 @@ void input_process_queue(void)
 }
 
 /* Keyboard IRQ handler for Fabric - minimal processing */
-static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
+static void keyboard_irq_handler(int vector, void *arg)
 {
     (void)vector;
     (void)arg;
-    
+ 
+#if KBD_IRQ_VGA_DEBUG
     /* DIAGNOSTIC: Mark that handler was called (VGA only, bottom of screen, RED) */
     static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
     static uint32_t handler_call_count = 0;
@@ -132,6 +138,7 @@ static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
         vga_debug[80 * 19 + handler_call_count] = 0x0C00 | ('K');  /* RED */
         handler_call_count++;
     }
+#endif
     
     /* In interrupt context, do MINIMAL work:
      * 1. Read scan code from hardware
@@ -143,6 +150,7 @@ static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
     uint8_t scan_code;
     __asm__ volatile ("inb %%dx, %%al" : "=a"(scan_code) : "d"((uint16_t)0x60));
     
+#if KBD_IRQ_VGA_DEBUG
     /* DIAGNOSTIC: Show scan code on VGA (RED) */
     if (handler_call_count < 20) {
         uint32_t pos = 80 * 19 + handler_call_count;
@@ -152,6 +160,7 @@ static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
         vga_debug[pos + 1] = 0x0C00 | (low < 10 ? ('0' + low) : ('A' + low - 10));  /* RED */
         handler_call_count += 2;
     }
+#endif
     
     /* Determine if key is pressed or released */
     bool pressed = (scan_code & 0x80) == 0;
@@ -177,10 +186,12 @@ static void __attribute__((unused)) keyboard_irq_handler(int vector, void *arg)
     }
     /* If queue is full, scan code is lost (better than deadlock) */
     
+#if KBD_IRQ_VGA_DEBUG
     /* DIAGNOSTIC: Mark handler exit (RED) */
     if (handler_call_count < 20) {
         vga_debug[80 * 19 + handler_call_count - 1] = 0x0C00 | ('X');  /* RED */
     }
+#endif
 }
 
 /* Attach function - register IRQ and publish service */
@@ -188,7 +199,6 @@ static int hid_kbd_attach(fabric_device_t *dev)
 {
     (void)dev;
     
-    extern void kprintf(const char* fmt, ...);
     kputs("[HID-KBD] Attaching keyboard driver\n");
     
     /* Initialize lock-free queue */
@@ -242,12 +252,28 @@ static int hid_kbd_attach(fabric_device_t *dev)
         }
     }
     
-    /* ВРЕМЕННО: не регистрируем IRQ и не включаем IRQ1.
-     * Ввод будет работать через поллинговый fallback в InputCore,
-     * который сам читает порты 0x64/0x60 и вызывает input_push_scancode().
-     */
-    kputs("[HID-KBD] NOTE: Skipping IRQ registration; using polling fallback in InputCore\n");
-    kputs("[HID-KBD] Keyboard driver attached successfully (polling mode)\n");
+    /* Register IRQ1 through Fabric and enable it if possible */
+    int irq_vector = 32 + 1; /* IRQ1 -> vector 33 */
+    if (fabric_request_irq(irq_vector, keyboard_irq_handler, NULL) != 0) {
+        kputs("[HID-KBD] WARNING: IRQ1 registration failed; keeping polling fallback\n");
+        input_set_polling_enabled(true);
+    } else {
+        if (apic_is_available()) {
+            if (ioapic_is_available()) {
+                kputs("[HID-KBD] IRQ1 routed via IOAPIC\n");
+                apic_enable_irq(1);
+            } else {
+                kputs("[HID-KBD] IRQ1 routed via PIC (LAPIC EOI)\n");
+                pic_enable_irq(1);
+            }
+        } else {
+            kputs("[HID-KBD] IRQ1 routed via PIC\n");
+            pic_enable_irq(1);
+        }
+        input_set_polling_enabled(false);
+        kputs("[HID-KBD] IRQ1 enabled via Fabric\n");
+    }
+    kputs("[HID-KBD] Keyboard driver attached successfully\n");
     
     /* Temporarily disable interrupts during initialization to avoid interference */
     __asm__ volatile ("cli"); /* Disable interrupts */
@@ -278,58 +304,71 @@ static int hid_kbd_attach(fabric_device_t *dev)
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Keyboard service initialized\n");
     
-    /* Re-enable interrupts (but keyboard IRQ is still disabled) */
+    /* Re-enable interrupts */
     kputs("[HID-KBD] Re-enabling interrupts (sti)...\n");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier before sti */
     
+#if KBD_IRQ_VGA_DEBUG
     /* DIAGNOSTIC: Mark before sti on VGA (bottom of screen, RED) */
     static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
     vga_debug[80 * 23] = 0x0C00 | ('S');  /* RED */
     vga_debug[80 * 23 + 1] = 0x0C00 | ('T');  /* RED */
     vga_debug[80 * 23 + 2] = 0x0C00 | ('I');  /* RED */
+#endif
     
     __asm__ volatile ("sti"); /* Enable interrupts */
     __asm__ volatile ("" ::: "memory"); /* Memory barrier after sti */
     
+#if KBD_IRQ_VGA_DEBUG
     /* DIAGNOSTIC: Mark after sti on VGA - CRITICAL: This must appear! (RED) */
     vga_debug[80 * 18] = 0x0C00 | ('A');  /* RED - After sti */
     vga_debug[80 * 18 + 1] = 0x0C00 | ('F');  /* RED - After sti */
     vga_debug[80 * 23 + 3] = 0x0C00 | ('D');  /* RED */
     vga_debug[80 * 23 + 4] = 0x0C00 | ('1');  /* RED */
+#endif
     
-    kputs("[HID-KBD] Interrupts re-enabled (keyboard IRQ still disabled)\n");
+    kputs("[HID-KBD] Interrupts re-enabled\n");
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 2] = 0x0C00 | ('2');  /* RED */
+#endif
     
     /* Small delay */
     for (volatile int i = 0; i < 10000; i++) {
         __asm__ volatile ("pause");
     }
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 3] = 0x0C00 | ('3');  /* RED */
-    
-    /* ВРЕМЕННО: полностью отключаем включение IRQ1 клавиатуры.
-     * Всё ниже будет включено, когда IRQ-путь станет стабильным.
-     */
-    kputs("[HID-KBD] NOTE: Keyboard IRQ1 is DISABLED (polling mode only)\n");
+#endif
     
     /* Small delay to allow any pending interrupts to be processed */
     for (volatile int i = 0; i < 5000; i++) {
         __asm__ volatile ("pause");
     }
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 6] = 0x0C00 | ('D');  /* RED - Delay done */
+#endif
     
     /* Publish keyboard service */
     kputs("[HID-KBD] Publishing keyboard service...\n");
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 6] = 0x0C00 | ('P');  /* RED - Publishing */
+#endif
     if (fabric_service_publish(&keyboard_service) != 0) {
         kputs("[HID-KBD] ERROR: Failed to publish keyboard service\n");
+#if KBD_IRQ_VGA_DEBUG
         vga_debug[80 * 18 + 7] = 0x0C00 | ('E');  /* RED - Error */
+#endif
         return -1;
     }
     kputs("[HID-KBD] Keyboard service published successfully\n");
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 7] = 0x0C00 | ('O');  /* RED - OK */
+#endif
     
     kputs("[HID-KBD] hid_kbd_attach() returning 0\n");
+#if KBD_IRQ_VGA_DEBUG
     vga_debug[80 * 18 + 8] = 0x0C00 | ('R');  /* RED - Return */
+#endif
     return 0;
 }
 
@@ -337,7 +376,20 @@ static int hid_kbd_attach(fabric_device_t *dev)
 static void hid_kbd_detach(fabric_device_t *dev)
 {
     (void)dev;
-    /* TODO: Unregister IRQ and service */
+    int irq_vector = 32 + 1; /* IRQ1 -> vector 33 */
+    fabric_free_irq(irq_vector, keyboard_irq_handler);
+
+    if (apic_is_available()) {
+        if (ioapic_is_available()) {
+            apic_disable_irq(1);
+        } else {
+            pic_disable_irq(1);
+        }
+    } else {
+        pic_disable_irq(1);
+    }
+
+    input_set_polling_enabled(true);
 }
 
 /* HID Keyboard driver */

@@ -13,7 +13,12 @@ int paging_init(void);
 
 /* Map pages */
 int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
 int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_bootstrap_physmap(uint64_t max_phys);
 
 /* Unmap page */
 int paging_unmap_page(uint64_t virt);
@@ -34,4 +39,3 @@ uint64_t paging_get_physical(uint64_t virt);
 #define PTE_NX          0x8000000000000000ULL
 
 #endif /* _RODNIX_ARCH_X86_64_PAGING_H */
-

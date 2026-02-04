@@ -32,4 +32,6 @@ size_t input_read_line(char *buf, size_t n); /* blocking line read */
 /* Process queued scan codes from interrupt handler */
 void input_process_queue(void);
 
+/* Control PS/2 polling fallback */
+void input_set_polling_enabled(bool enabled);
 

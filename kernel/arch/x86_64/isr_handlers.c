@@ -64,6 +64,30 @@ static void serial_write_hex64(uint64_t value)
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
 
+static void irq_send_eoi(uint32_t irq)
+{
+    /* EOI logic:
+     * - If I/O APIC is available: use only LAPIC EOI (I/O APIC routes to LAPIC)
+     * - If LAPIC is available but I/O APIC not: use both PIC and LAPIC EOI
+     *   (PIC routes interrupt, but LAPIC is active, so need both)
+     * - If no APIC: use only PIC EOI
+     */
+    extern bool ioapic_is_available(void);
+    if (apic_is_available()) {
+        if (ioapic_is_available()) {
+            /* I/O APIC available - use only LAPIC EOI */
+            apic_send_eoi();
+        } else {
+            /* LAPIC available but I/O APIC not - use both PIC and LAPIC EOI */
+            pic_send_eoi(irq);
+            apic_send_eoi();
+        }
+    } else {
+        /* No APIC - use only PIC EOI */
+        pic_send_eoi(irq);
+    }
+}
+
 /* Register structure (matches current assembly push order in isr_stubs.S)
  *
  * Stack layout on entry to isr_common_stub/irq_common_stub (top -> bottom):
@@ -238,7 +262,7 @@ static void interrupt_dispatch(struct registers* regs)
         /* Validate IRQ number */
         if (irq > 15) {
             /* Invalid IRQ - send EOI and return silently */
-            pic_send_eoi(irq);
+            irq_send_eoi(irq);
             return;
         }
         
@@ -258,27 +282,7 @@ static void interrupt_dispatch(struct registers* regs)
             pic_disable_irq(irq);
         }
         
-        /* EOI logic:
-         * - If I/O APIC is available: use only LAPIC EOI (I/O APIC routes to LAPIC)
-         * - If LAPIC is available but I/O APIC not: use both PIC and LAPIC EOI
-         *   (PIC routes to CPU, but LAPIC is active, so need both)
-         * - If no APIC: use only PIC EOI
-         */
-        extern bool ioapic_is_available(void);
-        if (apic_is_available()) {
-            if (ioapic_is_available()) {
-                /* I/O APIC available - use only LAPIC EOI */
-                apic_send_eoi();
-            } else {
-                /* LAPIC available but I/O APIC not - use both PIC and LAPIC EOI */
-                /* PIC routes interrupt, but LAPIC is active, so need both */
-                pic_send_eoi(irq);
-                apic_send_eoi();
-            }
-        } else {
-            /* No APIC - use only PIC EOI */
-            pic_send_eoi(irq);
-        }
+        irq_send_eoi(irq);
         return;
     }
     
