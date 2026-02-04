@@ -10,6 +10,9 @@
 
 /* Initialize PMM */
 int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt);
+int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
+                       void* bitmap_virt, uint64_t bitmap_phys,
+                       const void* mmap_tag, uint32_t mmap_size, uint32_t entry_size);
 
 /* Allocate/free pages */
 uint64_t pmm_alloc_page(void);
@@ -23,4 +26,3 @@ uint64_t pmm_get_free_pages(void);
 uint64_t pmm_get_used_pages(void);
 
 #endif /* _RODNIX_ARCH_X86_64_PMM_H */
-

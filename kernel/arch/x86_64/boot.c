@@ -102,6 +102,11 @@ static void mb2_parse_mmap(const struct multiboot2_tag_mmap* tag)
     if (tag->entry_size == 0 || tag->size < sizeof(struct multiboot2_tag_mmap)) {
         return;
     }
+    /* Cache MMAP tag info for later PMM initialization */
+    boot_info_storage.mmap_addr = (void*)tag;
+    boot_info_storage.mmap_size = tag->size;
+    boot_info_storage.mmap_entry_size = tag->entry_size;
+
     uint64_t max_addr = 0;
     uint64_t total_usable = 0;
 
@@ -171,6 +176,11 @@ int boot_early_init(boot_info_t* info)
     __asm__ volatile ("" ::: "memory");
     
     boot_info_storage.flags = info->flags;
+    __asm__ volatile ("" ::: "memory");
+
+    boot_info_storage.mmap_addr = NULL;
+    boot_info_storage.mmap_size = 0;
+    boot_info_storage.mmap_entry_size = 0;
     __asm__ volatile ("" ::: "memory");
     
     /* Initialize cmdline buffer to empty string (fixed buffer) */

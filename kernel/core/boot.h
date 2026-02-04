@@ -27,6 +27,9 @@ typedef struct {
     uint64_t mem_upper;        /* Верхняя граница памяти */
     char cmdline[BOOT_LINE_LENGTH];  /* Command line (XNU-style: fixed buffer) */
     uint32_t flags;           /* Флаги загрузки */
+    void* mmap_addr;          /* Multiboot2 memory map tag address */
+    uint32_t mmap_size;       /* Multiboot2 memory map tag size */
+    uint32_t mmap_entry_size; /* Multiboot2 memory map entry size */
 } boot_info_t;
 
 /* ============================================================================
@@ -81,4 +84,3 @@ int boot_interrupts_init(void);
 boot_info_t* boot_get_info(void);
 
 #endif /* _RODNIX_CORE_BOOT_H */
-

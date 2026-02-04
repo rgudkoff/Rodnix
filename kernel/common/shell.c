@@ -14,6 +14,7 @@
 
 #include "shell.h"
 #include "../input/input.h"
+#include "../core/boot.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
@@ -27,7 +28,7 @@
 
 #define SHELL_MAX_LINE_LENGTH  256
 #define SHELL_MAX_ARGS         16
-#define SHELL_PROMPT           "rodnix> "
+#define SHELL_PROMPT           "  rodnix> "
 
 /* ============================================================================
  * Shell State
@@ -133,15 +134,25 @@ static int shell_cmd_memory(int argc, char** argv)
     extern uint64_t pmm_get_total_pages(void);
     extern uint64_t pmm_get_free_pages(void);
     extern uint64_t pmm_get_used_pages(void);
+    extern boot_info_t* boot_get_info(void);
     
     uint64_t total = pmm_get_total_pages();
     uint64_t free = pmm_get_free_pages();
     uint64_t used = pmm_get_used_pages();
+    boot_info_t* bi = boot_get_info();
     
     kprintf("Physical Memory:\n");
     kprintf("  Total: %llu pages (%llu KB)\n", total, (total * 4));
     kprintf("  Free:  %llu pages (%llu KB)\n", free, (free * 4));
     kprintf("  Used:  %llu pages (%llu KB)\n", used, (used * 4));
+    if (bi) {
+        kprintf("Boot Memory Info:\n");
+        kprintf("  Usable (MB2): %llu KB\n", (unsigned long long)(bi->mem_lower / 1024ULL));
+        kprintf("  Max Address:  %llu KB\n", (unsigned long long)(bi->mem_upper / 1024ULL));
+        kprintf("  MMAP Tag:     %p\n", bi->mmap_addr);
+        kprintf("  MMAP Size:    %u bytes\n", bi->mmap_size);
+        kprintf("  Entry Size:   %u bytes\n", bi->mmap_entry_size);
+    }
     kputs("\n");
     
     return 0;
@@ -394,4 +405,3 @@ void shell_stop(void)
 {
     shell_state.running = false;
 }
-

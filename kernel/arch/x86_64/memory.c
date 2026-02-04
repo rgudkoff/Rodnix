@@ -52,6 +52,9 @@ static void vmm_free_page_impl(void* virt) {
 int memory_init(void)
 {
     extern int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt);
+    extern int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
+                                  void* bitmap_virt, uint64_t bitmap_phys,
+                                  const void* mmap_tag, uint32_t mmap_size, uint32_t entry_size);
     extern int paging_init(void);
     extern void kputs(const char* str);
     extern boot_info_t* boot_get_info(void);
@@ -93,10 +96,27 @@ int memory_init(void)
     kputs("[MEM-5] Call pmm_init\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize PMM */
-    if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
+    if (bi && bi->mmap_addr && bi->mmap_size && bi->mmap_entry_size) {
+        if (pmm_init_from_mmap(PMM_MEMORY_START, mem_end, bitmap_virt,
+                               PMM_BITMAP_PHYS_ADDR, bi->mmap_addr,
+                               bi->mmap_size, bi->mmap_entry_size) != 0) {
+            kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
+            return -1;
+        }
+    } else if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
         kputs("[MEM-ERR] pmm_init failed\n");
         return -1;
     }
+
+    /* Log PMM summary */
+    extern uint64_t pmm_get_total_pages(void);
+    extern uint64_t pmm_get_free_pages(void);
+    extern uint64_t pmm_get_used_pages(void);
+    extern void kprintf(const char* fmt, ...);
+    kprintf("[MEM] PMM total=%llu free=%llu used=%llu pages\n",
+            (unsigned long long)pmm_get_total_pages(),
+            (unsigned long long)pmm_get_free_pages(),
+            (unsigned long long)pmm_get_used_pages());
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-OK] Done\n");
