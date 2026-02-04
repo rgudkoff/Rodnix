@@ -200,6 +200,34 @@ static inline pmm_zone_t pmm_zone_for_addr(uint64_t addr)
     return PMM_ZONE_NORMAL;
 }
 
+static void pmm_mark_range_mmio(uint64_t start, uint64_t end)
+{
+    if (pmm_state.pages_count == 0) {
+        return;
+    }
+    if (end <= start) {
+        return;
+    }
+    if (end <= pmm_state.memory_start || start >= pmm_state.memory_end) {
+        return;
+    }
+    if (start < pmm_state.memory_start) {
+        start = pmm_state.memory_start;
+    }
+    if (end > pmm_state.memory_end) {
+        end = pmm_state.memory_end;
+    }
+    start = start & ~(PAGE_SIZE - 1);
+    end = (end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
+        uint64_t index = pmm_page_to_index(addr);
+        if (index < pmm_state.pages_count) {
+            pmm_state.pages[index].zone = (uint8_t)PMM_ZONE_MMIO;
+        }
+    }
+}
+
 static void pmm_freelist_clear(void)
 {
     for (int z = 0; z < PMM_ZONE_COUNT; z++) {
@@ -553,7 +581,7 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     pmm_state.memory_end = memory_end;
     __asm__ volatile ("" ::: "memory");
 
-    for (int z = 0; z < 1; z++) {
+    for (int z = 0; z < PMM_ZONE_COUNT; z++) {
         pmm_state.zones[z].total_pages = 0;
         pmm_state.zones[z].free_pages = 0;
         pmm_state.zones[z].used_pages = 0;
@@ -656,14 +684,6 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         pmm_state.zones[z].used_pages = 0;
     }
     pmm_setup_page_descs(memory_start, memory_end, bitmap_phys, bitmap_size);
-    if (pmm_state.pages_count > 0) {
-        for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
-            pmm_state.pages[i].state = PMM_PAGE_USED;
-            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
-            pmm_state.zones[zone].total_pages++;
-            pmm_state.zones[zone].used_pages++;
-        }
-    }
 
     const uint8_t* base = (const uint8_t*)mmap_tag;
     uint32_t offset = sizeof(uint32_t) * 4; /* type, size, entry_size, entry_version */
@@ -676,8 +696,31 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         max_entries = 4096;
     }
 
+    if (pmm_state.pages_count > 0) {
+        uint32_t mmio_off = offset;
+        for (uint32_t i = 0; i < max_entries; i++) {
+            const struct mb2_mmap_entry* e = (const struct mb2_mmap_entry*)(base + mmio_off);
+            if (e->type != MB2_MMAP_AVAILABLE) {
+                uint64_t addr = e->addr;
+                uint64_t len = e->len;
+                if (len != 0 && addr + len >= addr) {
+                    pmm_mark_range_mmio(addr, addr + len);
+                }
+            }
+            mmio_off += entry_size;
+        }
+
+        for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
+            pmm_state.pages[i].state = PMM_PAGE_USED;
+            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
+            pmm_state.zones[zone].total_pages++;
+            pmm_state.zones[zone].used_pages++;
+        }
+    }
+
+    uint32_t free_off = offset;
     for (uint32_t i = 0; i < max_entries; i++) {
-        const struct mb2_mmap_entry* e = (const struct mb2_mmap_entry*)(base + offset);
+        const struct mb2_mmap_entry* e = (const struct mb2_mmap_entry*)(base + free_off);
         if (e->type == MB2_MMAP_AVAILABLE) {
             uint64_t addr = e->addr;
             uint64_t len = e->len;
@@ -685,7 +728,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
                 pmm_mark_range_free(addr, addr + len);
             }
         }
-        offset += entry_size;
+        free_off += entry_size;
     }
 
     /* Keep bitmap and descriptors reserved */
