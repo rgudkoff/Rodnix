@@ -172,16 +172,8 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 8: Initialize device manager */
-    kputs("[INIT-8] Device manager\n");
-    __asm__ volatile ("" ::: "memory");
-    if (device_manager_init() != 0) {
-        panic("Device manager init failed");
-    }
-    __asm__ volatile ("" ::: "memory");
-    
-    /* Step 9: Initialize Fabric */
-    kputs("[INIT-9] Fabric\n");
+    /* Step 8: Initialize Fabric */
+    kputs("[INIT-8] Fabric\n");
     __asm__ volatile ("" ::: "memory");
     extern void fabric_init(void);
     extern void virt_bus_init(void);
@@ -190,34 +182,34 @@ void kmain(uint32_t magic, void* mbi)
     extern void hid_kbd_init(void);
     
     fabric_init();
-    kputs("[INIT-9.1] Fabric initialized\n");
+    kputs("[INIT-8.1] Fabric initialized\n");
     __asm__ volatile ("" ::: "memory");
     
     virt_bus_init();
-    kputs("[INIT-9.2] Virt bus initialized\n");
+    kputs("[INIT-8.2] Virt bus initialized\n");
     __asm__ volatile ("" ::: "memory");
     
     pci_bus_init();
-    kputs("[INIT-9.3] PCI bus initialized\n");
+    kputs("[INIT-8.3] PCI bus initialized\n");
     __asm__ volatile ("" ::: "memory");
     
     ps2_bus_init();  /* PS/2 bus for keyboard */
-    kputs("[INIT-9.4] PS/2 bus initialized\n");
+    kputs("[INIT-8.4] PS/2 bus initialized\n");
     __asm__ volatile ("" ::: "memory");
     
     hid_kbd_init();  /* HID keyboard driver */
-    kputs("[INIT-9.5] HID keyboard driver initialized\n");
+    kputs("[INIT-8.5] HID keyboard driver initialized\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INIT-9-OK] Fabric initialization complete\n");
+    kputs("[INIT-8-OK] Fabric initialization complete\n");
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 10: Enable interrupts (set IRQL to PASSIVE) */
-    kputs("[INIT-10] Enable interrupts\n");
+    /* Step 9: Enable interrupts (set IRQL to PASSIVE) */
+    kputs("[INIT-9] Enable interrupts\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Temporarily disable timer to avoid immediate interrupt on sti */
-    kputs("[INIT-10.1] Disable timer\n");
+    kputs("[INIT-9.1] Disable timer\n");
     __asm__ volatile ("" ::: "memory");
     extern bool apic_is_available(void);
     extern void apic_timer_stop(void);
@@ -230,20 +222,20 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     
     /* Set IRQL to PASSIVE */
-    kputs("[INIT-10.2] Set IRQL\n");
+    kputs("[INIT-9.2] Set IRQL\n");
     __asm__ volatile ("" ::: "memory");
     extern volatile irql_t current_irql;
     current_irql = IRQL_PASSIVE;
     __asm__ volatile ("" ::: "memory");
     
     /* Enable interrupts */
-    kputs("[INIT-10.3] Execute sti\n");
+    kputs("[INIT-9.3] Execute sti\n");
     __asm__ volatile ("" ::: "memory");
     __asm__ volatile ("sti");
     __asm__ volatile ("" ::: "memory");
     
     /* Re-enable timer after interrupts are enabled */
-    kputs("[INIT-10.4] Enable timer\n");
+    kputs("[INIT-9.4] Enable timer\n");
     __asm__ volatile ("" ::: "memory");
     extern bool apic_is_available(void);
     extern void apic_timer_start(void);
@@ -256,18 +248,18 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     
     /* Small delay to allow any pending interrupts to be processed */
-    kputs("[INIT-10.5] Delay after PIT enable\n");
+    kputs("[INIT-9.5] Delay after PIT enable\n");
     __asm__ volatile ("" ::: "memory");
     for (volatile int i = 0; i < 10000; i++) {
         __asm__ volatile ("pause");
     }
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INIT-10-OK] Interrupts enabled\n");
+    kputs("[INIT-9-OK] Interrupts enabled\n");
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 11: Initialize shell */
-    kputs("[INIT-11] Shell\n");
+    /* Step 10: Initialize shell */
+    kputs("[INIT-10] Shell\n");
     __asm__ volatile ("" ::: "memory");
     extern int shell_init(void);
     extern void shell_run(void);
@@ -279,16 +271,16 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-OK] Kernel ready\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INIT-12] Starting shell...\n");
+    kputs("[INIT-11] Starting shell...\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INIT-12.1] About to call shell_run()\n");
+    kputs("[INIT-11.1] About to call shell_run()\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Run shell (blocks) */
     shell_run();
     
-    kputs("[INIT-12.2] shell_run() returned (should not happen)\n");
+    kputs("[INIT-11.2] shell_run() returned (should not happen)\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Should never reach here */

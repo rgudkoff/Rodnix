@@ -23,7 +23,5 @@
 /* Common components */
 #include "../kernel/common/scheduler.h"
 #include "../kernel/common/ipc.h"
-#include "../kernel/common/device.h"
 
 #endif /* _RODNIX_KERNEL_H */
-

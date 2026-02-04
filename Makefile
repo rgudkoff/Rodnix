@@ -38,14 +38,12 @@ KERNEL_C_SRCS = \
 	kernel/main.c \
 	kernel/common/scheduler.c \
 	kernel/common/ipc.c \
-	kernel/common/device.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \
 	kernel/common/string.c \
 	kernel/common/shell.c \
 	kernel/arch/x86_64/interrupts.c \
-	kernel/arch/x86_64/interrupts_stub.c \
 	kernel/arch/x86_64/idt.c \
 	kernel/arch/x86_64/pic.c \
 	kernel/arch/x86_64/apic.c \
@@ -54,7 +52,6 @@ KERNEL_C_SRCS = \
 	kernel/arch/x86_64/pmm.c \
 	kernel/arch/x86_64/paging.c \
 	kernel/arch/x86_64/pit.c \
-	kernel/arch/x86_64/keyboard.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
 	kernel/fabric/fabric.c \

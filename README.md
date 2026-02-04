@@ -69,6 +69,15 @@ Detailed design notes:
 - `ARCHITECTURE.md`
 - `64BIT_MIGRATION.md`
 
+## Transition To Fabric (Facts Only)
+
+1. Device/bus/driver/service routing is implemented in `kernel/fabric/`.
+2. Fabric is initialized in `kernel/main.c` before the shell starts.
+3. Fabric buses currently registered: virtual bus, PCI, and PS/2 (`kernel/fabric/bus/`).
+4. The HID keyboard driver is a Fabric driver and publishes a `keyboard` service (`drivers/fabric/hid/`).
+5. Legacy device manager (`kernel/common/device.*`) was removed in favor of Fabric.
+6. The old arch-specific PS/2 keyboard driver (`kernel/arch/x86_64/keyboard.*`) was removed; input now flows through InputCore and the Fabric HID driver.
+
 ---
 
 ## Build requirements
@@ -161,6 +170,10 @@ Avoid introducing unnecessary abstractions
 Large changes should be discussed before implementation
 
 Final design decisions remain with the project maintainer.
+
+Guardrails
+
+Run `scripts/check_parallel_subsystems.sh` to prevent reintroducing legacy parallel subsystems (device manager, arch keyboard driver, interrupt stub).
 
 License
 
