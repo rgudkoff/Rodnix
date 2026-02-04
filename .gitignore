@@ -70,3 +70,4 @@ Cargo.lock
 # Test artifacts
 *.test
 test_results/
+.DS_Store
