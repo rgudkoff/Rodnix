@@ -183,7 +183,7 @@ static uint64_t find_ioapic_from_madt(void)
             sig[3] == ' ' && sig[4] == 'P' && sig[5] == 'T' && 
             sig[6] == 'R' && sig[7] == ' ') {
             rsdp_addr = addr;
-            kprintf("[MADT-1.1] Found RSDP at 0x%llX\n", (unsigned long long)addr);
+            kprintf("[MADT-1.1] Found RSDP at %llX\n", (unsigned long long)addr);
             break;
         }
     }
@@ -216,7 +216,7 @@ static uint64_t find_ioapic_from_madt(void)
         return 0;
     }
     
-    kprintf("[MADT-2] RSDT/XSDT at 0x%llX, searching for MADT...\n", 
+    kprintf("[MADT-2] RSDT/XSDT at %llX, searching for MADT...\n", 
             (unsigned long long)table_addr);
     __asm__ volatile ("" ::: "memory");
     
@@ -245,7 +245,7 @@ static uint64_t find_ioapic_from_madt(void)
         uint32_t* entry_sig = (uint32_t*)entry_addr;
         if (entry_sig[0] == 0x43495041) {  /* "APIC" in little-endian */
             madt_addr = entry_addr;
-            kprintf("[MADT-2.2] Found MADT at 0x%llX\n", (unsigned long long)entry_addr);
+            kprintf("[MADT-2.2] Found MADT at %llX\n", (unsigned long long)entry_addr);
             break;
         }
     }
@@ -270,7 +270,7 @@ static uint64_t find_ioapic_from_madt(void)
         if (entry->type == 1) {  /* I/O APIC entry */
             struct madt_ioapic* ioapic_entry = (struct madt_ioapic*)entry;
             uint64_t ioapic_addr = (uint64_t)ioapic_entry->ioapic_addr;
-            kprintf("[MADT-3.1] Found I/O APIC entry: ID=0x%02X, addr=0x%llX, GSI_base=%u\n",
+            kprintf("[MADT-3.1] Found I/O APIC entry: ID=%x, addr=%llX, GSI_base=%u\n",
                     ioapic_entry->ioapic_id, 
                     (unsigned long long)ioapic_addr,
                     ioapic_entry->gsi_base);
@@ -595,7 +595,7 @@ int apic_init(void)
     uint64_t ioapic_addr = find_ioapic_from_madt();
     if (ioapic_addr != 0) {
         ioapic_base_addr = ioapic_addr;
-        kprintf("[APIC-11.0.1] Found I/O APIC at 0x%llX (from MADT)\n", 
+        kprintf("[APIC-11.0.1] Found I/O APIC at %llX (from MADT)\n", 
                 (unsigned long long)ioapic_addr);
     } else {
         kputs("[APIC-11.0.2] I/O APIC not found in MADT, using default 0xFEC00000\n");
@@ -670,61 +670,6 @@ void apic_send_eoi(void)
  * I/O APIC Helper Functions
  * ============================================================================ */
 
-/* Вспомогательный вывод 8 hex-цифр на VGA (одна строка, красный текст) */
-static void ioapic_vga_print_hex8(uint8_t row, uint8_t start_col, uint32_t value, uint16_t attr)
-{
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-    static const char* hex = "0123456789ABCDEF";
-
-    for (int i = 7; i >= 0; i--) {
-        uint8_t nibble = (value >> (i * 4)) & 0xF;
-        uint8_t col = start_col + (7 - i);
-        if (col >= 80) break;
-        vga[row * 80 + col] = (uint16_t)hex[nibble] | attr;
-    }
-}
-
-/* Минимальный VGA-логгер состояния I/O APIC (нижняя строка экрана, КРАСНЫЙ).
- * Печатает ОДНУ стабильную строку вида:
- *   IOAPIC ID=XXXXXXXX VER=XXXXXXXX
- * и затирает предыдущий мусор на этой строке.
- */
-static void ioapic_vga_state(uint32_t id_reg, uint32_t ver)
-{
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-    const uint8_t row = 24; /* последняя строка (0-based) */
-    const uint16_t attr = 0x0C00; /* красный на чёрном */
-
-    /* Очистить всю строку */
-    for (uint8_t c = 0; c < 80; c++) {
-        vga[row * 80 + c] = (uint16_t)(' ') | attr;
-    }
-
-    /* Текст: "IOAPIC ID=" */
-    const char* prefix = "IOAPIC ID=";
-    uint8_t col = 0;
-    while (*prefix && col < 80) {
-        vga[row * 80 + col] = (uint16_t)(*prefix) | attr;
-        prefix++;
-        col++;
-    }
-
-    /* ID */
-    ioapic_vga_print_hex8(row, col, id_reg, attr);
-    col += 8;
-
-    /* Разделитель и " VER=" */
-    const char* mid = " VER=";
-    while (*mid && col < 80) {
-        vga[row * 80 + col] = (uint16_t)(*mid) | attr;
-        mid++;
-        col++;
-    }
-
-    /* VER */
-    ioapic_vga_print_hex8(row, col, ver, attr);
-}
-
 /**
  * @function ioapic_read_register
  * @brief Read I/O APIC register
@@ -795,7 +740,7 @@ int ioapic_init(void)
     uint64_t ioapic_virt = ioapic_phys; /* Identity mapping */
     uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
     
-    kprintf("[IOAPIC-1.1] Attempting to map I/O APIC at phys=0x%llX, virt=0x%llX\n", 
+    kprintf("[IOAPIC-1.1] Attempting to map I/O APIC at phys=%llX, virt=%llX\n", 
             (unsigned long long)ioapic_phys, (unsigned long long)ioapic_virt);
     __asm__ volatile ("" ::: "memory");
     
@@ -826,7 +771,7 @@ int ioapic_init(void)
     id_reg = ioapic_read_register(IOAPIC_ID);
     __asm__ volatile ("" ::: "memory");
     
-    kprintf("[IOAPIC-2.1] I/O APIC ID register value: 0x%08X\n", id_reg);
+    kprintf("[IOAPIC-2.1] I/O APIC ID register value: %x\n", id_reg);
     __asm__ volatile ("" ::: "memory");
     
     /* Check if ID register is readable (should not be all 0xFF or 0x00) */
@@ -838,7 +783,7 @@ int ioapic_init(void)
     }
     
     ioapic_id = (uint8_t)((id_reg >> 24) & 0xFF);
-    kprintf("[IOAPIC-2.4] I/O APIC ID extracted: 0x%02X\n", ioapic_id);
+    kprintf("[IOAPIC-2.4] I/O APIC ID extracted: %x\n", ioapic_id);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[IOAPIC-3] Reading I/O APIC Version register\n");
@@ -849,11 +794,10 @@ int ioapic_init(void)
     ver = ioapic_read_register(IOAPIC_VER);
     __asm__ volatile ("" ::: "memory");
     
-    kprintf("[IOAPIC-3.1] I/O APIC Version register value: 0x%08X\n", ver);
+    kprintf("[IOAPIC-3.1] I/O APIC Version register value: %x\n", ver);
     __asm__ volatile ("" ::: "memory");
 
     /* Зафиксировать на экране текущее состояние ID/VER (даже если они «битые») */
-    ioapic_vga_state(id_reg, ver);
     
     /* Check if Version register is readable */
     if (ver == 0xFFFFFFFF) {
@@ -879,8 +823,8 @@ int ioapic_init(void)
     
     kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
     __asm__ volatile ("" ::: "memory");
-    kprintf("[IOAPIC-4.1] ID=0x%02X\n", ioapic_id);
-    kprintf("[IOAPIC-4.2] Version=0x%02X\n", ioapic_version);
+    kprintf("[IOAPIC-4.1] ID=%x\n", ioapic_id);
+    kprintf("[IOAPIC-4.2] Version=%x\n", ioapic_version);
     kprintf("[IOAPIC-4.3] Max Redir Entries=%u\n", ioapic_max_redir);
     __asm__ volatile ("" ::: "memory");
     

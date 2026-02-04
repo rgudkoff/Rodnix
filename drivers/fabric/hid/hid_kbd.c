@@ -71,7 +71,7 @@ static bool hid_kbd_probe(fabric_device_t *dev)
         return false;
     }
     
-    kprintf("[HID-KBD] probe: checking device '%s' (class=0x%02X, subclass=0x%02X)\n",
+    kprintf("[HID-KBD] probe: checking device '%s' (class=%x, subclass=%x)\n",
             dev->name ? dev->name : "(null)", dev->class_code, dev->subclass);
     
     /* Match HID keyboard class (PCI or PS/2) */

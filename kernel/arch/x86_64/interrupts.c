@@ -153,18 +153,10 @@ int interrupts_init(void)
     current_irql = IRQL_PASSIVE;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-3] Try APIC\n");
+    kputs("[INT-3] Skip APIC (forced PIC)\n");
     __asm__ volatile ("" ::: "memory");
-    /* Try APIC first, fallback to PIC */
+    /* Temporary: force PIC to avoid early APIC issues. */
     bool use_apic = false;
-    if (apic_init() == 0 && apic_is_available()) {
-        use_apic = true;
-        kputs("[INT-3.1] APIC available\n");
-        __asm__ volatile ("" ::: "memory");
-    } else {
-        kputs("[INT-3.2] APIC not available, use PIC\n");
-        __asm__ volatile ("" ::: "memory");
-    }
     
     kputs("[INT-4] Init PIC (early, will disable if APIC works)\n");
     __asm__ volatile ("" ::: "memory");

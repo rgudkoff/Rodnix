@@ -69,6 +69,7 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  clear     - Clear the screen\n");
     kputs("  info      - Show system information\n");
     kputs("  memory    - Show memory statistics\n");
+    kputs("  mem       - Alias for memory\n");
     kputs("  timer     - Show timer information\n");
     kputs("  echo      - Echo arguments\n");
     kputs("  exit      - Exit shell (reboot)\n");
@@ -134,12 +135,31 @@ static int shell_cmd_memory(int argc, char** argv)
     extern uint64_t pmm_get_total_pages(void);
     extern uint64_t pmm_get_free_pages(void);
     extern uint64_t pmm_get_used_pages(void);
+    extern int pmm_get_zone_stats(int zone, void* out);
+    extern int pmm_get_free_regions(int zone, void* out, uint32_t max, uint32_t* out_count);
+    extern int pmm_get_usable_regions(void* out, uint32_t max, uint32_t* out_count);
+    extern int pmm_get_reserved_regions(void* out, uint32_t max, uint32_t* out_count);
     extern boot_info_t* boot_get_info(void);
     
     uint64_t total = pmm_get_total_pages();
     uint64_t free = pmm_get_free_pages();
     uint64_t used = pmm_get_used_pages();
     boot_info_t* bi = boot_get_info();
+
+    typedef struct {
+        uint64_t total_pages;
+        uint64_t free_pages;
+        uint64_t used_pages;
+    } pmm_zone_stats_t;
+
+    typedef struct {
+        uint64_t base;
+        uint64_t length;
+    } pmm_region_t;
+
+    enum { PMM_ZONE_LOW = 0, PMM_ZONE_NORMAL = 1, PMM_ZONE_MMIO = 2, PMM_ZONE_COUNT = 3 };
+
+    const char* zone_names[] = { "low", "normal", "mmio" };
     
     kprintf("Physical Memory:\n");
     kprintf("  Total: %llu pages (%llu KB)\n", total, (total * 4));
@@ -152,6 +172,75 @@ static int shell_cmd_memory(int argc, char** argv)
         kprintf("  MMAP Tag:     %p\n", bi->mmap_addr);
         kprintf("  MMAP Size:    %u bytes\n", bi->mmap_size);
         kprintf("  Entry Size:   %u bytes\n", bi->mmap_entry_size);
+    }
+
+    kprintf("Free Ranges:\n");
+    for (int z = 0; z < PMM_ZONE_COUNT; z++) {
+        pmm_zone_stats_t stats;
+        if (pmm_get_zone_stats(z, &stats) != 0) {
+            continue;
+        }
+        kprintf("  Zone %s: total=%llu free=%llu used=%llu pages\n",
+                zone_names[z],
+                (unsigned long long)stats.total_pages,
+                (unsigned long long)stats.free_pages,
+                (unsigned long long)stats.used_pages);
+
+        uint32_t total_ranges = 0;
+        pmm_get_free_regions(z, NULL, 0, &total_ranges);
+        if (total_ranges == 0) {
+            kprintf("    (no free ranges)\n");
+            continue;
+        }
+        uint32_t show = (total_ranges > 8) ? 8 : total_ranges;
+        pmm_region_t regions[8];
+        uint32_t returned = 0;
+        if (pmm_get_free_regions(z, regions, show, &returned) != 0) {
+            continue;
+        }
+        for (uint32_t i = 0; i < returned; i++) {
+            kprintf("    [%u] base=%llx len=%llx\n",
+                    i,
+                    (unsigned long long)regions[i].base,
+                    (unsigned long long)regions[i].length);
+        }
+        if (total_ranges > show) {
+            kprintf("    ... (%u more)\n", (unsigned)(total_ranges - show));
+        }
+    }
+
+    kprintf("Regions:\n");
+    uint32_t usable_total = 0;
+    uint32_t reserved_total = 0;
+    pmm_get_usable_regions(NULL, 0, &usable_total);
+    pmm_get_reserved_regions(NULL, 0, &reserved_total);
+    kprintf("  Usable:   %u\n", (unsigned)usable_total);
+    kprintf("  Reserved: %u\n", (unsigned)reserved_total);
+
+    pmm_region_t regions[6];
+    uint32_t returned = 0;
+    if (usable_total > 0) {
+        if (pmm_get_usable_regions(regions, 5, &returned) == 0) {
+            kprintf("  Usable (first %u):\n", (unsigned)returned);
+            for (uint32_t i = 0; i < returned; i++) {
+                kprintf("    [%u] base=%llx len=%llx\n",
+                        i,
+                        (unsigned long long)regions[i].base,
+                        (unsigned long long)regions[i].length);
+            }
+        }
+    }
+    returned = 0;
+    if (reserved_total > 0) {
+        if (pmm_get_reserved_regions(regions, 5, &returned) == 0) {
+            kprintf("  Reserved (first %u):\n", (unsigned)returned);
+            for (uint32_t i = 0; i < returned; i++) {
+                kprintf("    [%u] base=%llx len=%llx\n",
+                        i,
+                        (unsigned long long)regions[i].base,
+                        (unsigned long long)regions[i].length);
+            }
+        }
     }
     kputs("\n");
     
@@ -258,6 +347,7 @@ static const struct shell_command commands[] = {
     {"clear",   shell_cmd_clear,    "Clear the screen"},
     {"info",    shell_cmd_info,    "Show system information"},
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
+    {"mem",     shell_cmd_memory,  "Alias for memory"},
     {"timer",   shell_cmd_timer,   "Show timer information"},
     {"echo",    shell_cmd_echo,    "Echo arguments"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},

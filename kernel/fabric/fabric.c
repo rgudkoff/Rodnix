@@ -54,18 +54,6 @@ static void fabric_irq_wrapper(interrupt_context_t* ctx)
 {
     int vector = ctx->vector;
     
-    /* DIAGNOSTIC: Simple output to avoid kprintf in IRQ context */
-    /* Use direct VGA output for critical diagnostics (bottom of screen, RED) */
-    static volatile uint16_t* vga_debug = (volatile uint16_t*)0xB8000;
-    static uint32_t debug_pos = 0;
-    
-    /* DIAGNOSTIC: Mark that wrapper was called (RED) */
-    if (debug_pos < 40) {
-        vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('F');  /* RED */
-        vga_debug[80 * 20 + debug_pos + 1] = 0x0C00 | ('0' + (vector % 10));  /* RED */
-        debug_pos += 2;
-    }
-    
     /* Call all registered handlers for this vector */
     /* Avoid any operations that might use FPU */
     /* Use simple integer operations only */
@@ -73,27 +61,13 @@ static void fabric_irq_wrapper(interrupt_context_t* ctx)
     uint32_t handler_count = 0;
     while (i < MAX_IRQ_HANDLERS) {
         if (irq_handlers[i].active && irq_handlers[i].vector == vector) {
-            /* DIAGNOSTIC: Mark before calling handler (RED) */
-            if (debug_pos < 40) {
-                vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('H');  /* RED */
-                debug_pos++;
-            }
             irq_handlers[i].handler(vector, irq_handlers[i].arg);
-            /* DIAGNOSTIC: Mark after calling handler (RED) */
-            if (debug_pos < 40) {
-                vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('D');  /* RED */
-                debug_pos++;
-            }
             handler_count++;
         }
         i++; /* Increment manually to avoid potential FPU usage */
     }
     
-    /* DIAGNOSTIC: Mark wrapper exit (RED) */
-    if (debug_pos < 40) {
-        vga_debug[80 * 20 + debug_pos] = 0x0C00 | ('E');  /* RED */
-        debug_pos++;
-    }
+    (void)handler_count;
 }
 
 /* Initialize Fabric */
@@ -240,7 +214,7 @@ int fabric_device_publish(fabric_device_t *device)
     
     spinlock_unlock(&fabric_lock);
     
-    fabric_log("[fabric] device found: vendor=0x%04x device=0x%04x class=0x%02x\n",
+    fabric_log("[fabric] device found: vendor=%x device=%x class=%x\n",
                device->vendor_id, device->device_id, device->class_code);
     
     /* Try to match with drivers */
@@ -432,4 +406,3 @@ void fabric_log(const char *fmt, ...)
     kvprintf(fmt, args);
     va_end(args);
 }
-

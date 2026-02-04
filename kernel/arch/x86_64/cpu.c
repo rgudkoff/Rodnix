@@ -21,6 +21,18 @@ int cpu_init(void)
     if (initialized) {
         return 0;
     }
+
+    /* Enable SSE/SSE2 for compiler-generated XMM instructions */
+    uint64_t cr0, cr4;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~(1ULL << 2);  /* Clear EM (x87 emulation) */
+    cr0 |= (1ULL << 1);   /* Set MP (monitor co-processor) */
+    __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
+
+    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1ULL << 9);   /* OSFXSR */
+    cr4 |= (1ULL << 10);  /* OSXMMEXCPT */
+    __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
     
     /* Get CPU information via CPUID */
     /* Use memory barriers to ensure proper ordering */
@@ -208,4 +220,3 @@ uint64_t cpu_get_time(void)
     __asm__ volatile ("rdtsc" : "=a"(eax), "=d"(edx));
     return ((uint64_t)edx << 32) | eax;
 }
-

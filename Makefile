@@ -42,6 +42,7 @@ KERNEL_C_SRCS = \
 	kernel/common/debug.c \
 	kernel/common/task.c \
 	kernel/common/string.c \
+	kernel/common/heap.c \
 	kernel/common/shell.c \
 	kernel/arch/x86_64/interrupts.c \
 	kernel/arch/x86_64/idt.c \
