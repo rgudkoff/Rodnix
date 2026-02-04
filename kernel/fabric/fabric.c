@@ -214,7 +214,7 @@ int fabric_device_publish(fabric_device_t *device)
     
     spinlock_unlock(&fabric_lock);
     
-    fabric_log("[fabric] device found: vendor=0x%04x device=0x%04x class=0x%02x\n",
+    fabric_log("[fabric] device found: vendor=%x device=%x class=%x\n",
                device->vendor_id, device->device_id, device->class_code);
     
     /* Try to match with drivers */

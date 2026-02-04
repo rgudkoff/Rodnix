@@ -23,14 +23,23 @@
 
 /* VMM functions - TODO: Implement in separate vmm.c */
 static void* vmm_alloc_page_impl(uint64_t flags) {
-    /* TODO: Implement actual VMM allocation */
+    /* Temporary identity-mapped VMM: return physical address directly. */
     (void)flags;
-    return NULL;
+    extern uint64_t pmm_alloc_page(void);
+    uint64_t phys = pmm_alloc_page();
+    if (!phys) {
+        return NULL;
+    }
+    return (void*)phys;
 }
 
 static void vmm_free_page_impl(void* virt) {
-    /* TODO: Implement actual VMM deallocation */
-    (void)virt;
+    /* Temporary identity-mapped VMM: treat virt as physical. */
+    if (!virt) {
+        return;
+    }
+    extern void pmm_free_page(uint64_t phys);
+    pmm_free_page((uint64_t)virt);
 }
 
 /* ============================================================================

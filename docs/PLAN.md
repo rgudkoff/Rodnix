@@ -14,10 +14,13 @@ Goal: correct memory accounting and a safe allocation baseline.
 2. PMM v2
    - Support regions and holes
    - Track low/normal/MMIO zones
+   - Added free-range lists per zone and zone-aware allocation
+   - Added PMM region snapshot API for VMM
 
 3. VMM baseline
    - Kernel heap (simple allocator)
    - Address space structure for kernel mappings
+   - Temporary identity-mapped vmm_alloc/vmm_free backed by PMM
 
 ## Phase 2: Interrupts and Timers
 
