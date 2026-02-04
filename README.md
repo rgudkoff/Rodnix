@@ -1,7 +1,7 @@
 # RodNIX
 
-RodNIX is an experimental operating system kernel project targeting **x86_64** architecture.  
-The project focuses on clarity, security-oriented design, and gradual evolution toward a modern, modular OS architecture.
+RodNIX is an experimental operating system kernel project targeting **x86_64** architecture today, with placeholders for other 64‑bit ISAs.  
+The project focuses on clarity, security-oriented design, and gradual evolution toward a modern, modular OS architecture (drivers and services layered over a simple hardware fabric).
 
 RodNIX is developed primarily as a learning and research platform, but with engineering discipline and long-term extensibility in mind.
 
@@ -13,6 +13,7 @@ RodNIX is developed primarily as a learning and research platform, but with engi
 - Use **x86_64 as the primary target**, with a Multiboot2 32-bit entry stub
 - Separate **architecture-independent core** from **arch-specific code**
 - Gradually **move drivers out of the kernel** to reduce attack surface
+- Build a **Fabric** layer for buses/devices/drivers/services (driver matching and device lifecycle)
 - Favor **explicit design over hidden magic**
 - Provide a solid foundation for future experimentation (SMP, userspace, microkernel concepts)
 
@@ -22,7 +23,7 @@ RodNIX is developed primarily as a learning and research platform, but with engi
 
 RodNIX is in **early active development**.
 
-Implemented so far:
+Implemented so far (x86_64 focus):
 
 - Multiboot2-compliant boot sequence
 - 32-bit boot stub with transition toward 64-bit long mode
@@ -32,8 +33,11 @@ Implemented so far:
 - PIT timer initialization
 - VGA text-mode console
 - Minimal interactive shell
-- PS/2 keyboard input (scancode → ASCII translation, buffering, modifiers)
-- Early memory and paging groundwork
+- PS/2 keyboard input (polling fallback via InputCore; IRQ path is prepared but not enabled by default)
+- Physical memory manager (bitmap, early fixed map) and paging groundwork (PML4/PDPT/PD/PT)
+- Fabric core: bus/device/driver/service registries and matching
+- Buses: virtual bus, PCI enumeration (minimal), PS/2 bus publishing a keyboard device
+- HID keyboard driver (via Fabric) publishing a "keyboard" service
 - ISO image generation and QEMU support
 
 Expect frequent changes and refactoring.
@@ -45,15 +49,18 @@ Expect frequent changes and refactoring.
 High-level structure:
 
 RodNIX/
-├── boot/ # Early boot code (Multiboot2, 32-bit entry)
+├── boot/        # Early boot code (Multiboot2, 32-bit entry)
 ├── kernel/
-│ ├── common/ # Architecture-independent kernel code
-│ ├── core/ # Core kernel subsystems
-│ └── arch/
-│ └── x86_64/ # x86_64-specific implementation
-├── drivers/ # Early drivers (planned to move out of kernel)
-├── include/ # Public kernel headers
-├── docs/ # Design and migration documents
+│ ├── core/      # Architecture-independent interfaces
+│ ├── common/    # Shared kernel subsystems
+│ ├── arch/
+│ │ └── x86_64/  # x86_64-specific implementation
+│ ├── fabric/    # Bus/device/driver/service framework
+│ ├── input/     # InputCore (scancode → ASCII, buffering)
+│ └── interrupts/# Shared interrupt pieces
+├── drivers/     # Fabric drivers (e.g., HID keyboard)
+├── include/     # Public kernel headers
+├── docs/        # Design and migration documents
 ├── Makefile
 └── link.ld
 
@@ -103,9 +110,13 @@ Cleanup of interrupt and timer subsystems
 
 Improved shell commands
 
+Integrate IRQ-based keyboard path through Fabric (replace polling fallback)
+
 Mid-term
 
 Driver isolation and abstraction layer
+
+Expand Fabric services and consumers (service lookup usage)
 
 Basic VFS and RAM-backed filesystem
 
