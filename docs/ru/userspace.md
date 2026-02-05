@@ -17,6 +17,7 @@
 - В репозитории есть каркас bootstrap‑сервера в `userland/bootstrap/`.
 - Запуск невозможен без loader и полноценного набора syscalls.
 - Сейчас есть только минимальный каркас syscall boundary (0x80) без userland.
+- В ядре зарезервирован bootstrap‑порт (placeholder), протокола нет.
 
 ## Инварианты
 

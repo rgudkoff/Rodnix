@@ -52,11 +52,14 @@ typedef struct port {
  * ============================================================================ */
 
 #define IPC_MSG_MAX_SIZE 4096
+#define IPC_MAX_PORTS_PER_MSG 8
 
 typedef struct {
     uint64_t msg_id;          /* Message identifier */
     uint32_t msg_size;        /* Message size */
-    uint8_t data[IPC_MSG_MAX_SIZE];  /* Message data */
+    uint32_t port_count;      /* Number of ports attached */
+    uint64_t ports[IPC_MAX_PORTS_PER_MSG]; /* Port IDs attached */
+    uint8_t* data;            /* Message data (heap) */
     port_t* reply_port;       /* Reply port (optional) */
 } ipc_message_t;
 
@@ -155,6 +158,18 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout);
 int ipc_send_receive(port_t* port, ipc_message_t* send_msg, 
                      ipc_message_t* reply_msg, uint64_t timeout);
 
+/**
+ * Free message payload after receive
+ * @param message Message to free
+ */
+void ipc_message_free(ipc_message_t* message);
+
+/**
+ * Get bootstrap port (placeholder)
+ * @return Pointer to bootstrap port or NULL
+ */
+port_t* ipc_get_bootstrap_port(void);
+
 /* ============================================================================
  * Port sets
  * ============================================================================ */
@@ -197,4 +212,3 @@ int port_set_remove(port_set_t* set, port_t* port);
 int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout);
 
 #endif /* _RODNIX_COMMON_IPC_H */
-

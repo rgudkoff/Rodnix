@@ -10,6 +10,7 @@
 #include "syscall.h"
 #include "fs/vfs.h"
 #include "net/net.h"
+#include "common/security.h"
 
 static void idle_thread(void* arg)
 {
@@ -232,6 +233,11 @@ void kmain(uint32_t magic, void* mbi)
     kputs("[INIT-8.5] Syscalls\n");
     __asm__ volatile ("" ::: "memory");
     syscall_init();
+    __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT-8.6] Security\n");
+    __asm__ volatile ("" ::: "memory");
+    security_init();
     __asm__ volatile ("" ::: "memory");
     
     /* Step 9: Initialize Fabric */

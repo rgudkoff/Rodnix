@@ -41,6 +41,8 @@ KERNEL_C_SRCS = \
 	kernel/common/scheduler.c \
 	kernel/common/syscall.c \
 	kernel/common/ipc.c \
+	kernel/common/security.c \
+	kernel/posix/posix_syscall.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \

@@ -22,14 +22,51 @@ static scheduler_stats_t stats = {0};
 static thread_t* ready_head[READY_QUEUE_LEVELS] = {0};
 static thread_t* ready_tail[READY_QUEUE_LEVELS] = {0};
 
+/* Dynamic priority tuning (simple, v0) */
+#define BOOST_THRESHOLD_TICKS 5
+#define BOOST_MAX 32
+#define PENALTY_MAX 32
+#define PENALTY_STEP_TICKS 4
+
 static volatile bool in_scheduler = false;
 static uint32_t ticks_until_preempt = 1;
 static uint32_t ticks_per_slice = 1;
 static volatile bool resched_pending = false;
+static uint64_t sched_ticks = 0;
 
 static void ready_enqueue(thread_t* thread);
 static thread_t* ready_dequeue(void);
 static int ready_queue_index_for_thread(const thread_t* thread);
+
+static int clamp_dyn_priority(int value, int base)
+{
+    int min = base - PENALTY_MAX;
+    int max = base + BOOST_MAX;
+    if (value < min) {
+        value = min;
+    }
+    if (value > max) {
+        value = max;
+    }
+    if (value < 0) {
+        value = 0;
+    }
+    if (value > 255) {
+        value = 255;
+    }
+    return value;
+}
+
+static int thread_effective_priority(const thread_t* thread)
+{
+    if (!thread) {
+        return SCHEDULER_DEFAULT_PRIORITY;
+    }
+    if (thread->base_priority == 0 && thread->priority != 0) {
+        return thread->priority;
+    }
+    return (thread->dyn_priority >= 0) ? thread->dyn_priority : 0;
+}
 
 static void scheduler_yield_internal(bool irq_context)
 {
@@ -130,10 +167,11 @@ static int ready_queue_index_for_thread(const thread_t* thread)
     }
 
     /* Priority bands: 0-63 (low), 64-191 (normal), 192-255 (high) */
-    if (thread->priority >= 192) {
+    int prio = thread_effective_priority(thread);
+    if (prio >= 192) {
         return 2;
     }
-    if (thread->priority >= 64) {
+    if (prio >= 64) {
         return 1;
     }
     return 0;
@@ -156,6 +194,7 @@ int scheduler_init(void)
     ticks_per_slice = 1;
     ticks_until_preempt = ticks_per_slice;
     resched_pending = false;
+    sched_ticks = 0;
     stats.running_tasks = 0;
     stats.ready_tasks = 0;
     stats.blocked_tasks = 0;
@@ -221,6 +260,8 @@ int scheduler_add_thread(thread_t* thread)
         DEBUG_WARN("add_thread: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
     }
     thread->state = THREAD_STATE_READY;
+    thread->base_priority = thread->priority;
+    thread->dyn_priority = thread->priority;
     ready_enqueue(thread);
     stats.total_tasks++;
     
@@ -264,6 +305,7 @@ void scheduler_block(void)
         DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)current_thread->thread_id, current_thread->state);
     }
     current_thread->state = THREAD_STATE_BLOCKED;
+    current_thread->last_sleep_tick = sched_ticks;
     stats.blocked_tasks++;
     resched_pending = true;
     in_scheduler = false;
@@ -276,6 +318,16 @@ void scheduler_unblock(thread_t* thread)
     }
     
     if (thread->state == THREAD_STATE_BLOCKED) {
+        uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
+        if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
+            int boost = (int)(sleep_ticks / BOOST_THRESHOLD_TICKS);
+            if (boost > BOOST_MAX) {
+                boost = BOOST_MAX;
+            }
+            int base = thread->base_priority;
+            int dyn = thread->dyn_priority + boost;
+            thread->dyn_priority = clamp_dyn_priority(dyn, base);
+        }
         thread->state = THREAD_STATE_READY;
         if (stats.blocked_tasks > 0) {
             stats.blocked_tasks--;
@@ -303,6 +355,8 @@ void scheduler_set_priority(thread_t* thread, uint8_t priority)
     }
     
     thread_set_priority(thread, priority);
+    thread->base_priority = priority;
+    thread->dyn_priority = priority;
     
     /* TODO: Re-insert thread into appropriate queue based on new priority */
 }
@@ -324,6 +378,17 @@ void scheduler_tick(void)
 {
     if (!scheduler_running) {
         return;
+    }
+
+    sched_ticks++;
+    if (current_thread && current_thread->state == THREAD_STATE_RUNNING) {
+        current_thread->sched_usage = (current_thread->sched_usage * 7) / 8;
+        current_thread->sched_usage++;
+        if ((current_thread->sched_usage % PENALTY_STEP_TICKS) == 0) {
+            int base = current_thread->base_priority;
+            int dyn = current_thread->dyn_priority - 1;
+            current_thread->dyn_priority = clamp_dyn_priority(dyn, base);
+        }
     }
     
     if (ticks_until_preempt > 0) {
@@ -369,6 +434,11 @@ int scheduler_get_stats(scheduler_stats_t* out_stats)
     
     *out_stats = stats;
     return 0;
+}
+
+uint64_t scheduler_get_ticks(void)
+{
+    return sched_ticks;
 }
 
 interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)

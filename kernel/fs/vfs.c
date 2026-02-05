@@ -27,6 +27,16 @@ static vfs_cache_entry_t vfs_cache[VFS_CACHE_SIZE];
 static const void* vfs_initrd_data = NULL;
 static size_t vfs_initrd_size = 0;
 
+static vfs_mount_t* vfs_find_mount_at(const vfs_node_t* node)
+{
+    for (vfs_mount_t* it = vfs_mounts; it; it = it->next) {
+        if (it->mountpoint == node) {
+            return it;
+        }
+    }
+    return NULL;
+}
+
 static void vfs_cache_reset(void)
 {
     vfs_cache_gen++;
@@ -182,6 +192,10 @@ static vfs_node_t* vfs_resolve_parent(const char* path, char* leaf, size_t leaf_
         if (!current || current->type != VFS_NODE_DIR) {
             return NULL;
         }
+        vfs_mount_t* mnt = vfs_find_mount_at(current);
+        if (mnt && mnt->root) {
+            current = mnt->root;
+        }
         p = next;
     }
     return NULL;
@@ -210,6 +224,10 @@ static vfs_node_t* vfs_lookup(const char* path)
         current = vfs_find_child(current, comp);
         if (!current) {
             return NULL;
+        }
+        vfs_mount_t* mnt = vfs_find_mount_at(current);
+        if (mnt && mnt->root) {
+            current = mnt->root;
         }
         p = next;
     }
@@ -276,6 +294,38 @@ static int vfs_mount_root_ramfs(void)
     vfs_mounts = mnt;
     vfs_root_mount = mnt;
     vfs_root = mnt->root;
+    return 0;
+}
+
+int vfs_mount_ramfs(const char* path)
+{
+    if (!vfs_ready || !path) {
+        return -1;
+    }
+
+    vfs_node_t* mountpoint = vfs_lookup(path);
+    if (!mountpoint || mountpoint->type != VFS_NODE_DIR) {
+        return -1;
+    }
+    if (vfs_find_mount_at(mountpoint)) {
+        return -1;
+    }
+
+    vfs_mount_t* mnt = (vfs_mount_t*)kmalloc(sizeof(vfs_mount_t));
+    if (!mnt) {
+        return -1;
+    }
+    memset(mnt, 0, sizeof(*mnt));
+    mnt->fs_name = "ramfs";
+    mnt->root = vfs_alloc_node("/", VFS_NODE_DIR);
+    if (!mnt->root) {
+        kfree(mnt);
+        return -1;
+    }
+    mnt->mountpoint = mountpoint;
+    mnt->next = vfs_mounts;
+    vfs_mounts = mnt;
+    vfs_cache_reset();
     return 0;
 }
 

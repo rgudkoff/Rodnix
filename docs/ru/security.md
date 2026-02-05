@@ -15,7 +15,8 @@
 
 - Идентификаторы UID/GID добавлены в `task_t` (реальные и эффективные).
 - Значения по умолчанию: `uid=0`, `gid=0`, `euid=0`, `egid=0`.
-- Проверки прав ещё не реализованы.
+- Добавлен минимальный security‑stub (`security_check_euid`).
+- Политика прав и MAC‑крючки не реализованы.
 
 ## Планы
 
@@ -29,4 +30,4 @@
 
 ## Где смотреть в коде
 
-- `kernel/core/task.h`, `kernel/common/task.c`.
+- `kernel/core/task.h`, `kernel/common/task.c`, `kernel/common/security.c`.

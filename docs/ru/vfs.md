@@ -17,7 +17,7 @@
 ## Текущая реализация (v0)
 
 - Реализован VFS-скелет с `vfs_node_t` (vnode) и `vfs_inode_t` (inode).
-- Есть таблица mount (пока один mount: root ramfs).
+- Есть таблица mount (root ramfs + возможность подключать ramfs на путь).
 - Name cache: фиксированная таблица, инвалидация на любом изменении дерева.
 - Initrd: если передан через `vfs_set_initrd()`, импортируется в `/initrd.img`.
 - Весь доступ сейчас идёт через RAMFS (in-memory).

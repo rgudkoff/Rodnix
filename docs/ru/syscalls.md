@@ -19,7 +19,8 @@
   - `rdi, rsi, rdx, r10, r8, r9` — аргументы 1..6.
   - `rax` — код возврата.
 - Таблица syscalls: `kernel/common/syscall.c`.
-- Реализован только `SYS_NOP` (возвращает `0`).
+- Есть POSIX‑слой: `kernel/posix/posix_syscall.c` (таблица + stub).
+- Реализован только `SYS_NOP` и `POSIX_SYS_NOSYS` (возвращают `0` и `-1`).
 - Неизвестный номер возвращает `-1`.
 
 ## Инварианты

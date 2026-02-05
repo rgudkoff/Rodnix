@@ -1,0 +1,4 @@
+interface bootstrap {
+  rpc register_service(name: string, port: port) -> (status: u32);
+  rpc lookup_service(name: string) -> (port: port, status: u32);
+}

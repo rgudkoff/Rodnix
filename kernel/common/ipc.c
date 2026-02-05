@@ -5,6 +5,7 @@
 
 #include "ipc.h"
 #include "../core/interrupts.h"
+#include "scheduler.h"
 #include "../fabric/spin.h"
 #include "heap.h"
 #include "../../include/common.h"
@@ -14,6 +15,7 @@
 static bool ipc_initialized = false;
 static uint64_t next_port_id = 1;
 static uint64_t next_set_id = 1;
+static port_t* bootstrap_port = NULL;
 
 /* Simple port table (fixed size for now) */
 #define IPC_MAX_PORTS 1024
@@ -53,6 +55,9 @@ static void ipc_queue_destroy(ipc_queue_t* q)
     ipc_msg_node_t* node = q->head;
     while (node) {
         ipc_msg_node_t* next = node->next;
+        if (node->msg.data) {
+            kfree(node->msg.data);
+        }
         kfree(node);
         node = next;
     }
@@ -71,12 +76,36 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
         return -1;
     }
+    if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
+        return -1;
+    }
+    if (message->msg_size > 0 && !message->data) {
+        return -1;
+    }
+    if (message->msg_size > 0 && !message->data) {
+        return -1;
+    }
     ipc_msg_node_t* node = (ipc_msg_node_t*)kmalloc(sizeof(ipc_msg_node_t));
     if (!node) {
         return -1;
     }
     node->next = NULL;
-    node->msg = *message;
+    memset(&node->msg, 0, sizeof(node->msg));
+    node->msg.msg_id = message->msg_id;
+    node->msg.msg_size = message->msg_size;
+    node->msg.port_count = message->port_count;
+    node->msg.reply_port = message->reply_port;
+    if (message->port_count > 0) {
+        memcpy(node->msg.ports, message->ports, message->port_count * sizeof(uint64_t));
+    }
+    if (message->msg_size > 0) {
+        node->msg.data = (uint8_t*)kmalloc(message->msg_size);
+        if (!node->msg.data) {
+            kfree(node);
+            return -1;
+        }
+        memcpy(node->msg.data, message->data, message->msg_size);
+    }
 
     spinlock_lock(&q->lock);
     if (!q->tail) {
@@ -112,6 +141,7 @@ static int ipc_queue_pop(ipc_queue_t* q, ipc_message_t* out)
     spinlock_unlock(&q->lock);
 
     *out = node->msg;
+    node->msg.data = NULL;
     kfree(node);
     return 0;
 }
@@ -136,8 +166,10 @@ int ipc_init(void)
     for (int i = 0; i < IPC_MAX_PORTS; i++) {
         port_table[i] = NULL;
     }
-    
+
     ipc_initialized = true;
+    /* Reserve bootstrap port (placeholder, no protocol yet) */
+    bootstrap_port = port_allocate(PORT_TYPE_CONTROL);
     return 0;
 }
 
@@ -198,6 +230,24 @@ void port_deallocate(port_t* port)
     }
 }
 
+port_t* ipc_get_bootstrap_port(void)
+{
+    return bootstrap_port;
+}
+
+void ipc_message_free(ipc_message_t* message)
+{
+    if (!message) {
+        return;
+    }
+    if (message->data) {
+        kfree(message->data);
+        message->data = NULL;
+    }
+    message->msg_size = 0;
+    message->port_count = 0;
+}
+
 port_t* port_lookup(uint64_t port_id)
 {
     int idx = port_table_index(port_id);
@@ -242,14 +292,48 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
     
     (void)timeout;
+    if (message->msg_size > IPC_MSG_MAX_SIZE) {
+        return -1;
+    }
+    if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
+        return -1;
+    }
     if (!port->queue) {
         return -1;
     }
+    uint32_t bumped = 0;
+    for (uint32_t i = 0; i < message->port_count; i++) {
+        port_t* p = port_lookup(message->ports[i]);
+        if (!p || !p->active) {
+            return -1;
+        }
+        p->ref_count++;
+        bumped++;
+    }
     if (ipc_queue_push((ipc_queue_t*)port->queue, message) != 0) {
+        for (uint32_t i = 0; i < bumped; i++) {
+            port_t* p = port_lookup(message->ports[i]);
+            if (p && p->ref_count > 0) {
+                p->ref_count--;
+            }
+        }
         return -1;
     }
     
     return 0;
+}
+
+static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
+{
+    if (timeout_ms == 0) {
+        return 0;
+    }
+    uint64_t now = scheduler_get_ticks();
+    uint64_t ticks = (timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1)) / SCHEDULER_TIME_SLICE_MS;
+    if (ticks == 0) {
+        ticks = 1;
+    }
+    return now + ticks;
 }
 
 int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
@@ -262,15 +346,20 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
-    (void)timeout;
+    uint64_t deadline = ipc_get_deadline_ticks(timeout);
     if (!port->queue) {
         return -1;
     }
-    if (ipc_queue_pop((ipc_queue_t*)port->queue, message) != 0) {
-        return -1;
+    for (;;) {
+        if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+            return 0;
+        }
+        if (deadline && scheduler_get_ticks() >= deadline) {
+            return -1;
+        }
+        scheduler_yield();
     }
     
-    return 0;
 }
 
 int ipc_send_receive(port_t* port, ipc_message_t* send_msg, 
@@ -376,16 +465,20 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
-    (void)timeout;
-    for (uint32_t i = 0; i < set->port_count; i++) {
-        port_t* port = set->ports[i];
-        if (!port || !port->active || !port->queue) {
-            continue;
+    uint64_t deadline = ipc_get_deadline_ticks(timeout);
+    for (;;) {
+        for (uint32_t i = 0; i < set->port_count; i++) {
+            port_t* port = set->ports[i];
+            if (!port || !port->active || !port->queue) {
+                continue;
+            }
+            if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+                return 0;
+            }
         }
-        if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
-            return 0;
+        if (deadline && scheduler_get_ticks() >= deadline) {
+            return -1;
         }
+        scheduler_yield();
     }
-
-    return -1;
 }

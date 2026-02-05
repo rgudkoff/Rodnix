@@ -195,4 +195,10 @@ struct interrupt_frame* scheduler_switch_from_irq(struct interrupt_frame* frame)
  */
 int scheduler_get_stats(scheduler_stats_t* stats);
 
+/**
+ * Get scheduler tick counter
+ * @return Tick count since scheduler start
+ */
+uint64_t scheduler_get_ticks(void);
+
 #endif /* _RODNIX_COMMON_SCHEDULER_H */

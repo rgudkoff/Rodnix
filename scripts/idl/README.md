@@ -1,6 +1,17 @@
-# IDL generator (stub)
+# IDL generator (minimal)
 
-This directory contains a minimal placeholder generator for RodNIX IDL.
+This tool parses a very small `.defs` format and generates C header stubs
+for client and server.
+
+## Grammar (subset)
+
+```
+interface <name> {
+  rpc <name>(arg: type, ...) -> (ret: type, ...);
+}
+```
+
+Types supported: `u32`, `u64`, `string`, `port`.
 
 ## Usage
 
@@ -8,5 +19,8 @@ This directory contains a minimal placeholder generator for RodNIX IDL.
 python3 scripts/idl/idlgen.py <input.defs> <out_dir>
 ```
 
-The current version only creates placeholder client/server stub files.
-Real parsing and code generation will be added later.
+## Example
+
+```sh
+python3 scripts/idl/idlgen.py scripts/idl/example.defs build/idl
+```

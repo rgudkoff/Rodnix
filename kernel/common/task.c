@@ -156,6 +156,10 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->context.program_counter = frame->rip;
     thread->state = THREAD_STATE_NEW;
     thread->priority = PRIORITY_DEFAULT;
+    thread->base_priority = PRIORITY_DEFAULT;
+    thread->dyn_priority = PRIORITY_DEFAULT;
+    thread->sched_usage = 0;
+    thread->last_sleep_tick = 0;
     thread->entry = entry;
     thread->arg = arg;
     thread->stack = stack;

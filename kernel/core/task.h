@@ -74,6 +74,10 @@ typedef struct thread {
     thread_context_t context;   /* Контекст выполнения */
     thread_state_t state;      /* Состояние потока */
     uint8_t priority;          /* Приоритет потока */
+    uint8_t base_priority;     /* Базовый приоритет */
+    int16_t dyn_priority;      /* Динамический приоритет (с учётом boost/penalty) */
+    uint32_t sched_usage;      /* Счётчик использования CPU */
+    uint64_t last_sleep_tick;  /* Последний тик блокировки */
     void (*entry)(void*);      /* Точка входа потока */
     void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
