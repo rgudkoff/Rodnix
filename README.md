@@ -1,50 +1,32 @@
 # RodNIX
 
-RodNIX is an experimental operating system kernel targeting x86_64 today, with
-placeholders for other 64-bit ISAs. The project focuses on clarity,
-security-oriented design, and gradual evolution toward a modern, modular OS
-architecture (drivers and services layered over a simple hardware fabric).
+RodNIX is a modern operating system kernel designed for industrial-grade
+stability, determinism, and long-term maintainability. The project focuses on
+clear subsystem boundaries, security-oriented design, and a modular architecture
+that can evolve without cascading regressions.
 
-RodNIX is developed as a learning and research platform with engineering
-discipline and long-term extensibility in mind.
+## Product Goals
 
-## Project Goals
-
-- Build a clean and understandable kernel without legacy constraints
-- Use x86_64 as the primary target, with a Multiboot2 32-bit entry stub
-- Separate architecture-independent core from arch-specific code
-- Gradually move drivers out of the kernel to reduce attack surface
-- Build a Fabric layer for buses/devices/drivers/services
-- Favor explicit design over hidden magic
-- Provide a foundation for future experimentation (SMP, userspace, microkernel)
+- Industrial-grade determinism and fail-fast behavior
+- Clear ownership of memory, scheduling, and subsystem boundaries
+- Secure-by-default interfaces and explicit contracts
+- Modular services and drivers with versioned APIs
+- Predictable boot and initialization phases
+- Observability as a first-class requirement (logs, traces, metrics)
 
 ## Current State
 
-RodNIX is in early active development.
+RodNIX is under active development. The current kernel provides:
 
-Implemented so far (x86_64 focus):
-- Multiboot2-compliant boot sequence
-- 32-bit boot stub with transition toward 64-bit long mode
-- Higher-half kernel mapping with early physmap bootstrap
-- GDT and IDT initialization
-- ISR and IRQ handling
-- PIC remapping
-- PIT timer initialization (LAPIC timer available)
-- VGA text-mode console
-- Minimal interactive shell
-- PS/2 keyboard input (polling via InputCore; IRQ path prepared)
-- Physical memory manager (bitmap, early fixed map) and paging groundwork
-- Multiboot2 memory map parsing (boot-time)
-- Initrd import into RAMFS (simple RDNX format)
-- Fabric core: bus/device/driver/service registries and matching
-- Buses: virtual bus, PCI enumeration (minimal), PS/2 keyboard publication
-- HID keyboard driver (via Fabric) publishing a "keyboard" service
-- Minimal POSIX syscall table (GET* IDs, SET* IDs, open/read/write/close via VFS)
-- Minimal per-task file descriptor table
-- IPC core with ports and a minimal IDL IPC runtime
-- ISO image generation (GRUB-based) and QEMU support
-
-Expect frequent changes and refactoring.
+- Deterministic boot and higher-half mapping with early physmap
+- Structured subsystem initialization and fail-fast diagnostics
+- Physical memory management and paging groundwork
+- Interrupts, timers, and preemptive scheduling (priority queues)
+- VFS with RAMFS + initrd import (RDNX format)
+- IPC core with ports and minimal IDL runtime
+- Fabric framework for buses/devices/drivers/services
+- Minimal POSIX syscall surface and per-task fd table
+- Shell and input pipeline through InputCore/Fabric
 
 ## Architecture Overview
 
@@ -52,7 +34,7 @@ High-level layout (simplified):
 - boot: early boot code (Multiboot2, 32-bit entry)
 - kernel/core: architecture-independent interfaces
 - kernel/common: shared kernel subsystems
-- kernel/arch/x86_64: x86_64 implementation
+- kernel/arch: architecture-specific implementations
 - kernel/fabric: bus/device/driver/service framework
 - kernel/input: InputCore (scancode to ASCII, buffering)
 - kernel/interrupts: shared interrupt pieces
@@ -63,6 +45,7 @@ High-level layout (simplified):
 Detailed design notes:
 - ARCHITECTURE.md
 - 64BIT_MIGRATION.md
+ - docs/ru/industrial_readiness.md (RU, criteria for industrial readiness)
 
 ## Transition To Fabric (Facts Only)
 
@@ -98,46 +81,34 @@ input is planned via Fabric.
 
 ## Roadmap
 
-Short-term:
-- Cleanup of interrupt and timer subsystems
-- Improved shell commands
-- Integrate IRQ-based keyboard path through Fabric (replace polling fallback)
-- IDL IPC runtime demo (end-to-end example)
+Near-term:
+- Formalize error model and crash-dump format
+- Expand observability (structured logs, tracepoints)
+- Stabilize driver/service boundaries (versioned interfaces)
+- Toolchain reproducibility and CI
 
 Mid-term:
-- Driver isolation and abstraction layer
-- Expand Fabric services and consumers (service lookup usage)
-- Basic VFS and RAM-backed filesystem
-- Userspace boundary definition
-- Syscall interface draft
+- Userspace boundary and stable syscall ABI
+- Drivers and services isolation
+- Network stack maturation (loopback → UDP → TCP)
 
 Long-term:
-- SMP support
-- APIC support
-- ELF userspace loader
-- Security hardening and capability model
+- SMP and multi-core scheduling
+- Capability-based security model
+- Multi-architecture support
 
 ## Security Notice
 
-RodNIX is experimental kernel code.
+RodNIX is security-oriented but still in active development.
+Run in controlled environments and expect rapid iteration.
+Report security issues via SECURITY.md.
 
-Do not run on production systems.
-Do not test on machines with sensitive data.
-Expect crashes, hangs, and undefined behavior.
+## Industrial Readiness
 
-Security issues can be reported via SECURITY.md.
+RodNIX tracks industrial readiness criteria and gap analysis:
 
-## v0.2 Release Focus
-
-The v0.2 milestone targets a stable boot-to-shell experience and a documented
-development baseline:
-
-- Stable Multiboot2 → long mode → kmain transition
-- Higher-half kernel mapping with early physmap
-- VFS + initrd import (RDNX)
-- Minimal syscall table and per-task fd table
-- IPC + minimal IDL runtime
-- Updated docs and repeatable QEMU boot logs
+- docs/ru/industrial_readiness.md
+- docs/ru/industrial_gap.md
 
 ## Contributing
 

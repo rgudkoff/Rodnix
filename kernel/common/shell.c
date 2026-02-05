@@ -141,7 +141,7 @@ static int shell_cmd_info(int argc, char** argv)
     (void)argc;
     (void)argv;
     
-    kputs("RodNIX Kernel v0.1\n");
+    kputs("RodNIX Kernel v0.2\n");
     kputs("Architecture: x86_64 (64-bit)\n");
     kputs("Build: " __DATE__ " " __TIME__ "\n");
     kputs("\n");
@@ -627,7 +627,7 @@ void shell_run(void)
     extern void input_flush(void);
     input_flush();
 
-    kputs("\nRodNIX Shell v0.1\n");
+    kputs("\nRodNIX Shell v0.2\n");
     kputs("Type 'help' for available commands.\n\n");
     __asm__ volatile ("" ::: "memory");
     
@@ -665,4 +665,12 @@ void shell_run(void)
 void shell_stop(void)
 {
     shell_state.running = false;
+}
+
+void shell_redraw_prompt(void)
+{
+    if (!shell_state.running) {
+        return;
+    }
+    kputs(SHELL_PROMPT);
 }

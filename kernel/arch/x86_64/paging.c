@@ -25,6 +25,8 @@
 #define X86_64_KERNEL_VIRT_BASE 0xFFFFFFFF80000000ULL
 #endif
 
+static bool physmap_ready = false;
+
 /* ============================================================================
  * Page Table Constants
  * ============================================================================ */
@@ -832,6 +834,7 @@ int paging_bootstrap_physmap(uint64_t max_phys)
         }
     }
 
+    physmap_ready = true;
     return 0;
 }
 
@@ -841,8 +844,14 @@ void paging_disable_identity_map(void)
     if (!pml4) {
         return;
     }
+    BUG_ON(!physmap_ready);
     pml4[0] = 0;
     paging_flush_tlb(NULL);
+}
+
+bool paging_is_physmap_ready(void)
+{
+    return physmap_ready;
 }
 
 /**

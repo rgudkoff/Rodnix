@@ -9,6 +9,8 @@
 #include "../fabric/spin.h"
 #include "heap.h"
 #include "../../include/common.h"
+#include "../../include/debug.h"
+#include "../../include/error.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -73,6 +75,8 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
     if (!q || !message) {
         return -1;
     }
+    BUG_ON(message->msg_size > IPC_MSG_MAX_SIZE);
+    BUG_ON(message->port_count > IPC_MAX_PORTS_PER_MSG);
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
         return -1;
     }
@@ -157,7 +161,7 @@ static inline int port_table_index(uint64_t port_id)
 int ipc_init(void)
 {
     if (ipc_initialized) {
-        return 0;
+        return RDNX_OK;
     }
     
     next_port_id = 1;
@@ -170,7 +174,7 @@ int ipc_init(void)
     ipc_initialized = true;
     /* Reserve bootstrap port (placeholder, no protocol yet) */
     bootstrap_port = port_allocate(PORT_TYPE_CONTROL);
-    return 0;
+    return RDNX_OK;
 }
 
 port_t* port_allocate(port_type_t type)
@@ -287,32 +291,33 @@ int port_insert_receive_right(task_t* task, port_t* port)
 int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
 {
     if (!port || !message) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("ipc_send");
     
     if (!port->active) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
 
     if ((port->rights & PORT_RIGHT_SEND) == 0) {
-        return -1;
+        return RDNX_E_DENIED;
     }
     
     (void)timeout;
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (!port->queue) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     uint32_t bumped = 0;
     for (uint32_t i = 0; i < message->port_count; i++) {
         port_t* p = port_lookup(message->ports[i]);
         if (!p || !p->active) {
-            return -1;
+            return RDNX_E_INVALID;
         }
         p->ref_count++;
         bumped++;
@@ -324,10 +329,10 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
                 p->ref_count--;
             }
         }
-        return -1;
+        return RDNX_E_BUSY;
     }
     
-    return 0;
+    return RDNX_OK;
 }
 
 static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
@@ -346,17 +351,18 @@ static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
 int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
 {
     if (!port || !message) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("ipc_receive");
     
     if (!port->active) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
 
     if (port->owner) {
         task_t* current = task_get_current();
         if (current != port->owner) {
-            return -1;
+            return RDNX_E_DENIED;
         }
     }
     
@@ -370,20 +376,20 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
         if (port->owner_thread) {
             scheduler_clear_inherit(port->owner_thread);
         }
-        return -1;
+        return RDNX_E_INVALID;
     }
     for (;;) {
         if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
-            return 0;
+            return RDNX_OK;
         }
         if (deadline && scheduler_get_ticks() >= deadline) {
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
-            return -1;
+            return RDNX_E_TIMEOUT;
         }
         scheduler_yield();
     }
@@ -394,11 +400,12 @@ int ipc_send_receive(port_t* port, ipc_message_t* send_msg,
                      ipc_message_t* reply_msg, uint64_t timeout)
 {
     if (!port || !send_msg || !reply_msg) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("ipc_send_receive");
     
     if (!send_msg->reply_port) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     thread_t* sender = thread_get_current();

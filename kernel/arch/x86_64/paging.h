@@ -21,6 +21,12 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
 int paging_bootstrap_physmap(uint64_t max_phys);
 void paging_disable_identity_map(void);
 
+/**
+ * Check if higher-half physmap has been bootstrapped.
+ * @return true if physmap is ready
+ */
+bool paging_is_physmap_ready(void);
+
 /* Unmap page */
 int paging_unmap_page(uint64_t virt);
 

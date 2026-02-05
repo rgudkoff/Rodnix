@@ -8,6 +8,8 @@
 #include "../common/heap.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
+#include "../../include/error.h"
+#include "../../include/debug.h"
 
 #define VFS_CACHE_SIZE 64
 
@@ -404,17 +406,18 @@ void vfs_set_initrd(const void* data, size_t size)
 int vfs_init(void)
 {
     if (vfs_ready) {
-        return 0;
+        return RDNX_OK;
     }
+    TRACE_EVENT("vfs_init");
     if (vfs_mount_root_ramfs() != 0) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     vfs_cache_reset();
     if (vfs_import_initrd() != 0) {
         kputs("[VFS] initrd import failed\n");
     }
     vfs_ready = 1;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_is_ready(void)
@@ -425,37 +428,37 @@ int vfs_is_ready(void)
 int vfs_mkdir(const char* path)
 {
     if (!path || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (strcmp(path, "/") == 0) {
-        return 0;
+        return RDNX_OK;
     }
     char leaf[32];
     vfs_node_t* parent = vfs_resolve_parent(path, leaf, sizeof(leaf));
     if (!parent) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     if (vfs_find_child(parent, leaf)) {
-        return 0;
+        return RDNX_OK;
     }
-    return vfs_create_node(parent, leaf, VFS_NODE_DIR) ? 0 : -1;
+    return vfs_create_node(parent, leaf, VFS_NODE_DIR) ? RDNX_OK : RDNX_E_NOMEM;
 }
 
 int vfs_unlink(const char* path)
 {
     if (!path || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* node = vfs_lookup(path);
     if (!node || node == vfs_root) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     if (node->type == VFS_NODE_DIR && node->children) {
-        return -1;
+        return RDNX_E_BUSY;
     }
     vfs_node_t* parent = node->parent;
     if (!parent) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* prev = NULL;
     for (vfs_node_t* it = parent->children; it; it = it->sibling) {
@@ -471,46 +474,47 @@ int vfs_unlink(const char* path)
     }
     vfs_free_node(node);
     vfs_cache_reset();
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx)
 {
     if (!path || !cb || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* dir = vfs_lookup(path);
     if (!dir || dir->type != VFS_NODE_DIR) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     for (vfs_node_t* it = dir->children; it; it = it->sibling) {
         cb(it, ctx);
     }
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file)
 {
     if (!path || !out_file || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("vfs_open");
     vfs_node_t* node = vfs_lookup(path);
     if (!node) {
         if (!(flags & VFS_OPEN_CREATE)) {
-            return -1;
+            return RDNX_E_NOTFOUND;
         }
         char leaf[32];
         vfs_node_t* parent = vfs_resolve_parent(path, leaf, sizeof(leaf));
         if (!parent) {
-            return -1;
+            return RDNX_E_NOTFOUND;
         }
         node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
         if (!node) {
-            return -1;
+            return RDNX_E_NOMEM;
         }
     }
     if (node->type != VFS_NODE_FILE || !node->inode) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (flags & VFS_OPEN_TRUNC) {
         node->inode->size = 0;
@@ -518,24 +522,24 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     out_file->node = node;
     out_file->pos = 0;
     out_file->writable = (flags & VFS_OPEN_WRITE) != 0;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_close(vfs_file_t* file)
 {
     if (!file) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     file->node = NULL;
     file->pos = 0;
     file->writable = false;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_read(vfs_file_t* file, void* buffer, size_t size)
 {
     if (!file || !file->node || !file->node->inode || !buffer) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_inode_t* inode = file->node->inode;
     if (file->pos >= inode->size) {
@@ -551,12 +555,12 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
 {
     if (!file || !file->node || !file->node->inode || !buffer || !file->writable) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_inode_t* inode = file->node->inode;
     size_t end = file->pos + size;
     if (vfs_grow_file(file->node, end) != 0) {
-        return -1;
+        return RDNX_E_NOMEM;
     }
     memcpy(inode->data + file->pos, buffer, size);
     file->pos += size;

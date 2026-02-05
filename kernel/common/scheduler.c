@@ -505,6 +505,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     }
 
     in_scheduler = true;
+    TRACE_EVENT("sched: switch_from_irq");
     /* If no reschedule is pending and we already have a current thread, keep running */
     if (current_thread && !resched_pending) {
         in_scheduler = false;
@@ -514,10 +515,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     if (!current_thread) {
         thread_t* first = ready_dequeue();
-        if (!first) {
-            in_scheduler = false;
-            return frame;
-        }
+        PANIC_IF(!first, "scheduler: no runnable threads on first switch");
         current_thread = first;
         thread_set_current(first);
         if (first->task) {

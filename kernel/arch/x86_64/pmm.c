@@ -13,6 +13,7 @@
 #include "pmm.h"
 #include "config.h"
 #include "../../../include/debug.h"
+#include "../../../include/error.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -530,7 +531,7 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
     kputs("[PMM-2] Check params\n");
     __asm__ volatile ("" ::: "memory");
     if (!bitmap_virt || memory_end <= memory_start) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     __asm__ volatile ("" ::: "memory");
     
@@ -684,7 +685,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
                        const void* mmap_tag, uint32_t mmap_size, uint32_t entry_size)
 {
     if (!bitmap_virt || !mmap_tag || memory_end <= memory_start || entry_size == 0) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     /* Align to page boundaries */
@@ -725,7 +726,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     const uint8_t* base = (const uint8_t*)mmap_tag;
     uint32_t offset = sizeof(uint32_t) * 4; /* type, size, entry_size, entry_version */
     if (mmap_size <= offset) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     uint32_t max_entries = (mmap_size - offset) / entry_size;
@@ -784,7 +785,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     }
 
     pmm_rebuild_free_lists();
-    return 0;
+    return RDNX_OK;
 }
 
 /**
@@ -1022,24 +1023,24 @@ uint64_t pmm_get_used_pages(void)
 int pmm_get_zone_stats(pmm_zone_t zone, pmm_zone_stats_t* out)
 {
     if (!out || zone < 0 || zone >= PMM_ZONE_COUNT) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     out->total_pages = pmm_state.zones[zone].total_pages;
     out->free_pages = pmm_state.zones[zone].free_pages;
     out->used_pages = pmm_state.zones[zone].used_pages;
-    return 0;
+    return RDNX_OK;
 }
 
 int pmm_get_free_regions(pmm_zone_t zone, pmm_region_t* out, uint32_t max,
                          uint32_t* out_count)
 {
     if (!out_count || zone >= PMM_ZONE_COUNT) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     uint32_t n = pmm_state.zones[zone].free_range_count;
     if (!out || max == 0) {
         *out_count = n;
-        return 0;
+        return RDNX_OK;
     }
     uint32_t count = (n < max) ? n : max;
     for (uint32_t i = 0; i < count; i++) {
@@ -1048,41 +1049,41 @@ int pmm_get_free_regions(pmm_zone_t zone, pmm_region_t* out, uint32_t max,
         out[i].length = r->count * PAGE_SIZE;
     }
     *out_count = count;
-    return 0;
+    return RDNX_OK;
 }
 
 int pmm_get_usable_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count)
 {
     if (!out_count) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     uint32_t n = pmm_state.usable_count;
     if (!out || max == 0) {
         *out_count = n;
-        return 0;
+        return RDNX_OK;
     }
     uint32_t count = (n < max) ? n : max;
     for (uint32_t i = 0; i < count; i++) {
         out[i] = pmm_state.usable_regions[i];
     }
     *out_count = count;
-    return 0;
+    return RDNX_OK;
 }
 
 int pmm_get_reserved_regions(pmm_region_t* out, uint32_t max, uint32_t* out_count)
 {
     if (!out_count) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     uint32_t n = pmm_state.reserved_count;
     if (!out || max == 0) {
         *out_count = n;
-        return 0;
+        return RDNX_OK;
     }
     uint32_t count = (n < max) ? n : max;
     for (uint32_t i = 0; i < count; i++) {
         out[i] = pmm_state.reserved_regions[i];
     }
     *out_count = count;
-    return 0;
+    return RDNX_OK;
 }

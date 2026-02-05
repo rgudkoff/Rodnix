@@ -11,6 +11,7 @@
 #include "../../core/memory.h"
 #include "../../core/boot.h"
 #include "../../../include/console.h"
+#include "../../../include/debug.h"
 #include "types.h"
 #include "config.h"
 #include "pmm.h"
@@ -168,10 +169,13 @@ int memory_init(void)
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
+    PANIC_IF(!paging_is_physmap_ready(), "physmap not ready before identity map drop");
 
+    TRACE_EVENT("memory: physmap ready");
     /* Switch VGA console to higher-half direct map */
     console_set_vga_buffer(X86_64_PHYS_TO_VIRT(0xB8000));
 
+    TRACE_EVENT("memory: drop identity map");
     /* Drop low identity map: lower half becomes user-only */
     paging_disable_identity_map();
 
