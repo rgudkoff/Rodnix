@@ -9,6 +9,7 @@
 #define _RODNIX_COMMON_IPC_H
 
 #include "../core/task.h"
+#include "../../include/abi.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -56,6 +57,7 @@ typedef struct port {
 #define IPC_MAX_PORTS_PER_MSG 8
 
 typedef struct {
+    rdnx_abi_header_t hdr;
     uint64_t msg_id;          /* Message identifier */
     uint32_t msg_size;        /* Message size */
     uint32_t port_count;      /* Number of ports attached */

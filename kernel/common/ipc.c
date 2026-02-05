@@ -73,25 +73,29 @@ static void ipc_queue_destroy(ipc_queue_t* q)
 static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
 {
     if (!q || !message) {
-        return -1;
+        return RDNX_E_INVALID;
+    }
+    if (message->hdr.abi_version != RDNX_ABI_VERSION ||
+        message->hdr.size < sizeof(ipc_message_t)) {
+        return RDNX_E_INVALID;
     }
     BUG_ON(message->msg_size > IPC_MSG_MAX_SIZE);
     BUG_ON(message->port_count > IPC_MAX_PORTS_PER_MSG);
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->msg_size > 0 && !message->data) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->msg_size > 0 && !message->data) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     ipc_msg_node_t* node = (ipc_msg_node_t*)kmalloc(sizeof(ipc_msg_node_t));
     if (!node) {
-        return -1;
+        return RDNX_E_NOMEM;
     }
     node->next = NULL;
     memset(&node->msg, 0, sizeof(node->msg));
@@ -99,6 +103,7 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
     node->msg.msg_size = message->msg_size;
     node->msg.port_count = message->port_count;
     node->msg.reply_port = message->reply_port;
+    node->msg.hdr = message->hdr;
     if (message->port_count > 0) {
         memcpy(node->msg.ports, message->ports, message->port_count * sizeof(uint64_t));
     }
@@ -106,7 +111,7 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
         node->msg.data = (uint8_t*)kmalloc(message->msg_size);
         if (!node->msg.data) {
             kfree(node);
-            return -1;
+            return RDNX_E_NOMEM;
         }
         memcpy(node->msg.data, message->data, message->msg_size);
     }
@@ -127,13 +132,13 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
 static int ipc_queue_pop(ipc_queue_t* q, ipc_message_t* out)
 {
     if (!q || !out) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     spinlock_lock(&q->lock);
     ipc_msg_node_t* node = q->head;
     if (!node) {
         spinlock_unlock(&q->lock);
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     q->head = node->next;
     if (!q->head) {
@@ -293,6 +298,7 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     if (!port || !message) {
         return RDNX_E_INVALID;
     }
+    message->hdr = RDNX_ABI_INIT(ipc_message_t);
     TRACE_EVENT("ipc_send");
     
     if (!port->active) {
@@ -402,6 +408,7 @@ int ipc_send_receive(port_t* port, ipc_message_t* send_msg,
     if (!port || !send_msg || !reply_msg) {
         return RDNX_E_INVALID;
     }
+    send_msg->hdr = RDNX_ABI_INIT(ipc_message_t);
     TRACE_EVENT("ipc_send_receive");
     
     if (!send_msg->reply_port) {

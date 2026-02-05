@@ -318,6 +318,7 @@ static uint64_t posix_uname(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     memset(u, 0, sizeof(*u));
+    u->hdr = RDNX_ABI_INIT(utsname_t);
     strncpy(u->sysname, RODNIX_SYSNAME, sizeof(u->sysname) - 1);
     strncpy(u->nodename, RODNIX_NODENAME, sizeof(u->nodename) - 1);
     strncpy(u->release, RODNIX_RELEASE, sizeof(u->release) - 1);

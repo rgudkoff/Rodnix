@@ -30,6 +30,7 @@
 
 - Syscall: `POSIX_SYS_UNAME`.
 - Заполняет `utsname_t`:
+  - `hdr` — ABI header (`abi_version`, `size`).
   - `sysname` — имя ядра.
   - `nodename` — имя узла (пока статически).
   - `release` — версия релиза.
@@ -41,6 +42,28 @@
 
 - Любой syscall должен быть описан и иметь стабильный номер.
 - Обработчик syscalls не должен зависеть от конкретного драйвера.
+
+## Таблица POSIX‑syscalls (фиксированные номера)
+
+Формат: `номер — имя — статус`
+
+- `0` — `NOSYS` — stable
+- `1` — `GETPID` — stable
+- `2` — `GETUID` — stable
+- `3` — `GETEUID` — stable
+- `4` — `GETGID` — stable
+- `5` — `GETEGID` — stable
+- `6` — `SETUID` — stable
+- `7` — `SETEUID` — stable
+- `8` — `SETGID` — stable
+- `9` — `SETEGID` — stable
+- `10` — `OPEN` — experimental
+- `11` — `CLOSE` — experimental
+- `12` — `READ` — experimental
+- `13` — `WRITE` — experimental
+- `14` — `UNAME` — stable
+
+Свободные номера помечаются как `RESERVED` и не переиспользуются.
 
 ## Где смотреть в коде
 

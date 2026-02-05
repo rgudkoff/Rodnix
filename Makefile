@@ -20,6 +20,8 @@ CFLAGS = -m64 \
          -g \
          -Wall \
          -Wextra \
+         -MMD \
+         -MP \
          -I./include \
          -I./kernel/core \
          -I./kernel/common \
@@ -83,6 +85,7 @@ KERNEL_ASM_SRCS = \
 KERNEL_C_OBJS   = $(KERNEL_C_SRCS:.c=.o)
 KERNEL_ASM_OBJS = $(KERNEL_ASM_SRCS:.S=.o)
 OBJS = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS))
+DEPS = $(OBJS:.o=.d)
 
 KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
 ISO_OUT    = rodnix.iso
@@ -130,7 +133,7 @@ $(KERNEL_BIN): $(OBJS) link.ld
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MF $(@:.o=.d) -c $< -o $@
 	@echo "[CC] $<"
 
 $(BUILD_DIR)/%.o: %.S
@@ -268,3 +271,5 @@ help:
 	@echo "  help        - Show this help"
 	@echo ""
 	@echo "For installation instructions, see INSTALL.md"
+
+-include $(DEPS)

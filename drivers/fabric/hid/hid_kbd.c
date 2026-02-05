@@ -335,6 +335,8 @@ static int hid_kbd_attach(fabric_device_t *dev)
     /* Initialize keyboard ops */
     kputs("[HID-KBD] Initializing keyboard ops...\n");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    keyboard_ops.hdr = RDNX_ABI_INIT(keyboard_ops_t);
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting read_event pointer...\n");
     keyboard_ops.read_event = keyboard_read_event;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
@@ -345,6 +347,8 @@ static int hid_kbd_attach(fabric_device_t *dev)
     
     /* Initialize keyboard service */
     kputs("[HID-KBD] Initializing keyboard service...\n");
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    keyboard_service.hdr = RDNX_ABI_INIT(fabric_service_t);
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting service name...\n");
     keyboard_service.name = "keyboard";
