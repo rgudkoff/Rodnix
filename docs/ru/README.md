@@ -35,7 +35,8 @@ RodNIX находится в активной ранней разработке.
 - `input.md` — путь клавиатуры и InputCore.
 - `scheduler.md` — планировщик и политика приоритетов.
 - `ipc.md` — IPC и передача портов.
-- `userspace.md` — userland и bootstrap-сервер.
+- `idl.md` — IDL и генерация IPC‑стабов.
+- `userspace.md` — userland и bootstrap‑сервер.
 - `network.md` — сетевой стек и порядок внедрения.
 - `syscalls.md` — системные вызовы и вход в ядро.
 - `security.md` — учёт и права (UID/GID, MAC).

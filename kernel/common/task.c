@@ -75,6 +75,10 @@ task_t* task_create(void)
     task->task_id = next_task_id++;
     task->address_space = NULL;
     task->state = TASK_STATE_NEW;
+    task->uid = 0;
+    task->gid = 0;
+    task->euid = 0;
+    task->egid = 0;
     task->ref_count = 1;
     task->arch_specific = NULL;
     return task;
@@ -86,6 +90,27 @@ void task_destroy(task_t* task)
         return;
     }
     kfree(task);
+}
+
+void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid)
+{
+    if (!task) {
+        return;
+    }
+    task->uid = uid;
+    task->gid = gid;
+    task->euid = euid;
+    task->egid = egid;
+}
+
+uint32_t task_get_euid(const task_t* task)
+{
+    return task ? task->euid : 0;
+}
+
+uint32_t task_get_egid(const task_t* task)
+{
+    return task ? task->egid : 0;
 }
 
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)

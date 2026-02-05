@@ -56,6 +56,10 @@ typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
     void* address_space;       /* Адресное пространство (vm_map) */
     task_state_t state;        /* Состояние задачи */
+    uint32_t uid;              /* Реальный UID */
+    uint32_t gid;              /* Реальный GID */
+    uint32_t euid;             /* Эффективный UID */
+    uint32_t egid;             /* Эффективный GID */
     uint32_t ref_count;        /* Счетчик ссылок */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } task_t;
@@ -105,6 +109,30 @@ task_t* task_get_current(void);
  * @param task Указатель на задачу
  */
 void task_set_current(task_t* task);
+
+/**
+ * Установка идентификаторов пользователя/группы
+ * @param task Указатель на задачу
+ * @param uid Реальный UID
+ * @param gid Реальный GID
+ * @param euid Эффективный UID
+ * @param egid Эффективный GID
+ */
+void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid);
+
+/**
+ * Получение эффективного UID
+ * @param task Указатель на задачу
+ * @return euid
+ */
+uint32_t task_get_euid(const task_t* task);
+
+/**
+ * Получение эффективного GID
+ * @param task Указатель на задачу
+ * @return egid
+ */
+uint32_t task_get_egid(const task_t* task);
 
 /* ============================================================================
  * Функции для потоков
