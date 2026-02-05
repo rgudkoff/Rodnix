@@ -19,12 +19,18 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
 int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags);
 int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
 int paging_bootstrap_physmap(uint64_t max_phys);
+void paging_disable_identity_map(void);
 
 /* Unmap page */
 int paging_unmap_page(uint64_t virt);
 
 /* Get physical address */
 uint64_t paging_get_physical(uint64_t virt);
+
+/* User address space helpers */
+uint64_t paging_create_user_pml4(void);
+int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags);
+void paging_switch_pml4(uint64_t pml4_phys);
 
 /* Page table entry flags */
 #define PTE_PRESENT     0x001

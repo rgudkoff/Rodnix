@@ -16,6 +16,7 @@
 #include "../../common/syscall.h"
 #include "interrupt_frame.h"
 #include "types.h"
+#include "config.h"
 #include "pic.h"
 #include "apic.h"
 #include <stddef.h>
@@ -103,7 +104,7 @@ static void irq_send_eoi(uint32_t irq)
 /* Safe VGA output function - does not use kputs/kprintf to avoid recursion */
 static void safe_vga_puts(uint8_t row, uint8_t col, const char* str, uint8_t color)
 {
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+    volatile uint16_t* vga = (volatile uint16_t*)X86_64_PHYS_TO_VIRT(0xB8000);
     uint8_t r = row;
     uint8_t c = col;
     
@@ -129,7 +130,7 @@ static void safe_vga_puts(uint8_t row, uint8_t col, const char* str, uint8_t col
 /* Safe hex output - direct VGA write */
 static void safe_vga_hex(uint8_t row, uint8_t col, uint64_t value, uint8_t color)
 {
-    volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+    volatile uint16_t* vga = (volatile uint16_t*)X86_64_PHYS_TO_VIRT(0xB8000);
     char hex_chars[] = "0123456789ABCDEF";
     uint8_t r = row;
     uint8_t c = col;
@@ -232,6 +233,12 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     uint32_t vector = regs->int_no;
 
     if (vector == SYSCALL_VECTOR) {
+        static int logged = 0;
+        if (!logged) {
+            extern void kputs(const char* str);
+            kputs("[ISR] syscall vector 0x80\n");
+            logged = 1;
+        }
         return handle_syscall(regs);
     }
     

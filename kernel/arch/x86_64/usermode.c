@@ -8,17 +8,20 @@
 #include "pmm.h"
 #include "gdt.h"
 #include "types.h"
+#include "config.h"
 #include "../../include/common.h"
 #include <stdint.h>
 
-#define USER_CODE_VA  0x0000000000400000ULL
-#define USER_STACK_VA 0x0000000000700000ULL
+#define USER_CODE_VA  0x0000000040000000ULL
+#define USER_STACK_VA 0x0000000040001000ULL
 
 static const uint8_t user_stub_code[] = {
     0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x00, /* mov rax, 0 */
     0xCD, 0x80,                               /* int 0x80 */
-    0xEB, 0xF9                                /* jmp -7 */
+    0xEB, 0xFC                                /* jmp -4 (back to int 0x80) */
 };
+
+static uint64_t user_pml4_phys = 0;
 
 int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 {
@@ -26,21 +29,34 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
         return -1;
     }
 
-    uint64_t code_phys = pmm_alloc_page();
-    uint64_t stack_phys = pmm_alloc_page();
+    extern void kputs(const char* str);
+    kputs("[USERMODE] prepare_stub\n");
+
+    user_pml4_phys = paging_create_user_pml4();
+    if (!user_pml4_phys) {
+        kputs("[USERMODE] create_pml4 failed\n");
+        return -1;
+    }
+
+    uint64_t code_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
+    uint64_t stack_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     if (!code_phys || !stack_phys) {
+        kputs("[USERMODE] alloc pages failed\n");
         return -1;
     }
 
-    if (paging_map_page_4kb(USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
+    if (paging_map_page_4kb_pml4(user_pml4_phys, USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
+        kputs("[USERMODE] map code failed\n");
         return -1;
     }
-    if (paging_map_page_4kb(USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
+    if (paging_map_page_4kb_pml4(user_pml4_phys, USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
+        kputs("[USERMODE] map stack failed\n");
         return -1;
     }
 
-    memcpy((void*)(uintptr_t)USER_CODE_VA, user_stub_code, sizeof(user_stub_code));
-    memset((void*)(uintptr_t)USER_STACK_VA, 0, X86_64_PAGE_SIZE);
+    memcpy(X86_64_PHYS_TO_VIRT(code_phys), user_stub_code, sizeof(user_stub_code));
+    memset(X86_64_PHYS_TO_VIRT(stack_phys), 0, X86_64_PAGE_SIZE);
+    kputs("[USERMODE] stub mapped\n");
 
     *entry = (void*)(uintptr_t)USER_CODE_VA;
     *user_stack = (void*)(uintptr_t)(USER_STACK_VA + X86_64_PAGE_SIZE - 16);
@@ -51,6 +67,13 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
 {
     tss_set_rsp0(rsp0);
+    extern void kputs(const char* str);
+    kputs("[USERMODE] switching CR3\n");
+    if (user_pml4_phys) {
+        paging_switch_pml4(user_pml4_phys);
+    }
+    kputs("[USERMODE] switched CR3\n");
+    kputs("[USERMODE] about to iretq\n");
 
     uint64_t user_cs = GDT_USER_CS | 0x3;
     uint64_t user_ds = GDT_USER_DS | 0x3;

@@ -27,6 +27,8 @@ struct net_socket {
     int protocol;
     uint16_t bound_port;
     int bound;
+    uint16_t connected_port;
+    int connected;
     udp_queue_t queue;
 };
 
@@ -135,6 +137,8 @@ net_socket_t* net_socket_create(int domain, int type, int protocol)
     sock->protocol = protocol;
     sock->bound_port = 0;
     sock->bound = 0;
+    sock->connected_port = 0;
+    sock->connected = 0;
     udp_queue_init(&sock->queue);
     return sock;
 }
@@ -144,7 +148,7 @@ int net_socket_bind(net_socket_t* sock, const sockaddr_in_t* addr)
     if (!sock || !addr) {
         return -1;
     }
-    if (sock->domain != AF_INET || sock->type != SOCK_DGRAM) {
+    if (sock->domain != AF_INET) {
         return -1;
     }
     if (addr->sin_family != AF_INET) {
@@ -167,12 +171,38 @@ int net_socket_bind(net_socket_t* sock, const sockaddr_in_t* addr)
     return 0;
 }
 
+int net_socket_connect(net_socket_t* sock, const sockaddr_in_t* addr)
+{
+    if (!sock || !addr) {
+        return -1;
+    }
+    if (sock->domain != AF_INET || sock->type != SOCK_STREAM) {
+        return -1;
+    }
+    if (addr->sin_family != AF_INET || addr->sin_addr != NET_LOOPBACK_ADDR) {
+        return -1;
+    }
+    uint16_t dport = addr->sin_port;
+    if (dport == 0 || dport >= NET_MAX_SOCKETS) {
+        return -1;
+    }
+    spinlock_lock(&udp_port_lock);
+    net_socket_t* dest = udp_port_table[dport];
+    spinlock_unlock(&udp_port_lock);
+    if (!dest || dest->type != SOCK_STREAM) {
+        return -1;
+    }
+    sock->connected_port = dport;
+    sock->connected = 1;
+    return 0;
+}
+
 int net_socket_sendto(net_socket_t* sock, const void* buf, size_t len, const sockaddr_in_t* dst)
 {
     if (!sock || !buf || !dst) {
         return -1;
     }
-    if (sock->domain != AF_INET || sock->type != SOCK_DGRAM) {
+    if (sock->domain != AF_INET || (sock->type != SOCK_DGRAM && sock->type != SOCK_STREAM)) {
         return -1;
     }
     if (dst->sin_family != AF_INET || dst->sin_addr != NET_LOOPBACK_ADDR) {
@@ -198,12 +228,27 @@ int net_socket_sendto(net_socket_t* sock, const void* buf, size_t len, const soc
     return udp_queue_push(&dest->queue, &src, buf, len);
 }
 
+int net_socket_send(net_socket_t* sock, const void* buf, size_t len)
+{
+    if (!sock || !buf) {
+        return -1;
+    }
+    if (sock->type != SOCK_STREAM || !sock->connected) {
+        return -1;
+    }
+    sockaddr_in_t dst = {0};
+    dst.sin_family = AF_INET;
+    dst.sin_addr = NET_LOOPBACK_ADDR;
+    dst.sin_port = sock->connected_port;
+    return net_socket_sendto(sock, buf, len, &dst);
+}
+
 int net_socket_recvfrom(net_socket_t* sock, void* buf, size_t len, sockaddr_in_t* src, uint64_t timeout_ms)
 {
     if (!sock || !buf) {
         return -1;
     }
-    if (sock->domain != AF_INET || sock->type != SOCK_DGRAM) {
+    if (sock->domain != AF_INET || (sock->type != SOCK_DGRAM && sock->type != SOCK_STREAM)) {
         return -1;
     }
 
@@ -218,6 +263,11 @@ int net_socket_recvfrom(net_socket_t* sock, void* buf, size_t len, sockaddr_in_t
         }
         scheduler_yield();
     }
+}
+
+int net_socket_recv(net_socket_t* sock, void* buf, size_t len, uint64_t timeout_ms)
+{
+    return net_socket_recvfrom(sock, buf, len, NULL, timeout_ms);
 }
 
 void net_socket_close(net_socket_t* sock)

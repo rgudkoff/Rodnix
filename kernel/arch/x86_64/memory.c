@@ -10,6 +10,7 @@
 
 #include "../../core/memory.h"
 #include "../../core/boot.h"
+#include "../../../include/console.h"
 #include "types.h"
 #include "config.h"
 #include "pmm.h"
@@ -23,23 +24,23 @@
 
 /* VMM functions - TODO: Implement in separate vmm.c */
 static void* vmm_alloc_page_impl(uint64_t flags) {
-    /* Temporary identity-mapped VMM: return physical address directly. */
+    /* Temporary physmap-backed VMM: return direct-map address. */
     (void)flags;
     extern uint64_t pmm_alloc_page(void);
     uint64_t phys = pmm_alloc_page();
     if (!phys) {
         return NULL;
     }
-    return (void*)phys;
+    return X86_64_PHYS_TO_VIRT(phys);
 }
 
 static void vmm_free_page_impl(void* virt) {
-    /* Temporary identity-mapped VMM: treat virt as physical. */
+    /* Temporary physmap-backed VMM: convert virt back to phys. */
     if (!virt) {
         return;
     }
     extern void pmm_free_page(uint64_t phys);
-    pmm_free_page((uint64_t)virt);
+    pmm_free_page((uint64_t)X86_64_VIRT_TO_PHYS(virt));
 }
 
 /* ============================================================================
@@ -113,16 +114,12 @@ int memory_init(void)
         }
     }
     
-    /* Bitmap is in low memory, already identity-mapped by boot.S */
-    void* bitmap_virt = (void*)PMM_BITMAP_PHYS_ADDR;
+    /* Bitmap is in low memory; use higher-half direct map */
+    void* bitmap_virt = X86_64_PHYS_TO_VIRT(PMM_BITMAP_PHYS_ADDR);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-5] Call pmm_init\n");
     __asm__ volatile ("" ::: "memory");
-    /* VGA marker before PMM call (top row) */
-    volatile uint16_t* vga_dbg = (volatile uint16_t*)0xB8000;
-    vga_dbg[80 * 0 + 20] = 0x0F50; /* 'P' */
-    vga_dbg[80 * 0 + 21] = 0x0F31; /* '1' */
     /* Disable interrupts during early PMM init to avoid reentrancy */
     __asm__ volatile ("cli");
     /* Initialize PMM */
@@ -140,14 +137,12 @@ int memory_init(void)
         return -1;
     }
     __asm__ volatile ("sti");
-    vga_dbg[80 * 0 + 22] = 0x0F50; /* 'P' */
-    vga_dbg[80 * 0 + 23] = 0x0F32; /* '2' */
 
     /* Reserve kernel image before early page-table allocations */
     extern void pmm_reserve_range(uint64_t start, uint64_t end);
     extern char kernel_end;
     uint64_t kernel_start = 0x100000ULL;
-    uint64_t kernel_end_phys = (uint64_t)(uintptr_t)&kernel_end;
+    uint64_t kernel_end_phys = (uint64_t)X86_64_VIRT_TO_PHYS(&kernel_end);
     pmm_reserve_range(kernel_start, kernel_end_phys);
 
     /* Bootstrap higher-half direct map for low memory (64MB) */
@@ -159,6 +154,12 @@ int memory_init(void)
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
+
+    /* Switch VGA console to higher-half direct map */
+    console_set_vga_buffer(X86_64_PHYS_TO_VIRT(0xB8000));
+
+    /* Drop low identity map: lower half becomes user-only */
+    paging_disable_identity_map();
 
     /* Initialize simple kernel heap */
     extern int heap_init(size_t initial_pages);
@@ -310,7 +311,7 @@ void* vmm_alloc_pages(uint32_t count, uint64_t flags)
     if (!phys) {
         return NULL;
     }
-    return (void*)phys;
+    return X86_64_PHYS_TO_VIRT(phys);
 }
 
 /**
@@ -326,7 +327,7 @@ void vmm_free_pages(void* virt, uint32_t count)
         return;
     }
     extern void pmm_free_pages(uint64_t phys, uint32_t pages);
-    pmm_free_pages((uint64_t)virt, count);
+    pmm_free_pages((uint64_t)X86_64_VIRT_TO_PHYS(virt), count);
 }
 
 /**

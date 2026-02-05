@@ -106,7 +106,7 @@ QEMU_ACCEL ?=
 
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
-QEMU_FLAGS       = -m 64M -boot d -cdrom $(ISO_OUT) -serial stdio -no-reboot -no-shutdown \
+QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial file:boot.log -no-reboot -no-shutdown \
                    -machine pc -cpu qemu64,+apic,+x2apic
 QEMU_DEBUG_FLAGS = -s -S
 

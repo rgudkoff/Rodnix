@@ -166,12 +166,6 @@ isr_done:
     mov rax, [rdx + 16]
     mov [isr_iret_rflags], rax
 
-    ; Minimal markers to port 0xE9 and COM1 (0x3F8) before iretq
-    mov al, 'E'
-    out 0xE9, al
-    mov dx, 0x3F8
-    out dx, al
-    
     ; Restore all registers
     pop r15
     pop r14

@@ -23,10 +23,12 @@ int loader_load_image(const void* image, size_t size)
 
 int loader_enter_user_stub(void)
 {
+    kputs("[LOADER] enter_user_stub\n");
     void* entry = NULL;
     void* user_stack = NULL;
     uint64_t rsp0 = 0;
     if (usermode_prepare_stub(&entry, &user_stack, &rsp0) != 0) {
+        kputs("[LOADER] prepare_stub failed\n");
         return -1;
     }
     thread_t* cur = thread_get_current();
@@ -34,6 +36,7 @@ int loader_enter_user_stub(void)
         rsp0 = (uint64_t)(uintptr_t)cur->stack + cur->stack_size - 16;
     }
     if (!rsp0) {
+        kputs("[LOADER] rsp0 missing\n");
         return -1;
     }
     usermode_enter(entry, user_stack, rsp0);

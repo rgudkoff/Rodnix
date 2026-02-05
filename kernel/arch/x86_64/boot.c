@@ -160,7 +160,7 @@ int boot_early_init(boot_info_t* info)
     if (!info) {
         return -1;
     }
-    
+
     /* Copy boot information (fixed buffer for cmdline) */
     /* Use memory barriers to ensure proper ordering */
     boot_info_storage.magic = info->magic;
@@ -228,7 +228,6 @@ int boot_early_init(boot_info_t* info)
         }
     }
 mb2_done:
-    
     /* Set valid flag last, with memory barrier */
     boot_info_valid = true;
     __asm__ volatile ("" ::: "memory");

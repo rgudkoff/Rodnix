@@ -46,6 +46,12 @@ void console_init(void);
  */
 void console_clear(void);
 
+/**
+ * Set VGA buffer base (arch-specific mapping)
+ * @param buffer Mapped VGA text buffer address
+ */
+void console_set_vga_buffer(void* buffer);
+
 /* ============================================================================
  * Output functions
  * ============================================================================ */

@@ -186,7 +186,7 @@ static uint64_t find_ioapic_from_madt(void)
     
     /* Search in EBDA and BIOS ROM area */
     for (uint64_t addr = 0xE0000; addr < 0x100000; addr += 16) {
-        const char* sig = (const char*)addr;
+        const char* sig = (const char*)X86_64_PHYS_TO_VIRT(addr);
         if (sig[0] == 'R' && sig[1] == 'S' && sig[2] == 'D' && 
             sig[3] == ' ' && sig[4] == 'P' && sig[5] == 'T' && 
             sig[6] == 'R' && sig[7] == ' ') {
@@ -210,18 +210,18 @@ static uint64_t find_ioapic_from_madt(void)
     /* Read RSDT/XSDT address from RSDP */
     /* RSDP structure: signature(8), checksum(1), oem_id(6), revision(1), 
      *                  rsdt_addr(4 for v1) or xsdt_addr(8 for v2) */
-    uint8_t revision = *((uint8_t*)(rsdp_addr + 15));
+    uint8_t revision = *((uint8_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 15));
     uint64_t table_addr = 0;
     
     if (revision >= 2) {
         /* XSDT (64-bit addresses) */
-        table_addr = *((uint64_t*)(rsdp_addr + 24));
+        table_addr = *((uint64_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 24));
         #if APIC_DEBUG
         kputs("[MADT-1.3] Using XSDT (ACPI 2.0+)\n");
         #endif
     } else {
         /* RSDT (32-bit addresses) */
-        table_addr = (uint64_t)*((uint32_t*)(rsdp_addr + 16));
+        table_addr = (uint64_t)*((uint32_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 16));
         #if APIC_DEBUG
         kputs("[MADT-1.4] Using RSDT (ACPI 1.0)\n");
         #endif
@@ -241,7 +241,7 @@ static uint64_t find_ioapic_from_madt(void)
     #endif
     
     /* Read table header to get entry count */
-    uint32_t* header = (uint32_t*)table_addr;
+    uint32_t* header = (uint32_t*)X86_64_PHYS_TO_VIRT(table_addr);
     uint32_t signature = header[0];  /* Should be "RSDT" or "XSDT" */
     (void)signature;
     uint32_t length = header[1];
@@ -258,13 +258,15 @@ static uint64_t find_ioapic_from_madt(void)
     for (uint32_t i = 0; i < entry_count && i < 32; i++) {  /* Limit to 32 entries */
         uint64_t entry_addr;
         if (revision >= 2) {
-            entry_addr = ((uint64_t*)table_addr)[9 + i];  /* Skip header (9 qwords) */
+            uint64_t* xsdt = (uint64_t*)X86_64_PHYS_TO_VIRT(table_addr);
+            entry_addr = xsdt[9 + i];  /* Skip header (9 qwords) */
         } else {
-            entry_addr = (uint64_t)((uint32_t*)table_addr)[9 + i];  /* Skip header (9 dwords) */
+            uint32_t* rsdt = (uint32_t*)X86_64_PHYS_TO_VIRT(table_addr);
+            entry_addr = (uint64_t)rsdt[9 + i];  /* Skip header (9 dwords) */
         }
         
         /* Check signature */
-        uint32_t* entry_sig = (uint32_t*)entry_addr;
+        uint32_t* entry_sig = (uint32_t*)X86_64_PHYS_TO_VIRT(entry_addr);
         if (entry_sig[0] == 0x43495041) {  /* "APIC" in little-endian */
             madt_addr = entry_addr;
             #if APIC_DEBUG
@@ -282,9 +284,9 @@ static uint64_t find_ioapic_from_madt(void)
     }
     
     /* Parse MADT to find I/O APIC entry */
-    struct acpi_madt* madt = (struct acpi_madt*)madt_addr;
+    struct acpi_madt* madt = (struct acpi_madt*)X86_64_PHYS_TO_VIRT(madt_addr);
     uint32_t madt_length = madt->length;
-    uint8_t* madt_data = (uint8_t*)madt_addr;
+    uint8_t* madt_data = (uint8_t*)X86_64_PHYS_TO_VIRT(madt_addr);
     uint32_t offset = sizeof(struct acpi_madt);
     
     #if APIC_DEBUG
@@ -603,19 +605,15 @@ int apic_init(void)
     extern int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
     
     /* APIC region is 4KB, map it with PCD flag for uncached access */
-    uint64_t apic_virt = apic_base_phys; /* Identity mapping */
+    uint64_t apic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(apic_base_phys);
     uint64_t mmio_flags = 0x001 | 0x002 | 0x010; /* PRESENT | RW | PCD (uncached) */
     
     kputs("[APIC-6.2] Map APIC with PCD flag\n");
     __asm__ volatile ("" ::: "memory");
-    if (paging_map_page_4kb_noalloc_identity(apic_virt, apic_base_phys, mmio_flags) != 0) {
-        kputs("[APIC-6.2.1] No existing tables, trying identity alloc\n");
+    if (paging_map_page_4kb(apic_virt, apic_base_phys, mmio_flags) != 0) {
+        kputs("[APIC-6.2.1] Failed to map APIC\n");
         __asm__ volatile ("" ::: "memory");
-        if (paging_map_page_4kb_identity_alloc(apic_virt, apic_base_phys, mmio_flags) != 0) {
-            kputs("[APIC-6.2.2] Failed to map APIC\n");
-            __asm__ volatile ("" ::: "memory");
-            return -1;
-        }
+        return -1;
     }
     __asm__ volatile ("" ::: "memory");
     
@@ -825,7 +823,7 @@ int ioapic_init(void)
     /* Map I/O APIC registers (4KB, uncached MMIO) */
     /* Use address found from MADT or default */
     uint64_t ioapic_phys = ioapic_base_addr;
-    uint64_t ioapic_virt = ioapic_phys; /* Identity mapping */
+    uint64_t ioapic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(ioapic_phys);
     uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
     
     #if APIC_DEBUG

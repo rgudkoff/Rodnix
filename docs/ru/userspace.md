@@ -21,6 +21,7 @@
 - Есть временный kernel‑mode bootstrap server (thread), отвечающий статусом `0`.
 - Есть минимальный loader‑stub в ядре (без ring3).
 - Добавлена базовая инфраструктура ring3 (GDT user‑сегменты + TSS RSP0) и тестовый user‑stub.
+- Введён отдельный PML4 для user‑stub (ядро мапится в higher‑half).
 
 ## Инварианты
 

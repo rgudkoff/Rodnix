@@ -450,6 +450,19 @@ static int shell_cmd_cat(int argc, char** argv)
     return 0;
 }
 
+static int shell_cmd_ring3(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    extern int loader_enter_user_stub(void);
+    kputs("Entering ring3 stub...\n");
+    int ret = loader_enter_user_stub();
+    if (ret != 0) {
+        kputs("ring3: failed\n");
+    }
+    return ret;
+}
+
 /**
  * @function shell_cmd_exit
  * @brief Exit shell (reboot system)
@@ -500,6 +513,7 @@ static const struct shell_command commands[] = {
     {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
     {"ls",      shell_cmd_ls,      "List directory"},
     {"cat",     shell_cmd_cat,     "Show file contents"},
+    {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };

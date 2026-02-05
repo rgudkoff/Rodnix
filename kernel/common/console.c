@@ -234,6 +234,14 @@ void console_init(void)
     update_cursor(vga_row, vga_col);
 }
 
+void console_set_vga_buffer(void* buffer)
+{
+    if (!buffer) {
+        return;
+    }
+    vga_buffer = (uint16_t*)buffer;
+}
+
 void console_clear(void)
 {
     for (uint32_t i = 0; i < VGA_WIDTH * VGA_HEIGHT; i++) {
@@ -256,8 +264,7 @@ void console_clear(void)
 static void scroll_screen(void)
 {
     /* Safety check: ensure vga_buffer is valid */
-    if (!vga_buffer || (uintptr_t)vga_buffer < 0xB8000 || (uintptr_t)vga_buffer > 0xB8FFF) {
-        /* Invalid buffer - cannot scroll, just return */
+    if (!vga_buffer) {
         return;
     }
     

@@ -195,7 +195,7 @@ static void pmm_bitmap_set_all(void)
 
 static void pmm_zero_page(uint64_t phys)
 {
-    volatile uint64_t* ptr = (volatile uint64_t*)phys;
+    volatile uint64_t* ptr = (volatile uint64_t*)X86_64_PHYS_TO_VIRT(phys);
     for (uint64_t i = 0; i < PAGE_SIZE / sizeof(uint64_t); i++) {
         ptr[i] = 0;
     }
@@ -423,8 +423,8 @@ static void pmm_setup_page_descs(uint64_t memory_start, uint64_t memory_end,
         return;
     }
 
-    /* Descriptors are placed in low memory and accessed via identity mapping. */
-    pmm_state.pages = (pmm_page_desc_t*)(desc_phys);
+    /* Descriptors are placed in low memory; access via higher-half direct map. */
+    pmm_state.pages = (pmm_page_desc_t*)X86_64_PHYS_TO_VIRT(desc_phys);
     pmm_state.pages_count = total_pages;
 
     for (uint64_t i = 0; i < total_pages; i++) {

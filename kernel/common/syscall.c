@@ -48,6 +48,12 @@ uint64_t syscall_dispatch(uint64_t num,
                           uint64_t a5,
                           uint64_t a6)
 {
+    static int logged = 0;
+    if (!logged) {
+        extern void kputs(const char* str);
+        kputs("[SYSCALL] trap received\n");
+        logged = 1;
+    }
     if (num < SYSCALL_MAX && syscall_table[num]) {
         return syscall_table[num](a1, a2, a3, a4, a5, a6);
     }

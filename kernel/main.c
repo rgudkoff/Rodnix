@@ -42,9 +42,9 @@ static void shell_thread(void* arg)
  */
 void kmain(uint32_t magic, void* mbi)
 {
-    /* Initialize console first - this is critical for debugging */
+    console_set_vga_buffer((void*)0xB8000);
     console_init();
-    console_clear();
+    console_set_log_prefix_enabled(false);
     
     /* Print welcome message */
     kputs("========================================\n");
@@ -52,109 +52,45 @@ void kmain(uint32_t magic, void* mbi)
     kputs("    64-bit Architecture\n");
     kputs("========================================\n\n");
     
-    kputs("[DEBUG] kmain: Entry point reached\n");
-    kputs("[DEBUG] kmain: magic = ");
-    extern void kprint_hex(uint64_t num);
-    kprint_hex(magic);
-    kputs(", mbi = ");
-    kprint_hex((uint64_t)mbi);
-    kputs("\n");
-    
     kputs("[INIT] Starting kernel...\n");
-    __asm__ volatile ("" ::: "memory");
-    
+
     /* Step 1: Initialize boot subsystem */
-    kputs("[INIT-1] Boot subsystem\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.1] Create boot_info struct\n");
-    __asm__ volatile ("" ::: "memory");
+    kputs("[INIT] Boot subsystem\n");
     boot_info_t boot_info;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2] Fill boot_info\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.1] magic\n");
-    __asm__ volatile ("" ::: "memory");
     boot_info.magic = magic;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.2] boot_info\n");
-    __asm__ volatile ("" ::: "memory");
     boot_info.boot_info = mbi;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.3] mem_lower\n");
-    __asm__ volatile ("" ::: "memory");
     boot_info.mem_lower = 0;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.4] mem_upper\n");
-    __asm__ volatile ("" ::: "memory");
     boot_info.mem_upper = 0;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.5] cmdline\n");
-    __asm__ volatile ("" ::: "memory");
     /* Initialize cmdline buffer to empty string (fixed buffer) */
     boot_info.cmdline[0] = '\0';
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.2.6] flags\n");
-    __asm__ volatile ("" ::: "memory");
     boot_info.flags = 0;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.3] Call boot_early_init\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.3.1] Before call\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.3.2] Calling function\n");
-    __asm__ volatile ("" ::: "memory");
+
     int boot_result = boot_early_init(&boot_info);
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.3.3] After call\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1.3.4] Check result\n");
-    __asm__ volatile ("" ::: "memory");
     if (boot_result != 0) {
-        kputs("[INIT-1-ERR] Boot init failed\n");
+        kputs("[INIT-ERR] Boot init failed\n");
         panic("Boot init failed");
     }
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[INIT-1-OK] Boot done\n");
-    __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT] Boot done\n");
     
     /* Step 2: Initialize CPU */
-    kputs("[INIT-2] CPU\n");
-    __asm__ volatile ("" ::: "memory");
+    kputs("[INIT] CPU\n");
     extern int cpu_init(void);
     if (cpu_init() != 0) {
         panic("CPU init failed");
     }
-    __asm__ volatile ("" ::: "memory");
     
     /* Step 3: Initialize interrupts */
-    kputs("[INIT-3] Interrupts\n");
-    __asm__ volatile ("" ::: "memory");
+    kputs("[INIT] Interrupts\n");
     if (interrupts_init() != 0) {
         panic("Interrupts init failed");
     }
-    __asm__ volatile ("" ::: "memory");
     
     /* Step 4: Initialize memory */
-    kputs("[INIT-4] Memory\n");
-    __asm__ volatile ("" ::: "memory");
+    kputs("[INIT] Memory\n");
     if (memory_init() != 0) {
         panic("Memory init failed");
     }
-    __asm__ volatile ("" ::: "memory");
     
     /* Step 5: Initialize APIC (after paging is ready) */
     kputs("[INIT-5] APIC\n");

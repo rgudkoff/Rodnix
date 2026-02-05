@@ -7,7 +7,7 @@ ENTRY(start)
 
 SECTIONS
 {
-    /* Kernel starts at 1MB */
+    /* Load address for boot + kernel image */
     . = 0x100000;
 
     /* Multiboot2 header must be in first 32KB */
@@ -15,33 +15,51 @@ SECTIONS
         *(.multiboot_header)
     }
 
-    /* Text section */
-    .text : ALIGN(4K) {
+    /* Boot/early code (must remain in low memory) */
+    .text.start : ALIGN(4K) {
         *(.text.start)
+        *(.text64)
+    }
+
+    .boot.rodata : ALIGN(4K) {
+        *(.boot.rodata)
+    }
+
+    .boot.bss (NOLOAD) : ALIGN(4K) {
+        *(.boot.bss)
+    }
+
+    /* Record physical start for the high-half kernel image */
+    kernel_phys_start = .;
+
+    /* Higher-half direct-map base */
+    KERNEL_VMA_BASE = 0xFFFFFFFF80000000;
+    KERNEL_VMA = KERNEL_VMA_BASE + kernel_phys_start;
+
+    /* Place kernel sections at high virtual addresses (direct-map) */
+    . = KERNEL_VMA;
+
+    .text ALIGN(4K) : AT(ADDR(.text) - KERNEL_VMA_BASE) {
         *(.text)
         *(.text.*)
     }
 
-    /* Read-only data */
-    .rodata : ALIGN(4K) {
+    .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_VMA_BASE) {
         *(.rodata)
         *(.rodata.*)
     }
 
-    /* Data section */
-    .data : ALIGN(4K) {
+    .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_VMA_BASE) {
         *(.data)
         *(.data.*)
     }
 
-    /* BSS section */
-    .bss : ALIGN(4K) {
+    .bss ALIGN(4K) : AT(ADDR(.bss) - KERNEL_VMA_BASE) {
         *(COMMON)
         *(.bss)
         *(.bss.*)
     }
 
-    /* End of kernel */
+    /* End of kernel (virtual) */
     kernel_end = .;
 }
-

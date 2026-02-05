@@ -20,6 +20,9 @@
 ; CR4 constants
 %define CR4_PAE     (1 << 5)
 
+; Kernel virtual base (higher-half)
+%define KERNEL_VMA  0xFFFFFFFF80000000
+
 ; Multiboot2 header
 section .multiboot_header
 align 8
@@ -37,7 +40,7 @@ global start
 extern kmain
 
 ; Early stacks
-section .bss
+section .boot.bss nobits
 align 16
 stack32_bottom:
     resb 32*1024
@@ -62,12 +65,17 @@ pdpt0:
     resq 512
 
 align 4096
+global pdpt1
+pdpt1:
+    resq 512
+
+align 4096
 global pd0
 pd0:
     resq 512   ; 2MiB pages for first 1GiB (512 entries)
 
 ; Tiny GDT (null, code64, data)
-section .rodata
+section .boot.rodata
 align 16
 gdt64:
     dq 0
@@ -148,6 +156,10 @@ build_identity_1g:
     mov  ecx, 512*8/4
     rep  stosd
 
+    mov  edi, pdpt1
+    mov  ecx, 512*8/4
+    rep  stosd
+
     mov  edi, pd0
     mov  ecx, 512*8/4
     rep  stosd
@@ -158,11 +170,23 @@ build_identity_1g:
     mov  [pml4 + 0*8], eax
     mov  dword [pml4 + 0*8 + 4], 0
 
+    ; PML4[511] -> PDPT1 | P=1, RW=1 (higher-half)
+    mov  eax, pdpt1
+    or   eax, 0x003
+    mov  [pml4 + 511*8], eax
+    mov  dword [pml4 + 511*8 + 4], 0
+
     ; PDPT0[0] -> PD0 | P=1, RW=1
     mov  eax, pd0
     or   eax, 0x003
     mov  [pdpt0 + 0*8], eax
     mov  dword [pdpt0 + 0*8 + 4], 0
+
+    ; PDPT1[510] -> PD0 | P=1, RW=1 (maps 0..1GiB at KERNEL_VMA)
+    mov  eax, pd0
+    or   eax, 0x003
+    mov  [pdpt1 + 510*8], eax
+    mov  dword [pdpt1 + 510*8 + 4], 0
 
     ; Fill PD0 with 2MiB mappings (PS=1)
     mov  ecx, 512
@@ -189,28 +213,39 @@ long_mode_entry:
     mov es, ax
     mov ss, ax
 
-    ; Switch to 64-bit stack
+    ; Switch to 64-bit stack (use higher-half alias)
     lea rsp, [rel stack64_top]
+    mov rax, KERNEL_VMA
+    add rsp, rax
+
+    ; Enable SSE/FXSR for early C code
+    mov rax, cr0
+    and rax, -5            ; clear EM (bit 2), preserve high bits
+    or  rax, 0x0002        ; set MP (bit 1)
+    mov cr0, rax
+    mov rax, cr4
+    or  eax, 0x0600        ; set OSFXSR (bit 9) and OSXMMEXCPT (bit 10)
+    mov cr4, rax
 
     ; Pass multiboot2 magic and mbi to kmain as (RDI, RSI)
     mov edi, dword [rel mb_magic]
     mov rsi, qword [rel mb_mbi]
+    add rsi, KERNEL_VMA
 
     ; Clear direction flag
     cld
 
     ; Call kmain(uint32_t magic, void* mbi)
-    lea rax, [rel kmain]
+    mov rax, kmain
     call rax
         
 .hang:
     hlt
     jmp .hang
 
-section .bss
+section .boot.bss nobits
 align 8
 mb_magic:
     resd 1
 mb_mbi:
     resq 1
-
