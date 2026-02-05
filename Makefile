@@ -41,6 +41,8 @@ KERNEL_C_SRCS = \
 	kernel/common/scheduler.c \
 	kernel/common/syscall.c \
 	kernel/common/ipc.c \
+	kernel/common/idl_runtime.c \
+	kernel/common/idl_demo.c \
 	kernel/common/security.c \
 	kernel/common/bootstrap.c \
 	kernel/common/loader.c \
@@ -110,9 +112,12 @@ QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial file:boot.log -no-r
                    -machine pc -cpu qemu64,+apic,+x2apic
 QEMU_DEBUG_FLAGS = -s -S
 
+IDL_OUT ?= build/idl
+IDL_INPUT ?= scripts/idl/example.defs
+
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check help check-deps
+.PHONY: all clean run iso debug check help check-deps idl
 
 # ===== Build =====
 all: $(KERNEL_BIN)
@@ -240,12 +245,21 @@ clean:
 check-deps:
 	@bash scripts/check-deps.sh
 
+idl:
+	@mkdir -p $(IDL_OUT)
+	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
+
+idl-copy:
+	@mkdir -p include/idl
+	@cp -f $(IDL_OUT)/*.h include/idl/
+
 help:
 	@echo "RodNIX Build System (64-bit)"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all         - Build kernel (default)"
 	@echo "  clean       - Remove build artifacts"
+	@echo "  idl         - Generate IDL headers"
 	@echo "  iso         - Create bootable ISO with GRUB"
 	@echo "  run         - Run kernel in QEMU"
 	@echo "  debug       - Run with debugger support"

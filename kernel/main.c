@@ -13,6 +13,9 @@
 #include "common/security.h"
 #include "common/bootstrap.h"
 #include "common/loader.h"
+#include "common/idl_demo.h"
+#include "core/boot.h"
+#include "arch/x86_64/config.h"
 
 static void idle_thread(void* arg)
 {
@@ -217,6 +220,11 @@ void kmain(uint32_t magic, void* mbi)
 
     kputs("[INIT-9.6] VFS/RAMFS\n");
     __asm__ volatile ("" ::: "memory");
+    boot_info_t* bi = boot_get_info();
+    if (bi && bi->initrd_start && bi->initrd_size) {
+        void* initrd = X86_64_PHYS_TO_VIRT(bi->initrd_start);
+        vfs_set_initrd(initrd, (size_t)bi->initrd_size);
+    }
     if (vfs_init() != 0) {
         kputs("[INIT-9.6] VFS init failed\n");
     } else {
@@ -312,6 +320,7 @@ void kmain(uint32_t magic, void* mbi)
     thread_t* shell = thread_create(kernel_task, shell_thread, NULL);
     thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
     bootstrap_start();
+    idl_demo_start();
     if (!shell || !idle) {
         panic("Kernel thread create failed");
     }

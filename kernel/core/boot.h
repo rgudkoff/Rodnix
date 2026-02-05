@@ -25,6 +25,8 @@ typedef struct {
     void* boot_info;           /* Информация от загрузчика */
     uint64_t mem_lower;        /* Нижняя граница памяти */
     uint64_t mem_upper;        /* Верхняя граница памяти */
+    uint64_t initrd_start;     /* Physical start of initrd (if any) */
+    uint64_t initrd_size;      /* Size of initrd (bytes) */
     char cmdline[BOOT_LINE_LENGTH];  /* Command line (XNU-style: fixed buffer) */
     uint32_t flags;           /* Флаги загрузки */
     void* mmap_addr;          /* Multiboot2 memory map tag address */

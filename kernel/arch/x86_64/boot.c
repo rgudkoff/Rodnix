@@ -26,6 +26,7 @@ struct multiboot2_tag {
 /* Multiboot2 tag types */
 #define MB2_TAG_END           0
 #define MB2_TAG_CMDLINE       1
+#define MB2_TAG_MODULE        3
 #define MB2_TAG_BASIC_MEMINFO 4
 #define MB2_TAG_MMAP          6
 
@@ -42,6 +43,15 @@ struct multiboot2_tag_basic_meminfo {
     uint32_t size;
     uint32_t mem_lower; /* in KB */
     uint32_t mem_upper; /* in KB */
+} __attribute__((packed));
+
+/* Multiboot2 module tag (type 3) */
+struct multiboot2_tag_module {
+    uint32_t type;
+    uint32_t size;
+    uint32_t mod_start;
+    uint32_t mod_end;
+    char cmdline[];
 } __attribute__((packed));
 
 /* Multiboot2 memory map tag (type 6) */
@@ -174,7 +184,11 @@ int boot_early_init(boot_info_t* info)
     
     boot_info_storage.mem_upper = info->mem_upper;
     __asm__ volatile ("" ::: "memory");
-    
+
+    boot_info_storage.initrd_start = 0;
+    boot_info_storage.initrd_size = 0;
+    __asm__ volatile ("" ::: "memory");
+
     boot_info_storage.flags = info->flags;
     __asm__ volatile ("" ::: "memory");
 
@@ -210,6 +224,14 @@ int boot_early_init(boot_info_t* info)
                 case MB2_TAG_CMDLINE:
                     mb2_parse_cmdline((const struct multiboot2_tag_string*)tag);
                     break;
+                case MB2_TAG_MODULE: {
+                    const struct multiboot2_tag_module* mod = (const struct multiboot2_tag_module*)tag;
+                    if (boot_info_storage.initrd_start == 0 && mod->mod_end > mod->mod_start) {
+                        boot_info_storage.initrd_start = (uint64_t)mod->mod_start;
+                        boot_info_storage.initrd_size = (uint64_t)(mod->mod_end - mod->mod_start);
+                    }
+                    break;
+                }
                 case MB2_TAG_BASIC_MEMINFO:
                     mb2_parse_meminfo((const struct multiboot2_tag_basic_meminfo*)tag);
                     break;

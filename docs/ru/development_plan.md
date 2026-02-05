@@ -14,6 +14,11 @@
    - Минимальный userland: bootstrap‑порт/сервер.
    - Интеграция bootstrap с IDL/IPC.
 
+1.1. Toolchain и ABI (для приложений)
+   - Зафиксировать ABI: calling convention, syscall ABI, errno, базовые типы.
+   - Минимальный sysroot: `crt0`, headers, libc‑stub.
+   - Кросс‑компилятор (clang/gcc) с target `x86_64-rodnix`.
+
 2. Планировщик
    - MLQ/priority queues + таймслайс.
    - Политики приоритетов и базовая диагностика.

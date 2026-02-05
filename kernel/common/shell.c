@@ -106,6 +106,7 @@ static int shell_cmd_sched(int argc, char** argv)
     kprintf("  running_tasks:  %llu\n", (unsigned long long)stats.running_tasks);
     kprintf("  ready_tasks:    %llu\n", (unsigned long long)stats.ready_tasks);
     kprintf("  blocked_tasks:  %llu\n", (unsigned long long)stats.blocked_tasks);
+    scheduler_debug_dump();
     return 0;
 }
 /**

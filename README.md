@@ -25,18 +25,23 @@ RodNIX is in early active development.
 Implemented so far (x86_64 focus):
 - Multiboot2-compliant boot sequence
 - 32-bit boot stub with transition toward 64-bit long mode
+- Higher-half kernel mapping with early physmap bootstrap
 - GDT and IDT initialization
 - ISR and IRQ handling
 - PIC remapping
-- PIT timer initialization
+- PIT timer initialization (LAPIC timer available)
 - VGA text-mode console
 - Minimal interactive shell
 - PS/2 keyboard input (polling via InputCore; IRQ path prepared)
 - Physical memory manager (bitmap, early fixed map) and paging groundwork
 - Multiboot2 memory map parsing (boot-time)
+- Initrd import into RAMFS (simple RDNX format)
 - Fabric core: bus/device/driver/service registries and matching
 - Buses: virtual bus, PCI enumeration (minimal), PS/2 keyboard publication
 - HID keyboard driver (via Fabric) publishing a "keyboard" service
+- Minimal POSIX syscall table (GET* IDs, SET* IDs, open/read/write/close via VFS)
+- Minimal per-task file descriptor table
+- IPC core with ports and a minimal IDL IPC runtime
 - ISO image generation (GRUB-based) and QEMU support
 
 Expect frequent changes and refactoring.
@@ -94,11 +99,10 @@ input is planned via Fabric.
 ## Roadmap
 
 Short-term:
-- Complete x86_64 long mode transition
-- Stable paging with higher-half kernel mapping
 - Cleanup of interrupt and timer subsystems
 - Improved shell commands
 - Integrate IRQ-based keyboard path through Fabric (replace polling fallback)
+- IDL IPC runtime demo (end-to-end example)
 
 Mid-term:
 - Driver isolation and abstraction layer
@@ -122,6 +126,18 @@ Do not test on machines with sensitive data.
 Expect crashes, hangs, and undefined behavior.
 
 Security issues can be reported via SECURITY.md.
+
+## v0.2 Release Focus
+
+The v0.2 milestone targets a stable boot-to-shell experience and a documented
+development baseline:
+
+- Stable Multiboot2 → long mode → kmain transition
+- Higher-half kernel mapping with early physmap
+- VFS + initrd import (RDNX)
+- Minimal syscall table and per-task fd table
+- IPC + minimal IDL runtime
+- Updated docs and repeatable QEMU boot logs
 
 ## Contributing
 

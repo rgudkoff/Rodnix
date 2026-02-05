@@ -34,3 +34,15 @@ gdb build/rodnix.kernel
 ## Где смотреть
 
 - `docs/BUILD.md` для расширенных инструкций.
+
+## CI (план)
+
+- Сборка ISO в GitHub Actions.
+- Headless QEMU и проверка serial log на “boot ok / shell prompt”.
+- Разделение toolchain и ядра, чтобы упростить кэширование.
+
+## Smoke‑test (локально)
+
+```bash
+scripts/ci/smoke_qemu.sh
+```
