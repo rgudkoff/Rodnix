@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "../posix/posix_syscall.h"
+#include "../../include/error.h"
 #include <stddef.h>
 
 static syscall_fn_t syscall_table[SYSCALL_MAX];
@@ -17,7 +18,7 @@ static uint64_t sys_nop(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
-    return 0;
+    return RDNX_OK;
 }
 
 void syscall_init(void)
@@ -33,11 +34,11 @@ void syscall_init(void)
 int syscall_register(uint32_t num, syscall_fn_t fn)
 {
     if (num >= SYSCALL_MAX || !fn) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     syscall_table[num] = fn;
-    return 0;
+    return RDNX_OK;
 }
 
 uint64_t syscall_dispatch(uint64_t num,

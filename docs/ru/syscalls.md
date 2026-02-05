@@ -2,9 +2,9 @@
 
 ## Стратегия
 
-- Таблица системных вызовов располагается в BSD‑слое.
+- Таблица системных вызовов располагается в POSIX‑слое.
 - Вход из userland через ловушку/переходник (traps).
-- Пользовательские API строятся поверх BSD‑слоя.
+- Пользовательские API строятся поверх POSIX‑слоя.
 
 ## MVP
 
@@ -20,11 +20,22 @@
   - `rax` — код возврата.
 - Таблица syscalls: `kernel/common/syscall.c`.
 - Есть POSIX‑слой: `kernel/posix/posix_syscall.c` (таблица + минимальные вызовы).
-- Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`.
+- Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`, `UNAME`.
 - Реализованы базовые `SETUID/SETEUID/SETGID/SETEGID` (только для root).
 - Добавлены `OPEN/CLOSE/READ/WRITE` поверх VFS (in‑kernel, без userland).
-- Неизвестный номер возвращает `-1`.
+- Неизвестный номер возвращает `RDNX_E_UNSUPPORTED`.
 - Временная модель: `open` возвращает fd из per‑task таблицы (простая фиксированная таблица).
+
+### UNAME
+
+- Syscall: `POSIX_SYS_UNAME`.
+- Заполняет `utsname_t`:
+  - `sysname` — имя ядра.
+  - `nodename` — имя узла (пока статически).
+  - `release` — версия релиза.
+  - `version` — строка сборки.
+  - `machine` — архитектура.
+- Возврат: `RDNX_OK` или `RDNX_E_INVALID`.
 
 ## Инварианты
 

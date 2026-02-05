@@ -36,7 +36,7 @@ static bool log_prefix_enabled = true;
 static bool log_at_line_start = true;
 static bool log_prefix_in_progress = false;
 
-static uint64_t console_get_uptime_us(void)
+static uint64_t console_get_uptime_us_internal(void)
 {
     extern bool apic_is_available(void);
     extern uint32_t apic_timer_get_ticks(void);
@@ -59,6 +59,10 @@ static uint64_t console_get_uptime_us(void)
     }
 
     return (ticks * 1000000ULL) / (uint64_t)freq;
+}
+uint64_t console_get_uptime_us(void)
+{
+    return console_get_uptime_us_internal();
 }
 
 static void console_write_dec_fixed(uint64_t value, int width)
@@ -100,7 +104,7 @@ static void console_write_hex_fixed(uint64_t value, int width)
 
 static void console_write_log_prefix(void)
 {
-    uint64_t us = console_get_uptime_us();
+    uint64_t us = console_get_uptime_us_internal();
     uint64_t sec = us / 1000000ULL;
     uint64_t micros = us % 1000000ULL;
     uint64_t hours = (sec / 3600ULL) % 24ULL;

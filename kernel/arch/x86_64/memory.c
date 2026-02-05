@@ -18,6 +18,26 @@
 #include "paging.h"
 #include <stddef.h>
 #include <stdbool.h>
+#include "../../../include/error.h"
+
+static uint64_t memory_oom_pmm = 0;
+static uint64_t memory_oom_vmm = 0;
+static uint64_t memory_oom_heap = 0;
+
+void memory_oom_inc_pmm(void)
+{
+    memory_oom_pmm++;
+}
+
+void memory_oom_inc_vmm(void)
+{
+    memory_oom_vmm++;
+}
+
+void memory_oom_inc_heap(void)
+{
+    memory_oom_heap++;
+}
 
 /* ============================================================================
  * Internal Helper Functions
@@ -186,6 +206,16 @@ int memory_init(void)
         return -1;
     }
 
+    /* Release init sections back to PMM */
+    extern char __init_start;
+    extern char __init_end;
+    uint64_t init_start = (uint64_t)X86_64_VIRT_TO_PHYS(&__init_start);
+    uint64_t init_end = (uint64_t)X86_64_VIRT_TO_PHYS(&__init_end);
+    if (init_end > init_start) {
+        TRACE_EVENT("memory: release init sections");
+        pmm_release_range(init_start, init_end);
+    }
+
     /* Log PMM summary */
     extern uint64_t pmm_get_total_pages(void);
     extern uint64_t pmm_get_free_pages(void);
@@ -327,6 +357,8 @@ void* vmm_alloc_pages(uint32_t count, uint64_t flags)
     extern uint64_t pmm_alloc_pages(uint32_t pages);
     uint64_t phys = pmm_alloc_pages(count);
     if (!phys) {
+        TRACE_EVENT("oom: vmm_alloc_pages");
+        memory_oom_inc_vmm();
         return NULL;
     }
     return X86_64_PHYS_TO_VIRT(phys);
@@ -359,7 +391,7 @@ void vmm_free_pages(void* virt, uint32_t count)
 int memory_get_info(memory_info_t* info)
 {
     if (!info) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     
     /* Get PMM statistics */
@@ -371,6 +403,9 @@ int memory_get_info(memory_info_t* info)
     info->total_virtual = 0;
     info->free_virtual = 0;
     info->used_virtual = 0;
+    info->oom_pmm = memory_oom_pmm;
+    info->oom_vmm = memory_oom_vmm;
+    info->oom_heap = memory_oom_heap;
     
-    return 0;
+    return RDNX_OK;
 }

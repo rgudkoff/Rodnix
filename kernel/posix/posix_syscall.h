@@ -27,6 +27,7 @@ enum {
     POSIX_SYS_CLOSE = 11,
     POSIX_SYS_READ = 12,
     POSIX_SYS_WRITE = 13,
+    POSIX_SYS_UNAME = 14,
 };
 
 void posix_syscall_init(void);

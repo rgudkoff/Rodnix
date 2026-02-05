@@ -14,6 +14,7 @@
 #include "config.h"
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
+#include "../../core/memory.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -813,6 +814,8 @@ uint64_t pmm_alloc_page(void)
 uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
 {
     if (pmm_state.free_pages == 0 || zone >= PMM_ZONE_COUNT) {
+        TRACE_EVENT("oom: pmm_alloc_page");
+        memory_oom_inc_pmm();
         return 0;
     }
 
@@ -837,6 +840,8 @@ uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
         }
     }
     if (!found) {
+        TRACE_EVENT("oom: pmm_alloc_page");
+        memory_oom_inc_pmm();
         return 0;
     }
 
@@ -970,6 +975,15 @@ void pmm_reserve_range(uint64_t start, uint64_t end)
     pmm_mark_range_used(start, end);
     pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
                    start, end - start);
+    pmm_rebuild_free_lists();
+}
+
+void pmm_release_range(uint64_t start, uint64_t end)
+{
+    if (end <= start) {
+        return;
+    }
+    pmm_mark_range_free(start, end);
     pmm_rebuild_free_lists();
 }
 

@@ -10,6 +10,7 @@
 
 /* x86_64 specific constants */
 #define X86_64_KERNEL_VIRT_BASE 0xFFFFFFFF80000000ULL
+#define X86_64_MACHINE "x86_64"
 
 /* x86_64 page sizes */
 #define X86_64_PAGE_SIZE_4KB  4096
@@ -21,4 +22,3 @@
 #define X86_64_PHYS_TO_VIRT(addr) ((void*)((uintptr_t)(addr) + X86_64_KERNEL_VIRT_BASE))
 
 #endif /* _RODNIX_ARCH_X86_64_CONFIG_H */
-

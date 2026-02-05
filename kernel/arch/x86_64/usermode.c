@@ -10,6 +10,7 @@
 #include "types.h"
 #include "config.h"
 #include "../../include/common.h"
+#include "../../include/error.h"
 #include <stdint.h>
 
 #define USER_CODE_VA  0x0000000040000000ULL
@@ -26,7 +27,7 @@ static uint64_t user_pml4_phys = 0;
 int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 {
     if (!entry || !user_stack || !rsp0_out) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     extern void kputs(const char* str);
@@ -35,23 +36,23 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     user_pml4_phys = paging_create_user_pml4();
     if (!user_pml4_phys) {
         kputs("[USERMODE] create_pml4 failed\n");
-        return -1;
+        return RDNX_E_NOMEM;
     }
 
     uint64_t code_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     uint64_t stack_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     if (!code_phys || !stack_phys) {
         kputs("[USERMODE] alloc pages failed\n");
-        return -1;
+        return RDNX_E_NOMEM;
     }
 
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
         kputs("[USERMODE] map code failed\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
         kputs("[USERMODE] map stack failed\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     memcpy(X86_64_PHYS_TO_VIRT(code_phys), user_stub_code, sizeof(user_stub_code));
@@ -61,7 +62,7 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     *entry = (void*)(uintptr_t)USER_CODE_VA;
     *user_stack = (void*)(uintptr_t)(USER_STACK_VA + X86_64_PAGE_SIZE - 16);
     *rsp0_out = 0;
-    return 0;
+    return RDNX_OK;
 }
 
 void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)

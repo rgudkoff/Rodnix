@@ -7,6 +7,7 @@
 #include "../core/interrupts.h"
 #include "../arch/x86_64/interrupt_frame.h"
 #include "../../include/debug.h"
+#include "../../include/error.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -483,11 +484,11 @@ void scheduler_ast_check(void)
 int scheduler_get_stats(scheduler_stats_t* out_stats)
 {
     if (!out_stats) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     
     *out_stats = stats;
-    return 0;
+    return RDNX_OK;
 }
 
 uint64_t scheduler_get_ticks(void)

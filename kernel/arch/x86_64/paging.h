@@ -6,6 +6,7 @@
 #ifndef _RODNIX_ARCH_X86_64_PAGING_H
 #define _RODNIX_ARCH_X86_64_PAGING_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Initialize paging */

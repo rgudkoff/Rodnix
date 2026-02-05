@@ -6,6 +6,7 @@
 #include "heap.h"
 #include "../../include/common.h"
 #include "../../include/debug.h"
+#include "../../include/error.h"
 #include "../core/memory.h"
 #include "../core/config.h"
 
@@ -114,7 +115,9 @@ static heap_block_t* heap_grow(size_t min_size)
 
     void* mem = vmm_alloc_pages((uint32_t)pages, PAGE_FLAG_WRITABLE);
     if (!mem) {
-        return NULL;
+        TRACE_EVENT("oom: heap_grow");
+        memory_oom_inc_heap();
+        PANIC("OOM: heap_grow pages=%u", (unsigned)pages);
     }
 
     heap_block_t* block = (heap_block_t*)mem;
@@ -134,7 +137,7 @@ static heap_block_t* heap_grow(size_t min_size)
 int heap_init(size_t initial_pages)
 {
     if (heap_head) {
-        return 0;
+        return RDNX_OK;
     }
 
     if (initial_pages == 0) {
@@ -143,7 +146,9 @@ int heap_init(size_t initial_pages)
 
     void* mem = vmm_alloc_pages((uint32_t)initial_pages, PAGE_FLAG_WRITABLE);
     if (!mem) {
-        return -1;
+        TRACE_EVENT("oom: heap_init");
+        memory_oom_inc_heap();
+        PANIC("OOM: heap_init pages=%u", (unsigned)initial_pages);
     }
 
     heap_block_t* block = (heap_block_t*)mem;
@@ -154,7 +159,7 @@ int heap_init(size_t initial_pages)
     heap_head = block;
     heap_tail = block;
 
-    return 0;
+    return RDNX_OK;
 }
 
 void* kmalloc(size_t size)

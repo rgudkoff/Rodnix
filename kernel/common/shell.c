@@ -17,11 +17,16 @@
 #include "../core/boot.h"
 #include "../fs/vfs.h"
 #include "../core/cpu.h"
+#include "../core/memory.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
+#include "../../include/error.h"
+#include "../../include/utsname.h"
+#include "../posix/posix_syscall.h"
 #include "../common/scheduler.h"
 #include "../core/interrupts.h"
+#include "../fabric/fabric.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -72,9 +77,12 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  help      - Show this help message\n");
     kputs("  clear     - Clear the screen\n");
     kputs("  info      - Show system information\n");
+    kputs("  sysinfo   - Show extended system status\n");
     kputs("  cpu       - Show CPU information\n");
     kputs("  memory    - Show memory statistics\n");
     kputs("  mem       - Alias for memory\n");
+    kputs("  uname     - Show kernel identity\n");
+    kputs("  uptime    - Show system uptime\n");
     kputs("  timer     - Show timer information\n");
     kputs("  echo      - Echo arguments\n");
     kputs("  sched     - Show scheduler statistics\n");
@@ -97,7 +105,7 @@ static int shell_cmd_sched(int argc, char** argv)
     scheduler_stats_t stats;
     if (scheduler_get_stats(&stats) != 0) {
         kputs("scheduler stats unavailable\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     kprintf("Scheduler Stats:\n");
@@ -147,6 +155,141 @@ static int shell_cmd_info(int argc, char** argv)
     kputs("\n");
     
     return 0;
+}
+
+static void shell_print_uptime(void)
+{
+    uint64_t us = console_get_uptime_us();
+    uint64_t sec = us / 1000000ULL;
+    uint64_t mins = sec / 60ULL;
+    uint64_t hours = mins / 60ULL;
+    uint64_t days = hours / 24ULL;
+    sec %= 60ULL;
+    mins %= 60ULL;
+    hours %= 24ULL;
+    /* kprintf doesn't support width/zero-pad, so format manually */
+    if (hours < 10) kputc('0');
+    kprintf("%llu:", (unsigned long long)hours);
+    if (mins < 10) kputc('0');
+    kprintf("%llu:", (unsigned long long)mins);
+    if (sec < 10) kputc('0');
+    kprintf("%llu\n", (unsigned long long)sec);
+    if (days > 0) {
+        kprintf("(%llu days)\n", (unsigned long long)days);
+    }
+}
+
+static int shell_cmd_uname(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    utsname_t u;
+    if (posix_syscall_dispatch(POSIX_SYS_UNAME, (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+    bool all = false;
+    if (argc >= 2 && argv[1] && strcmp(argv[1], "-a") == 0) {
+        all = true;
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-s") == 0)) {
+        kputs(u.sysname);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-r") == 0)) {
+        kputs(u.release);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-v") == 0)) {
+        kputs(u.version);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-m") == 0)) {
+        kputs(u.machine);
+    }
+    if (argc < 2) {
+        kputs(u.sysname);
+    }
+    kputc('\n');
+    return RDNX_OK;
+}
+
+static int shell_cmd_uptime(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    shell_print_uptime();
+    return RDNX_OK;
+}
+
+static int shell_cmd_sysinfo(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    utsname_t u;
+    if (posix_syscall_dispatch(POSIX_SYS_UNAME, (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+
+    memory_info_t mem;
+    if (memory_get_info(&mem) != RDNX_OK) {
+        memset(&mem, 0, sizeof(mem));
+    }
+
+    kputs("OS:           ");
+    kputs(u.sysname);
+    kputc('\n');
+    kputs("Kernel:       ");
+    kputs(u.release);
+    kputc('\n');
+    kputs("Build:        ");
+    kputs(u.version);
+    kputc('\n');
+    kputs("Architecture: ");
+    kputs(u.machine);
+    kputc('\n');
+
+    kputs("Scheduler:    Preemptive MLQ\n");
+
+    extern bool apic_is_available(void);
+    extern bool ioapic_is_available(void);
+    kputs("Timer:        ");
+    if (apic_is_available()) {
+        kputs("LAPIC\n");
+    } else {
+        kputs("PIT\n");
+    }
+
+    kputs("Interrupts:   ");
+    if (apic_is_available()) {
+        if (ioapic_is_available()) {
+            kputs("LAPIC+IOAPIC\n");
+        } else {
+            kputs("LAPIC+PIC\n");
+        }
+    } else {
+        kputs("PIC\n");
+    }
+
+    kputs("Paging:       enabled (higher-half physmap)\n");
+
+    fabric_stats_t fstats;
+    if (fabric_get_stats(&fstats) == RDNX_OK) {
+        kprintf("Fabric:       enabled\n");
+        kprintf("Drivers:      %u loaded\n", fstats.drivers);
+    } else {
+        kprintf("Fabric:       unknown\n");
+    }
+
+    kprintf("Uptime:       ");
+    shell_print_uptime();
+
+    kprintf("OOM:          pmm=%llu vmm=%llu heap=%llu\n",
+            (unsigned long long)mem.oom_pmm,
+            (unsigned long long)mem.oom_vmm,
+            (unsigned long long)mem.oom_heap);
+
+    return RDNX_OK;
 }
 
 /**
@@ -209,6 +352,8 @@ static int shell_cmd_memory(int argc, char** argv)
     uint64_t free = pmm_get_free_pages();
     uint64_t used = pmm_get_used_pages();
     boot_info_t* bi = boot_get_info();
+    memory_info_t mem;
+    bool mem_ok = (memory_get_info(&mem) == RDNX_OK);
 
     typedef struct {
         uint64_t total_pages;
@@ -229,6 +374,12 @@ static int shell_cmd_memory(int argc, char** argv)
     kprintf("  Total: %llu pages (%llu KB)\n", total, (total * 4));
     kprintf("  Free:  %llu pages (%llu KB)\n", free, (free * 4));
     kprintf("  Used:  %llu pages (%llu KB)\n", used, (used * 4));
+    if (mem_ok) {
+        kprintf("  OOM:   pmm=%llu vmm=%llu heap=%llu\n",
+                (unsigned long long)mem.oom_pmm,
+                (unsigned long long)mem.oom_vmm,
+                (unsigned long long)mem.oom_heap);
+    }
     if (bi) {
         kprintf("Boot Memory Info:\n");
         kprintf("  Usable (MB2): %llu KB\n", (unsigned long long)(bi->mem_lower / 1024ULL));
@@ -507,9 +658,12 @@ static const struct shell_command commands[] = {
     {"sched",   shell_cmd_sched,   "Show scheduler statistics"},
     {"clear",   shell_cmd_clear,    "Clear the screen"},
     {"info",    shell_cmd_info,    "Show system information"},
+    {"sysinfo", shell_cmd_sysinfo, "Show extended system status"},
     {"cpu",     shell_cmd_cpu,     "Show CPU information"},
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
     {"mem",     shell_cmd_memory,  "Alias for memory"},
+    {"uname",   shell_cmd_uname,   "Show kernel identity"},
+    {"uptime",  shell_cmd_uptime,  "Show system uptime"},
     {"timer",   shell_cmd_timer,   "Show timer information"},
     {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
     {"ls",      shell_cmd_ls,      "List directory"},

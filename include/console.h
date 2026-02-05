@@ -128,4 +128,7 @@ void console_reset_color(void);
 /* Log prefix control */
 void console_set_log_prefix_enabled(bool enabled);
 
+/* Uptime (microseconds) */
+uint64_t console_get_uptime_us(void);
+
 #endif /* _RODNIX_CONSOLE_H */

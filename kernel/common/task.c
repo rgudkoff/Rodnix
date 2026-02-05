@@ -8,6 +8,7 @@
 #include "../core/cpu.h"
 #include "../arch/x86_64/interrupt_frame.h"
 #include "../core/interrupts.h"
+#include "../../include/error.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -119,7 +120,7 @@ uint32_t task_get_egid(const task_t* task)
 int task_fd_alloc(task_t* task, void* handle)
 {
     if (!task || !handle) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     for (int i = 0; i < TASK_MAX_FD; i++) {
         if (!task->fd_table[i]) {
@@ -127,7 +128,7 @@ int task_fd_alloc(task_t* task, void* handle)
             return i;
         }
     }
-    return -1;
+    return RDNX_E_BUSY;
 }
 
 void* task_fd_get(task_t* task, int fd)
@@ -141,13 +142,13 @@ void* task_fd_get(task_t* task, int fd)
 int task_fd_close(task_t* task, int fd)
 {
     if (!task || fd < 0 || fd >= TASK_MAX_FD) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (!task->fd_table[fd]) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     task->fd_table[fd] = NULL;
-    return 0;
+    return RDNX_OK;
 }
 
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)

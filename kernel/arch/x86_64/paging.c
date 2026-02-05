@@ -16,6 +16,7 @@
 #include "config.h"
 #include "pmm.h"
 #include "../../../include/debug.h"
+#include "../../../include/error.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -252,10 +253,10 @@ static uint64_t* paging_get_pt_for(uint64_t pd_entry)
 int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     if (!pml4_phys) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     uint64_t* pml4 = (uint64_t*)(pml4_phys + X86_64_KERNEL_VIRT_BASE);
@@ -269,7 +270,7 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
     if (!(pml4_entry & PTE_PRESENT)) {
         uint64_t pdpt_phys = paging_alloc_page_table_low();
         if (!pdpt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW | (flags & PTE_USER);
         pml4[pml4_idx] = pml4_entry;
@@ -283,7 +284,7 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
     if (!(pdpt_entry & PTE_PRESENT)) {
         uint64_t pd_phys = paging_alloc_page_table_low();
         if (!pd_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW | (flags & PTE_USER);
         pdpt[pdpt_idx] = pdpt_entry;
@@ -297,7 +298,7 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
     if (!(pd_entry & PTE_PRESENT)) {
         uint64_t pt_phys = paging_alloc_page_table_low();
         if (!pt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pd_entry = pt_phys | PTE_PRESENT | PTE_RW | (flags & PTE_USER);
         pd[pd_idx] = pd_entry;
@@ -413,7 +414,7 @@ int paging_init(void)
     __asm__ volatile ("mov %%cr3, %0" : "=r"(current_pml4_phys));
     
     if (!current_pml4_phys) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     return 0;
 }
@@ -431,12 +432,12 @@ int paging_init(void)
 int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
-        return -1; /* Not page-aligned */
+        return RDNX_E_GENERIC; /* Not page-aligned */
     }
     
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     
     /* Get indices */
@@ -453,7 +454,7 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
         /* Allocate new PDPT */
         uint64_t pdpt_phys = paging_alloc_page_table();
         if (!pdpt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
         pml4[pml4_idx] = pml4_entry;
@@ -470,7 +471,7 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
         /* Allocate new PD */
         uint64_t pd_phys = paging_alloc_page_table();
         if (!pd_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
         pdpt[pdpt_idx] = pdpt_entry;
@@ -487,7 +488,7 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
         /* Allocate new PT */
         uint64_t pt_phys = paging_alloc_page_table();
         if (!pt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pd_entry = pt_phys | PTE_PRESENT | PTE_RW;
         pd[pd_idx] = pd_entry;
@@ -495,7 +496,7 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
     } else {
         /* Check if this is a 2MB page */
         if (pd_entry & PTE_SIZE_2MB) {
-            return -1; /* Cannot map 4KB page where 2MB page exists */
+            return RDNX_E_GENERIC; /* Cannot map 4KB page where 2MB page exists */
         }
         pt = paging_get_pt(pd_entry);
     }
@@ -527,12 +528,12 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
 int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
-        return -1; /* Not page-aligned */
+        return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Get indices */
@@ -544,34 +545,34 @@ int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags)
     /* Require existing PML4 entry */
     uint64_t pml4_entry = pml4[pml4_idx];
     if (!(pml4_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     uint64_t* pdpt = paging_get_pdpt(pml4_entry);
     if (!pdpt) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Require existing PDPT entry */
     uint64_t pdpt_entry = pdpt[pdpt_idx];
     if (!(pdpt_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     uint64_t* pd = paging_get_pd(pdpt_entry);
     if (!pd) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Require existing PD entry and 4KB page table */
     uint64_t pd_entry = pd[pd_idx];
     if (!(pd_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     if (pd_entry & PTE_SIZE_2MB) {
-        return -1; /* Cannot map 4KB page where 2MB page exists */
+        return RDNX_E_GENERIC; /* Cannot map 4KB page where 2MB page exists */
     }
     uint64_t* pt = paging_get_pt(pd_entry);
     if (!pt) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Set PT entry */
@@ -601,11 +602,11 @@ int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags)
 int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
-        return -1; /* Not page-aligned */
+        return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
     if (!current_pml4_phys) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Get indices */
@@ -617,24 +618,24 @@ int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t 
     /* Access tables via higher-half direct map */
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     uint64_t pml4_entry = pml4[pml4_idx];
     if (!(pml4_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     uint64_t* pdpt = paging_get_pdpt(pml4_entry);
     uint64_t pdpt_entry = pdpt[pdpt_idx];
     if (!(pdpt_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     uint64_t* pd = paging_get_pd(pdpt_entry);
     uint64_t pd_entry = pd[pd_idx];
     if (!(pd_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     if (pd_entry & PTE_SIZE_2MB) {
-        return -1; /* Cannot map 4KB page where 2MB page exists */
+        return RDNX_E_GENERIC; /* Cannot map 4KB page where 2MB page exists */
     }
     uint64_t* pt = paging_get_pt(pd_entry);
 
@@ -665,11 +666,11 @@ int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t 
 int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
-        return -1; /* Not page-aligned */
+        return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
     if (!current_pml4_phys) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Get indices */
@@ -685,7 +686,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     if (!(pml4_entry & PTE_PRESENT)) {
         uint64_t pdpt_phys = paging_alloc_page_table_identity();
         if (!pdpt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
         pml4[pml4_idx] = pml4_entry;
@@ -700,7 +701,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     if (!(pdpt_entry & PTE_PRESENT)) {
         uint64_t pd_phys = paging_alloc_page_table_identity();
         if (!pd_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
         pdpt[pdpt_idx] = pdpt_entry;
@@ -715,14 +716,14 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     if (!(pd_entry & PTE_PRESENT)) {
         uint64_t pt_phys = paging_alloc_page_table_identity();
         if (!pt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pd_entry = pt_phys | PTE_PRESENT | PTE_RW;
         pd[pd_idx] = pd_entry;
         pt = (uint64_t*)pt_phys;
     } else {
         if (pd_entry & PTE_SIZE_2MB) {
-            return -1; /* Cannot map 4KB page where 2MB page exists */
+            return RDNX_E_GENERIC; /* Cannot map 4KB page where 2MB page exists */
         }
         pt = (uint64_t*)(pd_entry & ~0xFFF);
     }
@@ -754,11 +755,11 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
 int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & 0x1FFFFF) != 0 || (phys & 0x1FFFFF) != 0) {
-        return -1; /* Not 2MB aligned */
+        return RDNX_E_GENERIC; /* Not 2MB aligned */
     }
 
     if (!current_pml4_phys) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     /* Get indices */
@@ -773,7 +774,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     if (!(pml4_entry & PTE_PRESENT)) {
         uint64_t pdpt_phys = paging_alloc_page_table_identity();
         if (!pdpt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
         pml4[pml4_idx] = pml4_entry;
@@ -788,7 +789,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     if (!(pdpt_entry & PTE_PRESENT)) {
         uint64_t pd_phys = paging_alloc_page_table_identity();
         if (!pd_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
         pdpt[pdpt_idx] = pdpt_entry;
@@ -830,7 +831,7 @@ int paging_bootstrap_physmap(uint64_t max_phys)
     for (uint64_t phys = 0; phys < max_phys; phys += 0x200000ULL) {
         uint64_t virt = X86_64_KERNEL_VIRT_BASE + phys;
         if (paging_map_page_2mb_identity_alloc(virt, phys, PTE_RW) != 0) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
     }
 
@@ -866,7 +867,7 @@ int paging_unmap_page(uint64_t virt)
 {
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     
     /* Get indices */
@@ -878,19 +879,19 @@ int paging_unmap_page(uint64_t virt)
     /* Walk page tables */
     uint64_t pml4_entry = pml4[pml4_idx];
     if (!(pml4_entry & PTE_PRESENT)) {
-        return -1; /* Not mapped */
+        return RDNX_E_GENERIC; /* Not mapped */
     }
     
     uint64_t* pdpt = paging_get_pdpt(pml4_entry);
     uint64_t pdpt_entry = pdpt[pdpt_idx];
     if (!(pdpt_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     
     uint64_t* pd = paging_get_pd(pdpt_entry);
     uint64_t pd_entry = pd[pd_idx];
     if (!(pd_entry & PTE_PRESENT)) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     
     /* Check if this is a 2MB page */
@@ -982,12 +983,12 @@ uint64_t paging_get_physical(uint64_t virt)
 int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
 {
     if ((virt & 0x1FFFFF) != 0 || (phys & 0x1FFFFF) != 0) {
-        return -1; /* Not 2MB aligned */
+        return RDNX_E_GENERIC; /* Not 2MB aligned */
     }
     
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     
     /* Get indices */
@@ -1002,7 +1003,7 @@ int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
     if (!(pml4_entry & PTE_PRESENT)) {
         uint64_t pdpt_phys = paging_alloc_page_table();
         if (!pdpt_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pml4_entry = pdpt_phys | PTE_PRESENT | PTE_RW;
         pml4[pml4_idx] = pml4_entry;
@@ -1018,7 +1019,7 @@ int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
     if (!(pdpt_entry & PTE_PRESENT)) {
         uint64_t pd_phys = paging_alloc_page_table();
         if (!pd_phys) {
-            return -1;
+            return RDNX_E_GENERIC;
         }
         pdpt_entry = pd_phys | PTE_PRESENT | PTE_RW;
         pdpt[pdpt_idx] = pdpt_entry;
