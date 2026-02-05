@@ -155,9 +155,16 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
     thread->context.program_counter = frame->rip;
     thread->state = THREAD_STATE_NEW;
+    thread->sched_class = SCHED_CLASS_TIMESHARE;
     thread->priority = PRIORITY_DEFAULT;
     thread->base_priority = PRIORITY_DEFAULT;
     thread->dyn_priority = PRIORITY_DEFAULT;
+    thread->inherited_priority = PRIORITY_DEFAULT;
+    thread->has_inherited = 0;
+    thread->inherit_depth = 0;
+    for (size_t i = 0; i < 4; i++) {
+        thread->inherit_stack[i] = PRIORITY_DEFAULT;
+    }
     thread->sched_usage = 0;
     thread->last_sleep_tick = 0;
     thread->entry = entry;

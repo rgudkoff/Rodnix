@@ -201,4 +201,17 @@ int scheduler_get_stats(scheduler_stats_t* stats);
  */
 uint64_t scheduler_get_ticks(void);
 
+/**
+ * Apply priority inheritance to target thread
+ * @param target Target thread
+ * @param donor Donor thread (higher priority)
+ */
+void scheduler_inherit_priority(thread_t* target, const thread_t* donor);
+
+/**
+ * Clear priority inheritance on target thread
+ * @param target Target thread
+ */
+void scheduler_clear_inherit(thread_t* target);
+
 #endif /* _RODNIX_COMMON_SCHEDULER_H */

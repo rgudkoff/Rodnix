@@ -194,6 +194,7 @@ port_t* port_allocate(port_type_t type)
     port->type = type;
     port->rights = PORT_RIGHT_RECEIVE;
     port->owner = task_get_current();
+    port->owner_thread = thread_get_current();
     port->ref_count = 1;
     port->queue = ipc_queue_create();
     if (!port->queue) {
@@ -346,15 +347,29 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
         return -1;
     }
     
+    thread_t* receiver = thread_get_current();
+    if (port->owner_thread && receiver) {
+        scheduler_inherit_priority(port->owner_thread, receiver);
+    }
+
     uint64_t deadline = ipc_get_deadline_ticks(timeout);
     if (!port->queue) {
+        if (port->owner_thread) {
+            scheduler_clear_inherit(port->owner_thread);
+        }
         return -1;
     }
     for (;;) {
         if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
+            }
             return 0;
         }
         if (deadline && scheduler_get_ticks() >= deadline) {
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
+            }
             return -1;
         }
         scheduler_yield();
@@ -369,16 +384,29 @@ int ipc_send_receive(port_t* port, ipc_message_t* send_msg,
         return -1;
     }
     
-    /* TODO: Send message */
+    if (!send_msg->reply_port) {
+        return -1;
+    }
+
+    thread_t* sender = thread_get_current();
+    if (port->owner_thread && sender) {
+        scheduler_inherit_priority(port->owner_thread, sender);
+    }
+
     int ret = ipc_send(port, send_msg, timeout);
     if (ret != 0) {
+        if (port->owner_thread) {
+            scheduler_clear_inherit(port->owner_thread);
+        }
         return ret;
     }
     
-    /* TODO: Wait for reply on reply port */
-    /* TODO: Receive reply message */
+    ret = ipc_receive(send_msg->reply_port, reply_msg, timeout);
+    if (port->owner_thread) {
+        scheduler_clear_inherit(port->owner_thread);
+    }
     
-    return 0;
+    return ret;
 }
 
 port_set_t* port_set_create(void)
@@ -472,8 +500,18 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
             if (!port || !port->active || !port->queue) {
                 continue;
             }
+            thread_t* receiver = thread_get_current();
+            if (port->owner_thread && receiver) {
+                scheduler_inherit_priority(port->owner_thread, receiver);
+            }
             if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+                if (port->owner_thread) {
+                    scheduler_clear_inherit(port->owner_thread);
+                }
                 return 0;
+            }
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
             }
         }
         if (deadline && scheduler_get_ticks() >= deadline) {

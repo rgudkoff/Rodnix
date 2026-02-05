@@ -37,6 +37,7 @@ static uint64_t sched_ticks = 0;
 static void ready_enqueue(thread_t* thread);
 static thread_t* ready_dequeue(void);
 static int ready_queue_index_for_thread(const thread_t* thread);
+static void scheduler_reset_timeslice(const thread_t* thread);
 
 static int clamp_dyn_priority(int value, int base)
 {
@@ -65,7 +66,35 @@ static int thread_effective_priority(const thread_t* thread)
     if (thread->base_priority == 0 && thread->priority != 0) {
         return thread->priority;
     }
-    return (thread->dyn_priority >= 0) ? thread->dyn_priority : 0;
+    int dyn = (thread->dyn_priority >= 0) ? thread->dyn_priority : 0;
+    if (thread->has_inherited) {
+        if (thread->inherited_priority > dyn) {
+            return thread->inherited_priority;
+        }
+    }
+    return dyn;
+}
+
+static void scheduler_reset_timeslice(const thread_t* thread)
+{
+    if (!thread) {
+        ticks_until_preempt = ticks_per_slice;
+        return;
+    }
+    if (thread->sched_class == SCHED_CLASS_REALTIME) {
+        ticks_until_preempt = 1;
+        return;
+    }
+    int prio = thread_effective_priority(thread);
+    uint32_t base = (SCHEDULER_TIME_SLICE_MS + 4) / 5;
+    if (base == 0) {
+        base = 1;
+    }
+    uint32_t extra = (uint32_t)(prio / 64);
+    ticks_until_preempt = base + extra;
+    if (ticks_until_preempt == 0) {
+        ticks_until_preempt = 1;
+    }
 }
 
 static void scheduler_yield_internal(bool irq_context)
@@ -262,6 +291,8 @@ int scheduler_add_thread(thread_t* thread)
     thread->state = THREAD_STATE_READY;
     thread->base_priority = thread->priority;
     thread->dyn_priority = thread->priority;
+    thread->inherited_priority = thread->priority;
+    thread->has_inherited = 0;
     ready_enqueue(thread);
     stats.total_tasks++;
     
@@ -357,6 +388,11 @@ void scheduler_set_priority(thread_t* thread, uint8_t priority)
     thread_set_priority(thread, priority);
     thread->base_priority = priority;
     thread->dyn_priority = priority;
+    if (thread->has_inherited) {
+        if (thread->inherited_priority < thread->dyn_priority) {
+            thread->inherited_priority = thread->dyn_priority;
+        }
+    }
     
     /* TODO: Re-insert thread into appropriate queue based on new priority */
 }
@@ -472,6 +508,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         stats.running_tasks = 1;
         stats.total_switches++;
         first->state = THREAD_STATE_RUNNING;
+        scheduler_reset_timeslice(first);
         in_scheduler = false;
         return (interrupt_frame_t*)(uintptr_t)first->context.stack_pointer;
     }
@@ -504,7 +541,36 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         prev->state = THREAD_STATE_READY;
     }
     next->state = THREAD_STATE_RUNNING;
+    scheduler_reset_timeslice(next);
 
     in_scheduler = false;
     return (interrupt_frame_t*)(uintptr_t)next->context.stack_pointer;
+}
+
+void scheduler_inherit_priority(thread_t* target, const thread_t* donor)
+{
+    if (!target || !donor) {
+        return;
+    }
+    int donor_prio = thread_effective_priority(donor);
+    if (target->inherit_depth < 4) {
+        target->inherit_stack[target->inherit_depth++] = target->inherited_priority;
+    }
+    if (!target->has_inherited || target->inherited_priority < donor_prio) {
+        target->inherited_priority = donor_prio;
+        target->has_inherited = 1;
+    }
+}
+
+void scheduler_clear_inherit(thread_t* target)
+{
+    if (!target) {
+        return;
+    }
+    if (target->inherit_depth > 0) {
+        target->inherited_priority = target->inherit_stack[--target->inherit_depth];
+    } else {
+        target->inherited_priority = target->dyn_priority;
+        target->has_inherited = 0;
+    }
 }

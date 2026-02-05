@@ -42,6 +42,7 @@ typedef struct port {
     port_type_t type;         /* Port type */
     uint64_t rights;          /* Port rights */
     task_t* owner;            /* Owning task */
+    thread_t* owner_thread;   /* Owning thread (best-effort) */
     uint32_t ref_count;       /* Reference count */
     void* queue;              /* Message queue */
     bool active;              /* Is port active */
