@@ -33,6 +33,7 @@
    - `apic_timer_init(100)` или `pit_init(100)` — таймер.
    - `scheduler_init()` — минимальная инициализация планировщика.
    - `ipc_init()` — базовая IPC-подсистема.
+   - `syscall_init()` — минимальный каркас syscalls.
    - `fabric_init()` — устройство/шина (virt, pci, ps2).
    - `hid_kbd_init()` — клавиатура и IRQ маршрутизация.
    - `vfs_init()` — RAMFS/VFS.

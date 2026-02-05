@@ -8,8 +8,74 @@
 #include "../../include/common.h"
 #include "../../include/console.h"
 
+#define VFS_CACHE_SIZE 64
+
+typedef struct vfs_cache_entry {
+    char path[64];
+    vfs_node_t* node;
+    uint32_t gen;
+} vfs_cache_entry_t;
+
+static vfs_mount_t* vfs_mounts = NULL;
+static vfs_mount_t* vfs_root_mount = NULL;
 static vfs_node_t* vfs_root = NULL;
 static int vfs_ready = 0;
+static uint32_t vfs_cache_gen = 1;
+static uint32_t vfs_cache_rr = 0;
+static vfs_cache_entry_t vfs_cache[VFS_CACHE_SIZE];
+
+static const void* vfs_initrd_data = NULL;
+static size_t vfs_initrd_size = 0;
+
+static void vfs_cache_reset(void)
+{
+    vfs_cache_gen++;
+    for (size_t i = 0; i < VFS_CACHE_SIZE; i++) {
+        vfs_cache[i].path[0] = '\0';
+        vfs_cache[i].node = NULL;
+        vfs_cache[i].gen = 0;
+    }
+    vfs_cache_rr = 0;
+}
+
+static vfs_node_t* vfs_cache_lookup(const char* path)
+{
+    if (!path) {
+        return NULL;
+    }
+    for (size_t i = 0; i < VFS_CACHE_SIZE; i++) {
+        if (vfs_cache[i].gen != vfs_cache_gen) {
+            continue;
+        }
+        if (vfs_cache[i].path[0] != '\0' && strcmp(vfs_cache[i].path, path) == 0) {
+            return vfs_cache[i].node;
+        }
+    }
+    return NULL;
+}
+
+static void vfs_cache_insert(const char* path, vfs_node_t* node)
+{
+    if (!path || !node) {
+        return;
+    }
+    size_t slot = vfs_cache_rr++ % VFS_CACHE_SIZE;
+    strncpy(vfs_cache[slot].path, path, sizeof(vfs_cache[slot].path) - 1);
+    vfs_cache[slot].path[sizeof(vfs_cache[slot].path) - 1] = '\0';
+    vfs_cache[slot].node = node;
+    vfs_cache[slot].gen = vfs_cache_gen;
+}
+
+static vfs_inode_t* vfs_alloc_inode(vfs_node_type_t type)
+{
+    vfs_inode_t* inode = (vfs_inode_t*)kmalloc(sizeof(vfs_inode_t));
+    if (!inode) {
+        return NULL;
+    }
+    memset(inode, 0, sizeof(*inode));
+    inode->type = type;
+    return inode;
+}
 
 static vfs_node_t* vfs_alloc_node(const char* name, vfs_node_type_t type)
 {
@@ -23,7 +89,26 @@ static vfs_node_t* vfs_alloc_node(const char* name, vfs_node_type_t type)
         node->name[sizeof(node->name) - 1] = '\0';
     }
     node->type = type;
+    node->inode = vfs_alloc_inode(type);
+    if (!node->inode) {
+        kfree(node);
+        return NULL;
+    }
     return node;
+}
+
+static void vfs_free_node(vfs_node_t* node)
+{
+    if (!node) {
+        return;
+    }
+    if (node->inode) {
+        if (node->inode->data) {
+            kfree(node->inode->data);
+        }
+        kfree(node->inode);
+    }
+    kfree(node);
 }
 
 static vfs_node_t* vfs_find_child(vfs_node_t* dir, const char* name)
@@ -111,6 +196,11 @@ static vfs_node_t* vfs_lookup(const char* path)
         return vfs_root;
     }
 
+    vfs_node_t* cached = vfs_cache_lookup(path);
+    if (cached) {
+        return cached;
+    }
+
     vfs_node_t* current = vfs_root;
     char comp[32];
     const char* p = path;
@@ -123,18 +213,19 @@ static vfs_node_t* vfs_lookup(const char* path)
         }
         p = next;
     }
+    vfs_cache_insert(path, current);
     return current;
 }
 
 static int vfs_grow_file(vfs_node_t* node, size_t needed)
 {
-    if (!node || node->type != VFS_NODE_FILE) {
+    if (!node || node->type != VFS_NODE_FILE || !node->inode) {
         return -1;
     }
-    if (needed <= node->capacity) {
+    if (needed <= node->inode->capacity) {
         return 0;
     }
-    size_t new_cap = node->capacity ? node->capacity : 64;
+    size_t new_cap = node->inode->capacity ? node->inode->capacity : 64;
     while (new_cap < needed) {
         new_cap *= 2;
     }
@@ -142,15 +233,73 @@ static int vfs_grow_file(vfs_node_t* node, size_t needed)
     if (!new_buf) {
         return -1;
     }
-    if (node->data && node->size > 0) {
-        memcpy(new_buf, node->data, node->size);
+    if (node->inode->data && node->inode->size > 0) {
+        memcpy(new_buf, node->inode->data, node->inode->size);
     }
-    if (node->data) {
-        kfree(node->data);
+    if (node->inode->data) {
+        kfree(node->inode->data);
     }
-    node->data = new_buf;
-    node->capacity = new_cap;
+    node->inode->data = new_buf;
+    node->inode->capacity = new_cap;
     return 0;
+}
+
+static vfs_node_t* vfs_create_node(vfs_node_t* parent, const char* name, vfs_node_type_t type)
+{
+    vfs_node_t* node = vfs_alloc_node(name, type);
+    if (!node) {
+        return NULL;
+    }
+    if (vfs_add_child(parent, node) != 0) {
+        vfs_free_node(node);
+        return NULL;
+    }
+    vfs_cache_reset();
+    return node;
+}
+
+static int vfs_mount_root_ramfs(void)
+{
+    vfs_mount_t* mnt = (vfs_mount_t*)kmalloc(sizeof(vfs_mount_t));
+    if (!mnt) {
+        return -1;
+    }
+    memset(mnt, 0, sizeof(*mnt));
+    mnt->fs_name = "ramfs";
+    mnt->root = vfs_alloc_node("/", VFS_NODE_DIR);
+    if (!mnt->root) {
+        kfree(mnt);
+        return -1;
+    }
+    mnt->mountpoint = NULL;
+    mnt->next = vfs_mounts;
+    vfs_mounts = mnt;
+    vfs_root_mount = mnt;
+    vfs_root = mnt->root;
+    return 0;
+}
+
+static int vfs_import_initrd(void)
+{
+    if (!vfs_root || !vfs_initrd_data || vfs_initrd_size == 0) {
+        return 0;
+    }
+    vfs_node_t* node = vfs_create_node(vfs_root, "initrd.img", VFS_NODE_FILE);
+    if (!node) {
+        return -1;
+    }
+    if (vfs_grow_file(node, vfs_initrd_size) != 0) {
+        return -1;
+    }
+    memcpy(node->inode->data, vfs_initrd_data, vfs_initrd_size);
+    node->inode->size = vfs_initrd_size;
+    return 0;
+}
+
+void vfs_set_initrd(const void* data, size_t size)
+{
+    vfs_initrd_data = data;
+    vfs_initrd_size = size;
 }
 
 int vfs_init(void)
@@ -158,9 +307,12 @@ int vfs_init(void)
     if (vfs_ready) {
         return 0;
     }
-    vfs_root = vfs_alloc_node("/", VFS_NODE_DIR);
-    if (!vfs_root) {
+    if (vfs_mount_root_ramfs() != 0) {
         return -1;
+    }
+    vfs_cache_reset();
+    if (vfs_import_initrd() != 0) {
+        kputs("[VFS] initrd import failed\n");
     }
     vfs_ready = 1;
     return 0;
@@ -187,11 +339,7 @@ int vfs_mkdir(const char* path)
     if (vfs_find_child(parent, leaf)) {
         return 0;
     }
-    vfs_node_t* dir = vfs_alloc_node(leaf, VFS_NODE_DIR);
-    if (!dir) {
-        return -1;
-    }
-    return vfs_add_child(parent, dir);
+    return vfs_create_node(parent, leaf, VFS_NODE_DIR) ? 0 : -1;
 }
 
 int vfs_unlink(const char* path)
@@ -222,10 +370,8 @@ int vfs_unlink(const char* path)
         }
         prev = it;
     }
-    if (node->data) {
-        kfree(node->data);
-    }
-    kfree(node);
+    vfs_free_node(node);
+    vfs_cache_reset();
     return 0;
 }
 
@@ -259,20 +405,16 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
         if (!parent) {
             return -1;
         }
-        node = vfs_alloc_node(leaf, VFS_NODE_FILE);
+        node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
         if (!node) {
             return -1;
         }
-        if (vfs_add_child(parent, node) != 0) {
-            kfree(node);
-            return -1;
-        }
     }
-    if (node->type != VFS_NODE_FILE) {
+    if (node->type != VFS_NODE_FILE || !node->inode) {
         return -1;
     }
     if (flags & VFS_OPEN_TRUNC) {
-        node->size = 0;
+        node->inode->size = 0;
     }
     out_file->node = node;
     out_file->pos = 0;
@@ -293,34 +435,34 @@ int vfs_close(vfs_file_t* file)
 
 int vfs_read(vfs_file_t* file, void* buffer, size_t size)
 {
-    if (!file || !file->node || !buffer) {
+    if (!file || !file->node || !file->node->inode || !buffer) {
         return -1;
     }
-    vfs_node_t* node = file->node;
-    if (file->pos >= node->size) {
+    vfs_inode_t* inode = file->node->inode;
+    if (file->pos >= inode->size) {
         return 0;
     }
-    size_t avail = node->size - file->pos;
+    size_t avail = inode->size - file->pos;
     size_t to_read = size < avail ? size : avail;
-    memcpy(buffer, node->data + file->pos, to_read);
+    memcpy(buffer, inode->data + file->pos, to_read);
     file->pos += to_read;
     return (int)to_read;
 }
 
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
 {
-    if (!file || !file->node || !buffer || !file->writable) {
+    if (!file || !file->node || !file->node->inode || !buffer || !file->writable) {
         return -1;
     }
-    vfs_node_t* node = file->node;
+    vfs_inode_t* inode = file->node->inode;
     size_t end = file->pos + size;
-    if (vfs_grow_file(node, end) != 0) {
+    if (vfs_grow_file(file->node, end) != 0) {
         return -1;
     }
-    memcpy(node->data + file->pos, buffer, size);
+    memcpy(inode->data + file->pos, buffer, size);
     file->pos += size;
-    if (end > node->size) {
-        node->size = end;
+    if (end > inode->size) {
+        inode->size = end;
     }
     return (int)size;
 }

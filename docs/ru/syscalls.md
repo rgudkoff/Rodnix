@@ -11,6 +11,17 @@
 - Минимальный набор вызовов для запуска userland.
 - Явная валидация аргументов и прав.
 
+## Текущая реализация (минимальный каркас)
+
+- Вектор ловушки: `0x80` (IDT trap gate с DPL=3).
+- ABI (x86_64, базовый):
+  - `rax` — номер syscall.
+  - `rdi, rsi, rdx, r10, r8, r9` — аргументы 1..6.
+  - `rax` — код возврата.
+- Таблица syscalls: `kernel/common/syscall.c`.
+- Реализован только `SYS_NOP` (возвращает `0`).
+- Неизвестный номер возвращает `-1`.
+
 ## Инварианты
 
 - Любой syscall должен быть описан и иметь стабильный номер.
@@ -18,4 +29,6 @@
 
 ## Где смотреть в коде
 
-- Планируется в `kernel/common` и `kernel/arch/x86_64`.
+- `kernel/common/syscall.c`, `kernel/common/syscall.h`.
+- `kernel/arch/x86_64/idt.c` (IDT entry 0x80).
+- `kernel/arch/x86_64/isr_handlers.c` (dispatch).

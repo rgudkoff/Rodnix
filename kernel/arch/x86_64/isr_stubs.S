@@ -1,6 +1,8 @@
 ; isr_stubs.S - ISR (Interrupt Service Routine) stubs for x86_64
 ; These are assembly wrappers that call C handlers
 
+default rel
+
 section .bss
 align 8
 global irq_iret_rsp
@@ -70,6 +72,9 @@ ISR_NOERRCODE 28  ; Hypervisor injection exception
 ISR_NOERRCODE 29  ; VMM communication exception
 ISR_ERRCODE   30  ; Security exception
 ISR_NOERRCODE 31  ; Reserved
+
+; Syscall handler (vector 128 / 0x80)
+ISR_NOERRCODE 128
 
 ; IRQ handlers (32-47)
 %macro IRQ 1

@@ -13,6 +13,7 @@
 /* IDT entry type and attributes flags */
 #define IDT_TYPE_INTERRUPT_GATE  0x8E  /* 64-bit interrupt gate (IF cleared on entry) */
 #define IDT_TYPE_TRAP_GATE       0x8F  /* 64-bit trap gate (IF not cleared) */
+#define IDT_TYPE_TRAP_GATE_USER  (IDT_TYPE_TRAP_GATE | 0x60) /* DPL=3 */
 
 /* Initialize IDT */
 int idt_init(void);
@@ -24,4 +25,3 @@ void* idt_get_handler(uint16_t vector);
 int idt_set_handler(uint16_t vector, void* handler, uint8_t type_attr, uint8_t ist);
 
 #endif /* _RODNIX_ARCH_X86_64_IDT_H */
-

@@ -13,6 +13,7 @@
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
+#include "../../common/syscall.h"
 #include "interrupt_frame.h"
 #include "types.h"
 #include "pic.h"
@@ -166,6 +167,19 @@ static void safe_vga_hex(uint8_t row, uint8_t col, uint64_t value, uint8_t color
     }
 }
 
+static interrupt_frame_t* handle_syscall(interrupt_frame_t* regs)
+{
+    uint64_t ret = syscall_dispatch(regs->rax,
+                                    regs->rdi,
+                                    regs->rsi,
+                                    regs->rdx,
+                                    regs->r10,
+                                    regs->r8,
+                                    regs->r9);
+    regs->rax = ret;
+    return regs;
+}
+
 /* Exception names */
 static const char* exception_names[] = {
     "Division By Zero",
@@ -216,6 +230,10 @@ static const char* exception_names[] = {
 static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
 {
     uint32_t vector = regs->int_no;
+
+    if (vector == SYSCALL_VECTOR) {
+        return handle_syscall(regs);
+    }
     
     /* Handle IRQ (32-47) - PIC IRQs are mapped to these vectors */
     if (vector >= 32 && vector < 48) {

@@ -7,7 +7,9 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "core/interrupts.h"
+#include "syscall.h"
 #include "fs/vfs.h"
+#include "net/net.h"
 
 static void idle_thread(void* arg)
 {
@@ -225,6 +227,12 @@ void kmain(uint32_t magic, void* mbi)
         panic("IPC init failed");
     }
     __asm__ volatile ("" ::: "memory");
+
+    /* Step 8.5: Initialize syscalls */
+    kputs("[INIT-8.5] Syscalls\n");
+    __asm__ volatile ("" ::: "memory");
+    syscall_init();
+    __asm__ volatile ("" ::: "memory");
     
     /* Step 9: Initialize Fabric */
     kputs("[INIT-9] Fabric\n");
@@ -264,6 +272,15 @@ void kmain(uint32_t magic, void* mbi)
         kputs("[INIT-9.6] VFS init failed\n");
     } else {
         kputs("[INIT-9.6] VFS ready\n");
+    }
+    __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT-9.7] Network\n");
+    __asm__ volatile ("" ::: "memory");
+    if (net_init() != 0) {
+        kputs("[INIT-9.7] Net init failed\n");
+    } else {
+        kputs("[INIT-9.7] Net ready (stub)\n");
     }
     __asm__ volatile ("" ::: "memory");
     

@@ -16,6 +16,7 @@
 #include "../input/input.h"
 #include "../core/boot.h"
 #include "../fs/vfs.h"
+#include "../core/cpu.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
@@ -71,6 +72,7 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  help      - Show this help message\n");
     kputs("  clear     - Clear the screen\n");
     kputs("  info      - Show system information\n");
+    kputs("  cpu       - Show CPU information\n");
     kputs("  memory    - Show memory statistics\n");
     kputs("  mem       - Alias for memory\n");
     kputs("  timer     - Show timer information\n");
@@ -143,6 +145,39 @@ static int shell_cmd_info(int argc, char** argv)
     kputs("Build: " __DATE__ " " __TIME__ "\n");
     kputs("\n");
     
+    return 0;
+}
+
+/**
+ * @function shell_cmd_cpu
+ * @brief Show CPU information
+ * 
+ * @param argc Number of arguments
+ * @param argv Argument array
+ * 
+ * @return 0 on success
+ */
+static int shell_cmd_cpu(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    cpu_info_t info;
+    if (cpu_get_info(&info) != 0) {
+        kputs("cpu info unavailable\n");
+        return -1;
+    }
+
+    kprintf("CPU Info:\n");
+    kprintf("  cpu_id:   %u\n", info.cpu_id);
+    kprintf("  apic_id:  %u\n", info.apic_id);
+    kprintf("  vendor:   %s\n", info.vendor ? info.vendor : "unknown");
+    kprintf("  model:    %s\n", info.model ? info.model : "unknown");
+    kprintf("  features: 0x%x\n", info.features);
+    kprintf("  cores:    %u\n", info.cores);
+    kprintf("  threads:  %u\n", info.threads);
+    kputs("\n");
+
     return 0;
 }
 
@@ -458,6 +493,7 @@ static const struct shell_command commands[] = {
     {"sched",   shell_cmd_sched,   "Show scheduler statistics"},
     {"clear",   shell_cmd_clear,    "Clear the screen"},
     {"info",    shell_cmd_info,    "Show system information"},
+    {"cpu",     shell_cmd_cpu,     "Show CPU information"},
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
     {"mem",     shell_cmd_memory,  "Alias for memory"},
     {"timer",   shell_cmd_timer,   "Show timer information"},

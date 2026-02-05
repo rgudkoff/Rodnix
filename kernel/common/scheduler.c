@@ -14,12 +14,13 @@
 static bool scheduler_initialized = false;
 static bool scheduler_running = false;
 static thread_t* current_thread = NULL;
-static sched_policy_t current_policy = SCHED_POLICY_RR;
+static sched_policy_t current_policy = SCHED_POLICY_PRIORITY;
 static scheduler_stats_t stats = {0};
 
-/* Ready queue (simple FIFO) */
-static thread_t* ready_head = NULL;
-static thread_t* ready_tail = NULL;
+/* Ready queues (MLQ with coarse priority bands) */
+#define READY_QUEUE_LEVELS 3
+static thread_t* ready_head[READY_QUEUE_LEVELS] = {0};
+static thread_t* ready_tail[READY_QUEUE_LEVELS] = {0};
 
 static volatile bool in_scheduler = false;
 static uint32_t ticks_until_preempt = 1;
@@ -28,6 +29,7 @@ static volatile bool resched_pending = false;
 
 static void ready_enqueue(thread_t* thread);
 static thread_t* ready_dequeue(void);
+static int ready_queue_index_for_thread(const thread_t* thread);
 
 static void scheduler_yield_internal(bool irq_context)
 {
@@ -49,37 +51,93 @@ static void ready_enqueue(thread_t* thread)
         DEBUG_WARN("ready_enqueue: thread %llu already queued", (unsigned long long)thread->thread_id);
     }
     thread->sched_next = NULL;
-    if (!ready_tail) {
-        ready_head = thread;
-        ready_tail = thread;
+    int q = ready_queue_index_for_thread(thread);
+    if (q < 0 || q >= READY_QUEUE_LEVELS) {
+        q = READY_QUEUE_LEVELS - 1;
+    }
+    if (!ready_tail[q]) {
+        ready_head[q] = thread;
+        ready_tail[q] = thread;
     } else {
-        ready_tail->sched_next = thread;
-        ready_tail = thread;
+        ready_tail[q]->sched_next = thread;
+        ready_tail[q] = thread;
     }
     stats.ready_tasks++;
 }
 
 static thread_t* ready_dequeue(void)
 {
-    thread_t* thread = ready_head;
-    if (!thread) {
-        return NULL;
+    int start = READY_QUEUE_LEVELS - 1;
+    int end = 0;
+
+    if (current_policy == SCHED_POLICY_RR || current_policy == SCHED_POLICY_FIFO) {
+        start = 1;
+        end = 1;
     }
 
-    if (thread->state != THREAD_STATE_READY) {
-        DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+    if (start == end) {
+        int q = start;
+        thread_t* thread = ready_head[q];
+        if (!thread) {
+            return NULL;
+        }
+
+        if (thread->state != THREAD_STATE_READY) {
+            DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+        }
+        ready_head[q] = thread->sched_next;
+        if (!ready_head[q]) {
+            ready_tail[q] = NULL;
+        }
+        thread->sched_next = NULL;
+        if (stats.ready_tasks > 0) {
+            stats.ready_tasks--;
+        }
+        return thread;
     }
-    ready_head = thread->sched_next;
-    if (!ready_head) {
-        ready_tail = NULL;
+
+    for (int q = start; q >= end; q--) {
+        thread_t* thread = ready_head[q];
+        if (!thread) {
+            continue;
+        }
+
+        if (thread->state != THREAD_STATE_READY) {
+            DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+        }
+        ready_head[q] = thread->sched_next;
+        if (!ready_head[q]) {
+            ready_tail[q] = NULL;
+        }
+        thread->sched_next = NULL;
+        if (stats.ready_tasks > 0) {
+            stats.ready_tasks--;
+        }
+        return thread;
     }
-    thread->sched_next = NULL;
-    if (stats.ready_tasks > 0) {
-        stats.ready_tasks--;
-    }
-    return thread;
+
+    return NULL;
 }
 
+static int ready_queue_index_for_thread(const thread_t* thread)
+{
+    if (!thread) {
+        return READY_QUEUE_LEVELS - 1;
+    }
+
+    if (current_policy == SCHED_POLICY_RR || current_policy == SCHED_POLICY_FIFO) {
+        return 1;
+    }
+
+    /* Priority bands: 0-63 (low), 64-191 (normal), 192-255 (high) */
+    if (thread->priority >= 192) {
+        return 2;
+    }
+    if (thread->priority >= 64) {
+        return 1;
+    }
+    return 0;
+}
 
 int scheduler_init(void)
 {
@@ -89,10 +147,12 @@ int scheduler_init(void)
     
     current_thread = NULL;
     thread_set_current(NULL);
-    current_policy = SCHED_POLICY_RR;
+    current_policy = SCHED_POLICY_PRIORITY;
     scheduler_running = false;
-    ready_head = NULL;
-    ready_tail = NULL;
+    for (int i = 0; i < READY_QUEUE_LEVELS; i++) {
+        ready_head[i] = NULL;
+        ready_tail[i] = NULL;
+    }
     ticks_per_slice = 1;
     ticks_until_preempt = ticks_per_slice;
     resched_pending = false;

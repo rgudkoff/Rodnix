@@ -39,6 +39,7 @@ KERNEL_C_SRCS = \
 	kernel/main.c \
 	kernel/fs/vfs.c \
 	kernel/common/scheduler.c \
+	kernel/common/syscall.c \
 	kernel/common/ipc.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
@@ -57,6 +58,7 @@ KERNEL_C_SRCS = \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
+	kernel/net/net.c \
 	kernel/fabric/fabric.c \
 	kernel/fabric/spin.c \
 	kernel/fabric/bus/virt.c \

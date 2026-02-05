@@ -14,16 +14,28 @@ typedef enum {
     VFS_NODE_DIR  = 1
 } vfs_node_type_t;
 
+typedef struct vfs_inode {
+    vfs_node_type_t type;
+    size_t size;
+    size_t capacity;
+    uint8_t* data;
+} vfs_inode_t;
+
 typedef struct vfs_node {
     char name[32];
     vfs_node_type_t type;
     struct vfs_node* parent;
     struct vfs_node* sibling;
     struct vfs_node* children;
-    uint8_t* data;
-    size_t size;
-    size_t capacity;
+    vfs_inode_t* inode;
 } vfs_node_t;
+
+typedef struct vfs_mount {
+    const char* fs_name;
+    vfs_node_t* root;
+    vfs_node_t* mountpoint;
+    struct vfs_mount* next;
+} vfs_mount_t;
 
 typedef struct vfs_file {
     vfs_node_t* node;
@@ -42,6 +54,8 @@ enum {
 
 int vfs_init(void);
 int vfs_is_ready(void);
+
+void vfs_set_initrd(const void* data, size_t size);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);

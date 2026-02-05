@@ -108,6 +108,7 @@ extern void irq12(void);
 extern void irq13(void);
 extern void irq14(void);
 extern void irq15(void);
+extern void isr128(void);
 
 /* ============================================================================
  * Internal Helper Functions
@@ -145,6 +146,7 @@ static void idt_set_entry(uint8_t num, uint64_t base, uint16_t selector, uint8_t
 #define IDT_TYPE_INTERRUPT_GATE  0x8E  /* 64-bit interrupt gate (IF cleared on entry) */
 #define IDT_TYPE_TRAP_GATE       0x8F  /* 64-bit trap gate (IF not cleared) */
 #define IDT_TYPE_TASK_GATE       0x85  /* Task gate (not used in 64-bit mode) */
+#define IDT_TYPE_TRAP_GATE_USER  (IDT_TYPE_TRAP_GATE | 0x60) /* DPL=3 */
 
 /* Bit fields for type_attr byte:
  *   Bit 7: Present (1 = present, 0 = not present)
@@ -250,6 +252,12 @@ int idt_init(void)
     idt_set_entry(45, (uint64_t)irq13, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
     idt_set_entry(46, (uint64_t)irq14, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
     idt_set_entry(47, (uint64_t)irq15, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
+    __asm__ volatile ("" ::: "memory");
+
+    /* Step 4.1: Setup syscall handler (vector 128 / 0x80, DPL=3) */
+    kputs("[IDT-4.1] Setup syscall 0x80\n");
+    __asm__ volatile ("" ::: "memory");
+    idt_set_entry(128, (uint64_t)isr128, 0x08, IDT_TYPE_TRAP_GATE_USER, 0);
     __asm__ volatile ("" ::: "memory");
     
     /* Step 5: Load IDT */

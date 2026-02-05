@@ -1,0 +1,54 @@
+#include "syscall.h"
+#include <stddef.h>
+
+static syscall_fn_t syscall_table[SYSCALL_MAX];
+
+static uint64_t sys_nop(uint64_t a1,
+                        uint64_t a2,
+                        uint64_t a3,
+                        uint64_t a4,
+                        uint64_t a5,
+                        uint64_t a6)
+{
+    (void)a1;
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return 0;
+}
+
+void syscall_init(void)
+{
+    for (uint32_t i = 0; i < SYSCALL_MAX; i++) {
+        syscall_table[i] = NULL;
+    }
+
+    syscall_register(SYS_NOP, sys_nop);
+}
+
+int syscall_register(uint32_t num, syscall_fn_t fn)
+{
+    if (num >= SYSCALL_MAX || !fn) {
+        return -1;
+    }
+
+    syscall_table[num] = fn;
+    return 0;
+}
+
+uint64_t syscall_dispatch(uint64_t num,
+                          uint64_t a1,
+                          uint64_t a2,
+                          uint64_t a3,
+                          uint64_t a4,
+                          uint64_t a5,
+                          uint64_t a6)
+{
+    if (num >= SYSCALL_MAX || !syscall_table[num]) {
+        return (uint64_t)-1;
+    }
+
+    return syscall_table[num](a1, a2, a3, a4, a5, a6);
+}

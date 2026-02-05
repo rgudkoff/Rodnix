@@ -5,6 +5,8 @@
 
 #include "ipc.h"
 #include "../core/interrupts.h"
+#include "../fabric/spin.h"
+#include "heap.h"
 #include "../../include/common.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -13,7 +15,114 @@ static bool ipc_initialized = false;
 static uint64_t next_port_id = 1;
 static uint64_t next_set_id = 1;
 
-/* TODO: Implement port tables, message queues, etc. */
+/* Simple port table (fixed size for now) */
+#define IPC_MAX_PORTS 1024
+static port_t* port_table[IPC_MAX_PORTS];
+
+typedef struct ipc_msg_node {
+    ipc_message_t msg;
+    struct ipc_msg_node* next;
+} ipc_msg_node_t;
+
+typedef struct ipc_queue {
+    ipc_msg_node_t* head;
+    ipc_msg_node_t* tail;
+    uint32_t count;
+    spinlock_t lock;
+} ipc_queue_t;
+
+static ipc_queue_t* ipc_queue_create(void)
+{
+    ipc_queue_t* q = (ipc_queue_t*)kmalloc(sizeof(ipc_queue_t));
+    if (!q) {
+        return NULL;
+    }
+    q->head = NULL;
+    q->tail = NULL;
+    q->count = 0;
+    spinlock_init(&q->lock);
+    return q;
+}
+
+static void ipc_queue_destroy(ipc_queue_t* q)
+{
+    if (!q) {
+        return;
+    }
+    spinlock_lock(&q->lock);
+    ipc_msg_node_t* node = q->head;
+    while (node) {
+        ipc_msg_node_t* next = node->next;
+        kfree(node);
+        node = next;
+    }
+    q->head = NULL;
+    q->tail = NULL;
+    q->count = 0;
+    spinlock_unlock(&q->lock);
+    kfree(q);
+}
+
+static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
+{
+    if (!q || !message) {
+        return -1;
+    }
+    if (message->msg_size > IPC_MSG_MAX_SIZE) {
+        return -1;
+    }
+    ipc_msg_node_t* node = (ipc_msg_node_t*)kmalloc(sizeof(ipc_msg_node_t));
+    if (!node) {
+        return -1;
+    }
+    node->next = NULL;
+    node->msg = *message;
+
+    spinlock_lock(&q->lock);
+    if (!q->tail) {
+        q->head = node;
+        q->tail = node;
+    } else {
+        q->tail->next = node;
+        q->tail = node;
+    }
+    q->count++;
+    spinlock_unlock(&q->lock);
+    return 0;
+}
+
+static int ipc_queue_pop(ipc_queue_t* q, ipc_message_t* out)
+{
+    if (!q || !out) {
+        return -1;
+    }
+    spinlock_lock(&q->lock);
+    ipc_msg_node_t* node = q->head;
+    if (!node) {
+        spinlock_unlock(&q->lock);
+        return -1;
+    }
+    q->head = node->next;
+    if (!q->head) {
+        q->tail = NULL;
+    }
+    if (q->count > 0) {
+        q->count--;
+    }
+    spinlock_unlock(&q->lock);
+
+    *out = node->msg;
+    kfree(node);
+    return 0;
+}
+
+static inline int port_table_index(uint64_t port_id)
+{
+    if (port_id == 0 || port_id > IPC_MAX_PORTS) {
+        return -1;
+    }
+    return (int)(port_id - 1);
+}
 
 int ipc_init(void)
 {
@@ -23,9 +132,10 @@ int ipc_init(void)
     
     next_port_id = 1;
     next_set_id = 1;
-    
-    /* TODO: Initialize port tables */
-    /* TODO: Initialize message queues */
+
+    for (int i = 0; i < IPC_MAX_PORTS; i++) {
+        port_table[i] = NULL;
+    }
     
     ipc_initialized = true;
     return 0;
@@ -37,19 +147,33 @@ port_t* port_allocate(port_type_t type)
         ipc_init();
     }
     
-    port_t* port = NULL;  /* TODO: Allocate from pool */
+    port_t* port = (port_t*)kmalloc(sizeof(port_t));
     
     if (!port) {
         return NULL;
     }
-    
+
+    if (next_port_id > IPC_MAX_PORTS) {
+        kfree(port);
+        return NULL;
+    }
+
     port->port_id = next_port_id++;
     port->type = type;
-    port->rights = 0;
+    port->rights = PORT_RIGHT_RECEIVE;
     port->owner = task_get_current();
     port->ref_count = 1;
-    port->queue = NULL;  /* TODO: Initialize message queue */
+    port->queue = ipc_queue_create();
+    if (!port->queue) {
+        kfree(port);
+        return NULL;
+    }
     port->active = true;
+
+    int idx = port_table_index(port->port_id);
+    if (idx >= 0) {
+        port_table[idx] = port;
+    }
     
     return port;
 }
@@ -64,16 +188,23 @@ void port_deallocate(port_t* port)
     
     if (port->ref_count == 0) {
         port->active = false;
-        /* TODO: Free message queue */
-        /* TODO: Return to pool */
+        ipc_queue_destroy((ipc_queue_t*)port->queue);
+        port->queue = NULL;
+        int idx = port_table_index(port->port_id);
+        if (idx >= 0 && port_table[idx] == port) {
+            port_table[idx] = NULL;
+        }
+        kfree(port);
     }
 }
 
 port_t* port_lookup(uint64_t port_id)
 {
-    /* TODO: Lookup port in port table */
-    (void)port_id;
-    return NULL;
+    int idx = port_table_index(port_id);
+    if (idx < 0) {
+        return NULL;
+    }
+    return port_table[idx];
 }
 
 int port_insert_send_right(task_t* task, port_t* port)
@@ -82,8 +213,8 @@ int port_insert_send_right(task_t* task, port_t* port)
         return -1;
     }
     
-    /* TODO: Insert send right into task's port namespace */
-    
+    /* TODO: Task port namespaces not implemented */
+    (void)task;
     port->ref_count++;
     return 0;
 }
@@ -94,8 +225,8 @@ int port_insert_receive_right(task_t* task, port_t* port)
         return -1;
     }
     
-    /* TODO: Insert receive right into task's port namespace */
-    
+    /* TODO: Task port namespaces not implemented */
+    (void)task;
     port->ref_count++;
     return 0;
 }
@@ -111,8 +242,12 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
     
     (void)timeout;
-    /* TODO: Add message to port's queue */
-    /* TODO: Wake up any threads waiting on this port */
+    if (!port->queue) {
+        return -1;
+    }
+    if (ipc_queue_push((ipc_queue_t*)port->queue, message) != 0) {
+        return -1;
+    }
     
     return 0;
 }
@@ -128,9 +263,12 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
     
     (void)timeout;
-    /* TODO: Wait for message in port's queue */
-    /* TODO: Copy message to buffer */
-    /* TODO: Handle timeout */
+    if (!port->queue) {
+        return -1;
+    }
+    if (ipc_queue_pop((ipc_queue_t*)port->queue, message) != 0) {
+        return -1;
+    }
     
     return 0;
 }
@@ -160,7 +298,7 @@ port_set_t* port_set_create(void)
         ipc_init();
     }
     
-    port_set_t* set = NULL;  /* TODO: Allocate from pool */
+    port_set_t* set = (port_set_t*)kmalloc(sizeof(port_set_t));
     
     if (!set) {
         return NULL;
@@ -181,9 +319,11 @@ void port_set_destroy(port_set_t* set)
         return;
     }
     
-    /* TODO: Remove all ports from set */
-    /* TODO: Free ports array */
-    /* TODO: Return to pool */
+    if (set->ports) {
+        kfree(set->ports);
+        set->ports = NULL;
+    }
+    kfree(set);
 }
 
 int port_set_add(port_set_t* set, port_t* port)
@@ -192,9 +332,21 @@ int port_set_add(port_set_t* set, port_t* port)
         return -1;
     }
     
-    /* TODO: Check if port is already in set */
-    /* TODO: Resize array if needed */
-    /* TODO: Add port to array */
+    for (uint32_t i = 0; i < set->port_count; i++) {
+        if (set->ports[i] == port) {
+            return 0;
+        }
+    }
+    if (set->port_count == set->capacity) {
+        uint32_t new_cap = (set->capacity == 0) ? 4 : (set->capacity * 2);
+        port_t** new_ports = (port_t**)krealloc(set->ports, new_cap * sizeof(port_t*));
+        if (!new_ports) {
+            return -1;
+        }
+        set->ports = new_ports;
+        set->capacity = new_cap;
+    }
+    set->ports[set->port_count++] = port;
     
     return 0;
 }
@@ -205,11 +357,17 @@ int port_set_remove(port_set_t* set, port_t* port)
         return -1;
     }
     
-    /* TODO: Find port in array */
-    /* TODO: Remove from array */
-    /* TODO: Compact array */
-    
-    return 0;
+    for (uint32_t i = 0; i < set->port_count; i++) {
+        if (set->ports[i] == port) {
+            for (uint32_t j = i + 1; j < set->port_count; j++) {
+                set->ports[j - 1] = set->ports[j];
+            }
+            set->port_count--;
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
@@ -219,9 +377,15 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
     }
     
     (void)timeout;
-    /* TODO: Wait for message on any port in set */
-    /* TODO: Receive message from first available port */
-    /* TODO: Handle timeout */
-    
-    return 0;
+    for (uint32_t i = 0; i < set->port_count; i++) {
+        port_t* port = set->ports[i];
+        if (!port || !port->active || !port->queue) {
+            continue;
+        }
+        if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+            return 0;
+        }
+    }
+
+    return -1;
 }
