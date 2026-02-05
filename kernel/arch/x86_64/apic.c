@@ -1057,7 +1057,6 @@ void apic_timer_handler(interrupt_context_t* ctx)
     (void)ctx;
     /* Increment tick counter */
     apic_timer_ticks++;
-    scheduler_tick();
 }
 
 /**

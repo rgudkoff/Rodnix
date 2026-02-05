@@ -137,7 +137,6 @@ static void pit_timer_handler(interrupt_context_t* ctx)
     /* Minimal handler - just increment counter (fast interrupt handler) */
     /* No protection, no callbacks - just increment counter */
     timer_ticks++;
-    scheduler_tick();
     
     /* Handler returns - EOI is sent by interrupt_dispatch in isr_handlers.c */
 }
