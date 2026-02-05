@@ -11,6 +11,8 @@
 #include "fs/vfs.h"
 #include "net/net.h"
 #include "common/security.h"
+#include "common/bootstrap.h"
+#include "common/loader.h"
 
 static void idle_thread(void* arg)
 {
@@ -239,6 +241,11 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     security_init();
     __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT-8.7] Loader\n");
+    __asm__ volatile ("" ::: "memory");
+    loader_init();
+    __asm__ volatile ("" ::: "memory");
     
     /* Step 9: Initialize Fabric */
     kputs("[INIT-9] Fabric\n");
@@ -364,9 +371,11 @@ void kmain(uint32_t magic, void* mbi)
         panic("Kernel task create failed");
     }
     kernel_task->state = TASK_STATE_READY;
+    task_set_current(kernel_task);
 
     thread_t* shell = thread_create(kernel_task, shell_thread, NULL);
     thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
+    bootstrap_start();
     if (!shell || !idle) {
         panic("Kernel thread create failed");
     }

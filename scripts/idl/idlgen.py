@@ -12,7 +12,7 @@ Types: u32, u64, string, port
 Usage:
   idlgen.py <input.defs> <out_dir>
 
-Generates placeholder client/server stub C files with signatures.
+Generates C header stubs for client/server and IPC message ids.
 """
 
 import os
@@ -89,7 +89,8 @@ def c_type(ftype: str) -> str:
 def gen_client(iface: Interface) -> str:
     lines = []
     lines.append("#include <stdint.h>")
-    lines.append("\n/* Auto-generated client stubs. */\n")
+    lines.append(f"#include \"{iface.name}_ipc.h\"")
+    lines.append("\n/* Auto-generated client stubs (signatures only). */\n")
     for rpc in iface.rpcs:
         args = [f"{c_type(f.type)} {f.name}" for f in rpc.args]
         ret_struct = "void"
@@ -106,6 +107,7 @@ def gen_client(iface: Interface) -> str:
 def gen_server(iface: Interface) -> str:
     lines = []
     lines.append("#include <stdint.h>")
+    lines.append(f"#include \"{iface.name}_ipc.h\"")
     lines.append("\n/* Auto-generated server dispatch prototypes. */\n")
     for rpc in iface.rpcs:
         args = [f"{c_type(f.type)} {f.name}" for f in rpc.args]
@@ -113,6 +115,20 @@ def gen_server(iface: Interface) -> str:
             args.append(f"{c_type(f.type)}* out_{f.name}")
         lines.append(f"int {iface.name}_{rpc.name}_impl({', '.join(args)});\n")
     lines.append(f"int {iface.name}_dispatch(uint32_t msg_id, void* msg, void* reply);\n")
+    return "\n".join(lines)
+
+
+def gen_ipc(iface: Interface) -> str:
+    lines = []
+    lines.append("#ifndef _RODNIX_IDL_IPC_H")
+    lines.append("#define _RODNIX_IDL_IPC_H\n")
+    lines.append("#include <stdint.h>\n")
+    lines.append("/* Auto-generated IPC message ids. */")
+    lines.append("enum {")
+    for i, rpc in enumerate(iface.rpcs, start=1):
+        lines.append(f"    {iface.name.upper()}_MSG_{rpc.name.upper()} = {i},")
+    lines.append("};\n")
+    lines.append("#endif /* _RODNIX_IDL_IPC_H */")
     return "\n".join(lines)
 
 
@@ -140,15 +156,18 @@ def main() -> int:
     os.makedirs(out_dir, exist_ok=True)
 
     base = os.path.splitext(os.path.basename(defs_path))[0]
+    ipc = os.path.join(out_dir, f"{base}_ipc.h")
     client = os.path.join(out_dir, f"{base}_client.h")
     server = os.path.join(out_dir, f"{base}_server.h")
 
+    with open(ipc, "w", encoding="utf-8") as f:
+        f.write(gen_ipc(iface))
     with open(client, "w", encoding="utf-8") as f:
         f.write(gen_client(iface))
     with open(server, "w", encoding="utf-8") as f:
         f.write(gen_server(iface))
 
-    print(f"idlgen: generated {client} and {server}")
+    print(f"idlgen: generated {ipc}, {client} and {server}")
     return 0
 
 

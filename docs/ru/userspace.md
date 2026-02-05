@@ -18,6 +18,9 @@
 - Запуск невозможен без loader и полноценного набора syscalls.
 - Сейчас есть только минимальный каркас syscall boundary (0x80) без userland.
 - В ядре зарезервирован bootstrap‑порт (placeholder), протокола нет.
+- Есть временный kernel‑mode bootstrap server (thread), отвечающий статусом `0`.
+- Есть минимальный loader‑stub в ядре (без ring3).
+- Добавлена базовая инфраструктура ring3 (GDT user‑сегменты + TSS RSP0) и тестовый user‑stub.
 
 ## Инварианты
 

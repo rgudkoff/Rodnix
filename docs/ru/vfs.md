@@ -19,7 +19,8 @@
 - Реализован VFS-скелет с `vfs_node_t` (vnode) и `vfs_inode_t` (inode).
 - Есть таблица mount (root ramfs + возможность подключать ramfs на путь).
 - Name cache: фиксированная таблица, инвалидация на любом изменении дерева.
-- Initrd: если передан через `vfs_set_initrd()`, импортируется в `/initrd.img`.
+- Initrd: поддержан простой формат `RDNX` (таблица файлов), импортируется в RAMFS.
+- Есть `vfs_mount_initrd_root()` для замены корня на initrd‑RAMFS.
 - Весь доступ сейчас идёт через RAMFS (in-memory).
 
 ## Инварианты
@@ -30,4 +31,4 @@
 
 ## Где смотреть в коде
 
-- `kernel/fs/vfs.c`, `kernel/fs/vfs.h`.
+- `kernel/fs/vfs.c`, `kernel/fs/vfs.h`, `kernel/fs/initrd.h`.

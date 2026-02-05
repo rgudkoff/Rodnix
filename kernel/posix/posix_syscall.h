@@ -14,6 +14,19 @@ typedef uint64_t (*posix_syscall_fn_t)(uint64_t a1,
 
 enum {
     POSIX_SYS_NOSYS = 0,
+    POSIX_SYS_GETPID = 1,
+    POSIX_SYS_GETUID = 2,
+    POSIX_SYS_GETEUID = 3,
+    POSIX_SYS_GETGID = 4,
+    POSIX_SYS_GETEGID = 5,
+    POSIX_SYS_SETUID = 6,
+    POSIX_SYS_SETEUID = 7,
+    POSIX_SYS_SETGID = 8,
+    POSIX_SYS_SETEGID = 9,
+    POSIX_SYS_OPEN = 10,
+    POSIX_SYS_CLOSE = 11,
+    POSIX_SYS_READ = 12,
+    POSIX_SYS_WRITE = 13,
 };
 
 void posix_syscall_init(void);

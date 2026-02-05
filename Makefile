@@ -42,6 +42,8 @@ KERNEL_C_SRCS = \
 	kernel/common/syscall.c \
 	kernel/common/ipc.c \
 	kernel/common/security.c \
+	kernel/common/bootstrap.c \
+	kernel/common/loader.c \
 	kernel/posix/posix_syscall.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
@@ -55,12 +57,15 @@ KERNEL_C_SRCS = \
 	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/gdt.c \
 	kernel/arch/x86_64/pmm.c \
 	kernel/arch/x86_64/paging.c \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
+	kernel/arch/x86_64/usermode.c \
 	kernel/net/net.c \
+	kernel/net/socket.c \
 	kernel/fabric/fabric.c \
 	kernel/fabric/spin.c \
 	kernel/fabric/bus/virt.c \

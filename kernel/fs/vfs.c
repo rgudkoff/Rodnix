@@ -4,6 +4,7 @@
  */
 
 #include "vfs.h"
+#include "initrd.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
@@ -297,6 +298,26 @@ static int vfs_mount_root_ramfs(void)
     return 0;
 }
 
+static int vfs_import_initrd(void);
+
+int vfs_mount_initrd_root(void)
+{
+    if (!vfs_ready || !vfs_initrd_data || vfs_initrd_size == 0) {
+        return -1;
+    }
+    /* Replace root mount with initrd-backed RAMFS */
+    if (!vfs_root_mount) {
+        return -1;
+    }
+    vfs_node_t* new_root = vfs_alloc_node("/", VFS_NODE_DIR);
+    if (!new_root) {
+        return -1;
+    }
+    vfs_root_mount->root = new_root;
+    vfs_root = new_root;
+    vfs_cache_reset();
+    return vfs_import_initrd();
+}
 int vfs_mount_ramfs(const char* path)
 {
     if (!vfs_ready || !path) {
@@ -334,15 +355,43 @@ static int vfs_import_initrd(void)
     if (!vfs_root || !vfs_initrd_data || vfs_initrd_size == 0) {
         return 0;
     }
-    vfs_node_t* node = vfs_create_node(vfs_root, "initrd.img", VFS_NODE_FILE);
-    if (!node) {
+    if (vfs_initrd_size < sizeof(initrd_header_t)) {
         return -1;
     }
-    if (vfs_grow_file(node, vfs_initrd_size) != 0) {
+
+    const initrd_header_t* hdr = (const initrd_header_t*)vfs_initrd_data;
+    if (hdr->magic != INITRD_MAGIC) {
         return -1;
     }
-    memcpy(node->inode->data, vfs_initrd_data, vfs_initrd_size);
-    node->inode->size = vfs_initrd_size;
+
+    const uint8_t* base = (const uint8_t*)vfs_initrd_data;
+    size_t entries_size = hdr->entry_count * sizeof(initrd_entry_t);
+    size_t table_end = sizeof(initrd_header_t) + entries_size;
+    if (table_end > vfs_initrd_size) {
+        return -1;
+    }
+
+    const initrd_entry_t* entries = (const initrd_entry_t*)(base + sizeof(initrd_header_t));
+    for (uint32_t i = 0; i < hdr->entry_count; i++) {
+        const initrd_entry_t* e = &entries[i];
+        if (e->path[0] == '\0') {
+            continue;
+        }
+        size_t end = (size_t)e->offset + (size_t)e->size;
+        if (end > vfs_initrd_size) {
+            continue;
+        }
+        vfs_node_t* node = vfs_create_node(vfs_root, e->path, VFS_NODE_FILE);
+        if (!node) {
+            continue;
+        }
+        if (vfs_grow_file(node, e->size) != 0) {
+            continue;
+        }
+        memcpy(node->inode->data, base + e->offset, e->size);
+        node->inode->size = e->size;
+    }
+
     return 0;
 }
 

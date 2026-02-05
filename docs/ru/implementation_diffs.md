@@ -58,10 +58,14 @@
 - Добавлен каркас userland в `userland/` и скелет bootstrap‑сервера.
 - Запуск userland отсутствует (нет loader и ring3).
 - В ядре зарезервирован bootstrap‑порт (placeholder).
+- Есть временный kernel‑mode bootstrap server (thread).
+- Есть loader‑stub (без реальной загрузки и ring3).
+- Базовая инфраструктура ring3 (GDT user‑сегменты + TSS RSP0) и тестовый user‑stub.
 
 Разница:
 - Нет userland процесса.
-- Нет bootstrap‑сервера и протокола раздачи портов.
+- Нет userland bootstrap‑сервера и протокола раздачи портов.
+- Нет полноценного loader/ring3 с адресным пространством и безопасным syscall‑путём.
 
 ## Системные вызовы (BSD‑слой)
 
@@ -74,7 +78,9 @@
 - Вектор `0x80` подключён в IDT как trap gate (DPL=3).
 - Есть базовый dispatch по ABI (`rax` номер, `rdi..r9` аргументы).
 - Есть каркас POSIX‑слоя (`kernel/posix/posix_syscall.c`).
-- Реализованы только `SYS_NOP` и `POSIX_SYS_NOSYS`.
+- Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`.
+- Добавлены базовые `SETUID/SETEUID/SETGID/SETEGID` с проверкой root.
+- Добавлены `OPEN/CLOSE/READ/WRITE` на базе VFS.
 
 Разница:
 - Нет полноценной таблицы syscalls и набора вызовов.
@@ -92,12 +98,13 @@
 - `kernel/fs/vfs.c` — VFS-скелет с vnode/inode и RAMFS.
 - Есть mount-структура и возможность подключать ramfs на путь.
 - Есть name cache с инвалидацией по генерации.
-- Есть импорт initrd в `/initrd.img`, если задан через `vfs_set_initrd()`.
+ - Есть импорт initrd по простому формату `RDNX` (таблица файлов).
+ - Есть `vfs_mount_initrd_root()` для замены root на initrd‑RAMFS.
 
 Разница:
 - Нет полноценного VFS с несколькими типами ФС и драйверами.
 - Нет полноценного name cache (только грубая инвалидация).
-- Нет настоящего initrd-формата/распаковки и монтирования initrd как root.
+ - Нет полноценного initrd (cpio/tar); root‑mount пока только через RAMFS.
 
 ## Сеть
 
@@ -106,9 +113,10 @@
 
 Реализация:
 - Есть минимальный loopback (очередь пакетов в памяти).
+- Есть базовые UDP‑сокеты (AF_INET + SOCK_DGRAM) для loopback.
 
 Разница:
-- Нет сетевого стека, сокетов, UDP/TCP и драйверов сетевых устройств.
+- Нет полноценного сетевого стека, UDP/TCP и драйверов сетевых устройств.
 
 ## Учёт и права
 
@@ -133,5 +141,5 @@
 - Добавлен каркас генератора `scripts/idl/idlgen.py` (placeholder).
 
 Разница:
-- Нет интеграции генерации с IPC/runtime.
+- Нет интеграции генерации с IPC/runtime (только заголовки и msg ids).
 - Нет сгенерированных C‑источников (только headers).

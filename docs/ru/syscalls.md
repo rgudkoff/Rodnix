@@ -19,8 +19,10 @@
   - `rdi, rsi, rdx, r10, r8, r9` — аргументы 1..6.
   - `rax` — код возврата.
 - Таблица syscalls: `kernel/common/syscall.c`.
-- Есть POSIX‑слой: `kernel/posix/posix_syscall.c` (таблица + stub).
-- Реализован только `SYS_NOP` и `POSIX_SYS_NOSYS` (возвращают `0` и `-1`).
+- Есть POSIX‑слой: `kernel/posix/posix_syscall.c` (таблица + минимальные вызовы).
+- Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`.
+- Реализованы базовые `SETUID/SETEUID/SETGID/SETEGID` (только для root).
+- Добавлены `OPEN/CLOSE/READ/WRITE` поверх VFS (in‑kernel, без userland).
 - Неизвестный номер возвращает `-1`.
 
 ## Инварианты

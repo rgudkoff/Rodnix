@@ -58,6 +58,7 @@ int vfs_is_ready(void);
 void vfs_set_initrd(const void* data, size_t size);
 
 int vfs_mount_ramfs(const char* path);
+int vfs_mount_initrd_root(void);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);

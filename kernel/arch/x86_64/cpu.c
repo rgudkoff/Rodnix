@@ -5,6 +5,7 @@
 
 #include "../../core/cpu.h"
 #include "types.h"
+#include "gdt.h"
 #include <stddef.h>
 
 /* Use volatile to prevent compiler optimizations that might cause issues */
@@ -33,6 +34,9 @@ int cpu_init(void)
     cr4 |= (1ULL << 9);   /* OSFXSR */
     cr4 |= (1ULL << 10);  /* OSXMMEXCPT */
     __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
+
+    /* Initialize GDT/TSS (user segments + RSP0) */
+    gdt_init();
     
     /* Get CPU information via CPUID */
     /* Use memory barriers to ensure proper ordering */
