@@ -221,7 +221,14 @@ static uint64_t posix_open(uint64_t a1,
         kfree(file);
         return (uint64_t)-1;
     }
-    return (uint64_t)(uintptr_t)file;
+    task_t* task = task_get_current();
+    int fd = task_fd_alloc(task, file);
+    if (fd < 0) {
+        vfs_close(file);
+        kfree(file);
+        return (uint64_t)-1;
+    }
+    return (uint64_t)fd;
 }
 
 static uint64_t posix_close(uint64_t a1,
@@ -236,12 +243,14 @@ static uint64_t posix_close(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
-    vfs_file_t* file = (vfs_file_t*)(uintptr_t)a1;
+    task_t* task = task_get_current();
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     if (!file) {
         return (uint64_t)-1;
     }
     vfs_close(file);
     kfree(file);
+    task_fd_close(task, (int)a1);
     return 0;
 }
 
@@ -255,7 +264,8 @@ static uint64_t posix_read(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
-    vfs_file_t* file = (vfs_file_t*)(uintptr_t)a1;
+    task_t* task = task_get_current();
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     void* buf = (void*)(uintptr_t)a2;
     size_t len = (size_t)a3;
     if (!file || !buf) {
@@ -275,7 +285,8 @@ static uint64_t posix_write(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
-    vfs_file_t* file = (vfs_file_t*)(uintptr_t)a1;
+    task_t* task = task_get_current();
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     const void* buf = (const void*)(uintptr_t)a2;
     size_t len = (size_t)a3;
     if (!file || !buf) {

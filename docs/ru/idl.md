@@ -20,7 +20,12 @@
 - Добавлен минимальный генератор: `scripts/idl/idlgen.py`.
 - Есть разбор `interface`/`rpc` и генерация IPC‑ids + header‑стабов.
 - Поддерживаемые типы: `u32`, `u64`, `string`, `port`.
-- Генерация IPC‑ids позволяет привязку к runtime, но интеграции ещё нет.
+- Генерация IPC‑ids и структур запрос/ответ.
+- Добавлен минимальный runtime (`idl_runtime`) и генерация client/server `.c`.
+- Dispatch вызывает `idl_ipc_reply` для ответа на RPC.
+- Нет интеграции с userland/ABI и нет поддержки variable‑size сообщений.
+- В ядре есть demo (ping RPC) для проверки end‑to‑end пути.
+ - Текущее demo использует in‑kernel сервис/клиент, userland не участвует.
 
 ## Инварианты
 

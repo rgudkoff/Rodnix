@@ -145,11 +145,25 @@ int memory_init(void)
     uint64_t kernel_end_phys = (uint64_t)X86_64_VIRT_TO_PHYS(&kernel_end);
     pmm_reserve_range(kernel_start, kernel_end_phys);
 
-    /* Bootstrap higher-half direct map for low memory (64MB) */
-    kputs("[MEM-6] Bootstrap physmap (64MB)\n");
+    if (bi && bi->initrd_start && bi->initrd_size) {
+        uint64_t initrd_end = bi->initrd_start + bi->initrd_size;
+        if (initrd_end > bi->initrd_start) {
+            pmm_reserve_range(bi->initrd_start, initrd_end);
+        }
+    }
+
+    /* Bootstrap higher-half direct map for low memory (64MB, or initrd end) */
+    uint64_t physmap_max = 0x4000000ULL;
+    if (bi && bi->initrd_start && bi->initrd_size) {
+        uint64_t initrd_end = bi->initrd_start + bi->initrd_size;
+        if (initrd_end > physmap_max) {
+            physmap_max = (initrd_end + 0x1FFFFFULL) & ~0x1FFFFFULL;
+        }
+    }
+    kputs("[MEM-6] Bootstrap physmap\n");
     __asm__ volatile ("" ::: "memory");
     extern int paging_bootstrap_physmap(uint64_t max_phys);
-    if (paging_bootstrap_physmap(0x4000000ULL) != 0) { /* 64MB */
+    if (paging_bootstrap_physmap(physmap_max) != 0) {
         kputs("[MEM-ERR] bootstrap physmap failed\n");
         return -1;
     }

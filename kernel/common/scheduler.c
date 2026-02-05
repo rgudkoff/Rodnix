@@ -28,6 +28,13 @@ static thread_t* ready_tail[READY_QUEUE_LEVELS] = {0};
 #define PENALTY_MAX 32
 #define PENALTY_STEP_TICKS 4
 
+/* Time quantum tuning (ticks) */
+#define REALTIME_QUANTUM_TICKS 1
+#define TIMESHARE_PRIO_STEP    64
+#define TIMESHARE_MAX_BONUS    3
+#define CPU_BOUND_THRESHOLD    8
+#define CPU_BOUND_EXTRA_TICKS  2
+
 static volatile bool in_scheduler = false;
 static uint32_t ticks_until_preempt = 1;
 static uint32_t ticks_per_slice = 1;
@@ -82,16 +89,23 @@ static void scheduler_reset_timeslice(const thread_t* thread)
         return;
     }
     if (thread->sched_class == SCHED_CLASS_REALTIME) {
-        ticks_until_preempt = 1;
+        ticks_until_preempt = REALTIME_QUANTUM_TICKS;
         return;
     }
     int prio = thread_effective_priority(thread);
-    uint32_t base = (SCHEDULER_TIME_SLICE_MS + 4) / 5;
+    uint32_t base = ticks_per_slice;
     if (base == 0) {
         base = 1;
     }
-    uint32_t extra = (uint32_t)(prio / 64);
-    ticks_until_preempt = base + extra;
+    uint32_t prio_extra = (uint32_t)(prio / TIMESHARE_PRIO_STEP);
+    if (prio_extra > TIMESHARE_MAX_BONUS) {
+        prio_extra = TIMESHARE_MAX_BONUS;
+    }
+    uint32_t usage_extra = 0;
+    if (thread->sched_usage > CPU_BOUND_THRESHOLD) {
+        usage_extra = CPU_BOUND_EXTRA_TICKS;
+    }
+    ticks_until_preempt = base + prio_extra + usage_extra;
     if (ticks_until_preempt == 0) {
         ticks_until_preempt = 1;
     }
@@ -349,15 +363,17 @@ void scheduler_unblock(thread_t* thread)
     }
     
     if (thread->state == THREAD_STATE_BLOCKED) {
-        uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
-        if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
-            int boost = (int)(sleep_ticks / BOOST_THRESHOLD_TICKS);
-            if (boost > BOOST_MAX) {
-                boost = BOOST_MAX;
+        if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
+            uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
+            if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
+                int boost = (int)(sleep_ticks / BOOST_THRESHOLD_TICKS);
+                if (boost > BOOST_MAX) {
+                    boost = BOOST_MAX;
+                }
+                int base = thread->base_priority;
+                int dyn = thread->dyn_priority + boost;
+                thread->dyn_priority = clamp_dyn_priority(dyn, base);
             }
-            int base = thread->base_priority;
-            int dyn = thread->dyn_priority + boost;
-            thread->dyn_priority = clamp_dyn_priority(dyn, base);
         }
         thread->state = THREAD_STATE_READY;
         if (stats.blocked_tasks > 0) {
@@ -420,10 +436,12 @@ void scheduler_tick(void)
     if (current_thread && current_thread->state == THREAD_STATE_RUNNING) {
         current_thread->sched_usage = (current_thread->sched_usage * 7) / 8;
         current_thread->sched_usage++;
-        if ((current_thread->sched_usage % PENALTY_STEP_TICKS) == 0) {
-            int base = current_thread->base_priority;
-            int dyn = current_thread->dyn_priority - 1;
-            current_thread->dyn_priority = clamp_dyn_priority(dyn, base);
+        if (current_thread->sched_class == SCHED_CLASS_TIMESHARE) {
+            if ((current_thread->sched_usage % PENALTY_STEP_TICKS) == 0) {
+                int base = current_thread->base_priority;
+                int dyn = current_thread->dyn_priority - 1;
+                current_thread->dyn_priority = clamp_dyn_priority(dyn, base);
+            }
         }
     }
     
@@ -571,6 +589,37 @@ void scheduler_clear_inherit(thread_t* target)
         target->inherited_priority = target->inherit_stack[--target->inherit_depth];
     } else {
         target->inherited_priority = target->dyn_priority;
-        target->has_inherited = 0;
     }
+    target->has_inherited = 0;
+}
+
+void scheduler_debug_dump(void)
+{
+    kputs("[SCHED] ---- dump ----\n");
+    kprintf("[SCHED] ticks=%llu running=%d ready=%llu blocked=%llu\n",
+            (unsigned long long)sched_ticks,
+            scheduler_running ? 1 : 0,
+            (unsigned long long)stats.ready_tasks,
+            (unsigned long long)stats.blocked_tasks);
+    if (current_thread) {
+        kprintf("[SCHED] current tid=%llu prio=%u dyn=%d class=%u state=%d\n",
+                (unsigned long long)current_thread->thread_id,
+                (unsigned)current_thread->priority,
+                (int)current_thread->dyn_priority,
+                (unsigned)current_thread->sched_class,
+                (int)current_thread->state);
+    } else {
+        kputs("[SCHED] current none\n");
+    }
+
+    for (int q = READY_QUEUE_LEVELS - 1; q >= 0; q--) {
+        uint32_t count = 0;
+        thread_t* it = ready_head[q];
+        while (it && count < 1024) {
+            count++;
+            it = it->sched_next;
+        }
+        kprintf("[SCHED] q%d count=%u\n", q, count);
+    }
+    kputs("[SCHED] --------------\n");
 }

@@ -88,33 +88,32 @@ def c_type(ftype: str) -> str:
 
 def gen_client(iface: Interface) -> str:
     lines = []
+    lines.append("#pragma once")
     lines.append("#include <stdint.h>")
+    lines.append("#include \"ipc.h\"")
+    lines.append("#include \"idl_runtime.h\"")
     lines.append(f"#include \"{iface.name}_ipc.h\"")
-    lines.append("\n/* Auto-generated client stubs (signatures only). */\n")
+    lines.append("\n/* Auto-generated client stubs. */\n")
     for rpc in iface.rpcs:
-        args = [f"{c_type(f.type)} {f.name}" for f in rpc.args]
-        ret_struct = "void"
-        if rpc.rets:
-            ret_struct = f"{iface.name}_{rpc.name}_reply_t"
-        lines.append(f"typedef struct {iface.name}_{rpc.name}_reply {{")
-        for f in rpc.rets:
-            lines.append(f"    {c_type(f.type)} {f.name};")
-        lines.append(f"}} {iface.name}_{rpc.name}_reply_t;\n")
-        lines.append(f"int {iface.name}_{rpc.name}_call({', '.join(args)}{', ' if args else ''}{ret_struct}* out);\n")
+        req = f"{iface.name}_{rpc.name}_request_t"
+        rep = f"{iface.name}_{rpc.name}_reply_t"
+        lines.append(f"int {iface.name}_{rpc.name}_call(port_t* port, const {req}* req, {rep}* out);\n")
     return "\n".join(lines)
 
 
 def gen_server(iface: Interface) -> str:
     lines = []
+    lines.append("#pragma once")
     lines.append("#include <stdint.h>")
+    lines.append("#include \"ipc.h\"")
+    lines.append("#include \"idl_runtime.h\"")
     lines.append(f"#include \"{iface.name}_ipc.h\"")
     lines.append("\n/* Auto-generated server dispatch prototypes. */\n")
     for rpc in iface.rpcs:
-        args = [f"{c_type(f.type)} {f.name}" for f in rpc.args]
-        for f in rpc.rets:
-            args.append(f"{c_type(f.type)}* out_{f.name}")
-        lines.append(f"int {iface.name}_{rpc.name}_impl({', '.join(args)});\n")
-    lines.append(f"int {iface.name}_dispatch(uint32_t msg_id, void* msg, void* reply);\n")
+        req = f"{iface.name}_{rpc.name}_request_t"
+        rep = f"{iface.name}_{rpc.name}_reply_t"
+        lines.append(f"int {iface.name}_{rpc.name}_impl(const {req}* req, {rep}* out);\n")
+    lines.append(f"int {iface.name}_dispatch(const ipc_message_t* msg);\n")
     return "\n".join(lines)
 
 
@@ -128,7 +127,82 @@ def gen_ipc(iface: Interface) -> str:
     for i, rpc in enumerate(iface.rpcs, start=1):
         lines.append(f"    {iface.name.upper()}_MSG_{rpc.name.upper()} = {i},")
     lines.append("};\n")
+    lines.append("/* Auto-generated request/reply structs. */")
+    for rpc in iface.rpcs:
+        lines.append(f"typedef struct {iface.name}_{rpc.name}_request {{")
+        if rpc.args:
+            for f in rpc.args:
+                lines.append(f"    {c_type(f.type)} {f.name};")
+        else:
+            lines.append("    uint32_t _unused;")
+        lines.append(f"}} {iface.name}_{rpc.name}_request_t;\n")
+
+        lines.append(f"typedef struct {iface.name}_{rpc.name}_reply {{")
+        if rpc.rets:
+            for f in rpc.rets:
+                lines.append(f"    {c_type(f.type)} {f.name};")
+        else:
+            lines.append("    uint32_t _unused;")
+        lines.append(f"}} {iface.name}_{rpc.name}_reply_t;\n")
     lines.append("#endif /* _RODNIX_IDL_IPC_H */")
+    return "\n".join(lines)
+
+
+def gen_client_c(iface: Interface, base: str) -> str:
+    lines = []
+    lines.append("#include <stdint.h>")
+    lines.append("#include \"ipc.h\"")
+    lines.append("#include \"idl_runtime.h\"")
+    lines.append(f"#include \"{base}_ipc.h\"")
+    lines.append(f"#include \"{base}_client.h\"")
+    lines.append("")
+    for rpc in iface.rpcs:
+        req = f"{iface.name}_{rpc.name}_request_t"
+        rep = f"{iface.name}_{rpc.name}_reply_t"
+        lines.append(f"int {iface.name}_{rpc.name}_call(port_t* port, const {req}* req, {rep}* out)")
+        lines.append("{")
+        lines.append(f"    return idl_ipc_call(port, {iface.name.upper()}_MSG_{rpc.name.upper()}, req, sizeof({req}), out, sizeof({rep}), 0);")
+        lines.append("}\n")
+    return "\n".join(lines)
+
+
+def gen_server_c(iface: Interface, base: str) -> str:
+    lines = []
+    lines.append("#include <stdint.h>")
+    lines.append("#include \"ipc.h\"")
+    lines.append("#include \"idl_runtime.h\"")
+    lines.append("#include \"common.h\"")
+    lines.append(f"#include \"{base}_ipc.h\"")
+    lines.append(f"#include \"{base}_server.h\"")
+    lines.append("")
+    lines.append(f"int {iface.name}_dispatch(const ipc_message_t* msg)")
+    lines.append("{")
+    lines.append("    if (!msg || !msg->data) {")
+    lines.append("        return -1;")
+    lines.append("    }")
+    lines.append("    switch (msg->msg_id) {")
+    for rpc in iface.rpcs:
+        req = f"{iface.name}_{rpc.name}_request_t"
+        rep = f"{iface.name}_{rpc.name}_reply_t"
+        lines.append(f"    case {iface.name.upper()}_MSG_{rpc.name.upper()}: {{")
+        lines.append(f"        if (msg->msg_size < sizeof({req})) {{")
+        lines.append("            return -1;")
+        lines.append("        }")
+        lines.append(f"        const {req}* req = (const {req}*)msg->data;")
+        lines.append(f"        {rep} reply;")
+        lines.append("        memset(&reply, 0, sizeof(reply));")
+        lines.append(f"        if ({iface.name}_{rpc.name}_impl(req, &reply) != 0) {{")
+        lines.append("            return -1;")
+        lines.append("        }")
+        lines.append("        if (!msg->reply_port) {")
+        lines.append("            return -1;")
+        lines.append("        }")
+        lines.append(f"        return idl_ipc_reply(msg->reply_port, {iface.name.upper()}_MSG_{rpc.name.upper()}, &reply, sizeof({rep}), 0);")
+        lines.append("    }")
+    lines.append("    default:")
+    lines.append("        return -1;")
+    lines.append("    }")
+    lines.append("}\n")
     return "\n".join(lines)
 
 
@@ -159,6 +233,8 @@ def main() -> int:
     ipc = os.path.join(out_dir, f"{base}_ipc.h")
     client = os.path.join(out_dir, f"{base}_client.h")
     server = os.path.join(out_dir, f"{base}_server.h")
+    client_c = os.path.join(out_dir, f"{base}_client.c")
+    server_c = os.path.join(out_dir, f"{base}_server.c")
 
     with open(ipc, "w", encoding="utf-8") as f:
         f.write(gen_ipc(iface))
@@ -166,8 +242,12 @@ def main() -> int:
         f.write(gen_client(iface))
     with open(server, "w", encoding="utf-8") as f:
         f.write(gen_server(iface))
+    with open(client_c, "w", encoding="utf-8") as f:
+        f.write(gen_client_c(iface, base))
+    with open(server_c, "w", encoding="utf-8") as f:
+        f.write(gen_server_c(iface, base))
 
-    print(f"idlgen: generated {ipc}, {client} and {server}")
+    print(f"idlgen: generated {ipc}, {client}, {server}, {client_c}, {server_c}")
     return 0
 
 

@@ -79,6 +79,9 @@ task_t* task_create(void)
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
+    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
+        task->fd_table[i] = NULL;
+    }
     task->ref_count = 1;
     task->arch_specific = NULL;
     return task;
@@ -111,6 +114,40 @@ uint32_t task_get_euid(const task_t* task)
 uint32_t task_get_egid(const task_t* task)
 {
     return task ? task->egid : 0;
+}
+
+int task_fd_alloc(task_t* task, void* handle)
+{
+    if (!task || !handle) {
+        return -1;
+    }
+    for (int i = 0; i < TASK_MAX_FD; i++) {
+        if (!task->fd_table[i]) {
+            task->fd_table[i] = handle;
+            return i;
+        }
+    }
+    return -1;
+}
+
+void* task_fd_get(task_t* task, int fd)
+{
+    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
+        return NULL;
+    }
+    return task->fd_table[fd];
+}
+
+int task_fd_close(task_t* task, int fd)
+{
+    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
+        return -1;
+    }
+    if (!task->fd_table[fd]) {
+        return -1;
+    }
+    task->fd_table[fd] = NULL;
+    return 0;
 }
 
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)

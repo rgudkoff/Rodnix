@@ -214,4 +214,9 @@ void scheduler_inherit_priority(thread_t* target, const thread_t* donor);
  */
 void scheduler_clear_inherit(thread_t* target);
 
+/**
+ * Dump scheduler state to console (debug helper)
+ */
+void scheduler_debug_dump(void);
+
 #endif /* _RODNIX_COMMON_SCHEDULER_H */

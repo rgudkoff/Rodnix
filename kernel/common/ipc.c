@@ -192,7 +192,7 @@ port_t* port_allocate(port_type_t type)
 
     port->port_id = next_port_id++;
     port->type = type;
-    port->rights = PORT_RIGHT_RECEIVE;
+    port->rights = PORT_RIGHT_RECEIVE | PORT_RIGHT_SEND;
     port->owner = task_get_current();
     port->owner_thread = thread_get_current();
     port->ref_count = 1;
@@ -266,6 +266,7 @@ int port_insert_send_right(task_t* task, port_t* port)
     
     /* TODO: Task port namespaces not implemented */
     (void)task;
+    port->rights |= PORT_RIGHT_SEND;
     port->ref_count++;
     return 0;
 }
@@ -277,7 +278,8 @@ int port_insert_receive_right(task_t* task, port_t* port)
     }
     
     /* TODO: Task port namespaces not implemented */
-    (void)task;
+    port->owner = task;
+    port->rights |= PORT_RIGHT_RECEIVE;
     port->ref_count++;
     return 0;
 }
@@ -289,6 +291,10 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
     
     if (!port->active) {
+        return -1;
+    }
+
+    if ((port->rights & PORT_RIGHT_SEND) == 0) {
         return -1;
     }
     
@@ -345,6 +351,13 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
     
     if (!port->active) {
         return -1;
+    }
+
+    if (port->owner) {
+        task_t* current = task_get_current();
+        if (current != port->owner) {
+            return -1;
+        }
     }
     
     thread_t* receiver = thread_get_current();

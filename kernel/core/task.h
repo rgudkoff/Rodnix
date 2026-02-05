@@ -49,6 +49,12 @@ typedef enum {
 #define PRIORITY_DEFAULT 128
 
 /* ============================================================================
+ * File descriptors (minimal)
+ * ============================================================================ */
+
+#define TASK_MAX_FD 32
+
+/* ============================================================================
  * Scheduling class
  * ============================================================================ */
 
@@ -69,6 +75,7 @@ typedef struct task {
     uint32_t gid;              /* Реальный GID */
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
+    void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
     uint32_t ref_count;        /* Счетчик ссылок */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } task_t;
@@ -137,6 +144,28 @@ void task_set_current(task_t* task);
  * @param egid Эффективный GID
  */
 void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid);
+
+/* ============================================================================
+ * File descriptors helpers
+ * ============================================================================ */
+
+/**
+ * Allocate a new file descriptor in task table
+ * @return fd >= 0 on success, negative value on error
+ */
+int task_fd_alloc(task_t* task, void* handle);
+
+/**
+ * Get handle by fd
+ * @return handle or NULL
+ */
+void* task_fd_get(task_t* task, int fd);
+
+/**
+ * Close and clear fd
+ * @return 0 on success, negative value on error
+ */
+int task_fd_close(task_t* task, int fd);
 
 /**
  * Получение эффективного UID

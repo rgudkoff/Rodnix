@@ -1,7 +1,7 @@
 # IDL generator (minimal)
 
-This tool parses a very small `.defs` format and generates C header stubs
-for client and server.
+This tool parses a very small `.defs` format and generates C headers and
+minimal client/server C stubs that use the IPC runtime.
 
 ## Grammar (subset)
 
@@ -24,3 +24,9 @@ python3 scripts/idl/idlgen.py <input.defs> <out_dir>
 ```sh
 python3 scripts/idl/idlgen.py scripts/idl/example.defs build/idl
 ```
+
+The generator emits:
+
+- `<name>_ipc.h` (message ids + request/reply structs)
+- `<name>_client.h/.c` (client stubs)
+- `<name>_server.h/.c` (server stubs + dispatch)
