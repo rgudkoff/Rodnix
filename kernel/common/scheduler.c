@@ -5,6 +5,7 @@
 
 #include "scheduler.h"
 #include "../core/interrupts.h"
+#include "../arch/x86_64/interrupt_frame.h"
 #include "../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -27,7 +28,6 @@ static volatile bool resched_pending = false;
 
 static void ready_enqueue(thread_t* thread);
 static thread_t* ready_dequeue(void);
-static void scheduler_switch_to(thread_t* next);
 
 static void scheduler_yield_internal(bool irq_context)
 {
@@ -35,35 +35,8 @@ static void scheduler_yield_internal(bool irq_context)
     if (!scheduler_running) {
         return;
     }
-
-    if (in_scheduler) {
-        return;
-    }
-
-    in_scheduler = true;
-
-    if (!ready_head) {
-        in_scheduler = false;
-        return;
-    }
-
-    if (current_thread && current_thread->state == THREAD_STATE_RUNNING) {
-        current_thread->state = THREAD_STATE_READY;
-        ready_enqueue(current_thread);
-    }
-
-    thread_t* next = ready_dequeue();
-    if (!next || next == current_thread) {
-        if (current_thread) {
-            current_thread->state = THREAD_STATE_RUNNING;
-        }
-        in_scheduler = false;
-        return;
-    }
-
-    /* Clear guard before switching so the next thread can yield. */
-    in_scheduler = false;
-    scheduler_switch_to(next);
+    /* Request preemption on next timer interrupt */
+    resched_pending = true;
 }
 
 static void ready_enqueue(thread_t* thread)
@@ -107,34 +80,6 @@ static thread_t* ready_dequeue(void)
     return thread;
 }
 
-static void scheduler_switch_to(thread_t* next)
-{
-    if (!next || next == current_thread) {
-        return;
-    }
-
-    if (current_thread &&
-        current_thread->state != THREAD_STATE_RUNNING &&
-        current_thread->state != THREAD_STATE_READY) {
-        DEBUG_WARN("switch_to: current thread %llu state=%d",
-                   (unsigned long long)current_thread->thread_id, current_thread->state);
-    }
-    if (next->state != THREAD_STATE_READY) {
-        DEBUG_WARN("switch_to: next thread %llu state=%d", (unsigned long long)next->thread_id, next->state);
-    }
-    thread_t* prev = current_thread;
-    current_thread = next;
-    thread_set_current(next);
-    stats.running_tasks = 1;
-    stats.total_switches++;
-
-    if (prev) {
-        prev->state = THREAD_STATE_READY;
-    }
-    next->state = THREAD_STATE_RUNNING;
-
-    thread_switch(prev, next);
-}
 
 int scheduler_init(void)
 {
@@ -167,13 +112,12 @@ void scheduler_start(void)
     
     scheduler_running = true;
     ticks_until_preempt = ticks_per_slice;
-    
-    if (!current_thread) {
-        thread_t* next = ready_dequeue();
-        if (next) {
-            scheduler_switch_to(next);
-        }
-    }
+
+    /* Kick preemption to start the first thread on the next timer IRQ */
+    resched_pending = true;
+    /* Force a timer-like IRQ to start the first thread */
+    __asm__ volatile ("int $32");
+    /* If we return here, we did not switch yet */
 }
 
 int scheduler_add_task(task_t* task)
@@ -261,19 +205,7 @@ void scheduler_block(void)
     }
     current_thread->state = THREAD_STATE_BLOCKED;
     stats.blocked_tasks++;
-
-    thread_t* next = ready_dequeue();
-    if (next) {
-        /* Clear guard before switching so the next thread can yield. */
-        in_scheduler = false;
-        scheduler_switch_to(next);
-        return;
-    }
-
-    current_thread->state = THREAD_STATE_RUNNING;
-    if (stats.blocked_tasks > 0) {
-        stats.blocked_tasks--;
-    }
+    resched_pending = true;
     in_scheduler = false;
 }
 
@@ -366,10 +298,7 @@ void scheduler_ast_check(void)
         return;
     }
 
-    if (resched_pending) {
-        resched_pending = false;
-        scheduler_yield_internal(false);
-    }
+    /* Preemption happens on timer IRQ; keep this as a no-op */
 }
 
 int scheduler_get_stats(scheduler_stats_t* out_stats)
@@ -380,4 +309,72 @@ int scheduler_get_stats(scheduler_stats_t* out_stats)
     
     *out_stats = stats;
     return 0;
+}
+
+interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
+{
+    if (!scheduler_running || !frame) {
+        return frame;
+    }
+    if (in_scheduler) {
+        return frame;
+    }
+
+    in_scheduler = true;
+    /* If no reschedule is pending and we already have a current thread, keep running */
+    if (current_thread && !resched_pending) {
+        in_scheduler = false;
+        return frame;
+    }
+    resched_pending = false;
+
+    if (!current_thread) {
+        thread_t* first = ready_dequeue();
+        if (!first) {
+            in_scheduler = false;
+            return frame;
+        }
+        current_thread = first;
+        thread_set_current(first);
+        if (first->task) {
+            task_set_current(first->task);
+        }
+        stats.running_tasks = 1;
+        stats.total_switches++;
+        first->state = THREAD_STATE_RUNNING;
+        in_scheduler = false;
+        return (interrupt_frame_t*)(uintptr_t)first->context.stack_pointer;
+    }
+
+    current_thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
+    if (current_thread->state == THREAD_STATE_RUNNING) {
+        current_thread->state = THREAD_STATE_READY;
+        ready_enqueue(current_thread);
+    }
+
+    thread_t* next = ready_dequeue();
+    if (!next || next == current_thread) {
+        if (current_thread) {
+            current_thread->state = THREAD_STATE_RUNNING;
+        }
+        in_scheduler = false;
+        return frame;
+    }
+
+    thread_t* prev = current_thread;
+    current_thread = next;
+    thread_set_current(next);
+    if (next->task) {
+        task_set_current(next->task);
+    }
+    stats.running_tasks = 1;
+    stats.total_switches++;
+
+    if (prev) {
+        prev->state = THREAD_STATE_READY;
+    }
+    next->state = THREAD_STATE_RUNNING;
+
+    in_scheduler = false;
+    return (interrupt_frame_t*)(uintptr_t)next->context.stack_pointer;
 }

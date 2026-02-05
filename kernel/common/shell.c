@@ -582,7 +582,9 @@ void shell_run(void)
     
     while (shell_state.running) {
         interrupts_enable();
+        interrupts_disable();
         kputs(SHELL_PROMPT);
+        interrupts_enable();
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
 
         

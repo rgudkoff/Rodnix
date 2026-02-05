@@ -13,6 +13,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+struct interrupt_frame;
+
 /* ============================================================================
  * Scheduler configuration
  * ============================================================================ */
@@ -174,6 +176,13 @@ void scheduler_set_tick_rate(uint32_t hz);
  * Should be called from non-IRQ context
  */
 void scheduler_ast_check(void);
+
+/**
+ * Switch from IRQ context if a reschedule is pending.
+ * @param frame Pointer to interrupt frame
+ * @return Frame to resume (may differ from input)
+ */
+struct interrupt_frame* scheduler_switch_from_irq(struct interrupt_frame* frame);
 
 /* ============================================================================
  * Statistics

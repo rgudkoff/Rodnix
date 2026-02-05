@@ -13,10 +13,12 @@
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
+#include "interrupt_frame.h"
 #include "types.h"
 #include "pic.h"
 #include "apic.h"
 #include <stddef.h>
+
 
 /* Minimal serial output for exception diagnostics (COM1). */
 #define SERIAL_COM1_BASE 0x3F8
@@ -64,6 +66,14 @@ static void serial_write_hex64(uint64_t value)
 
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
+extern uint64_t irq_iret_rsp;
+extern uint64_t irq_iret_rip;
+extern uint64_t irq_iret_cs;
+extern uint64_t irq_iret_rflags;
+extern uint64_t isr_iret_rsp;
+extern uint64_t isr_iret_rip;
+extern uint64_t isr_iret_cs;
+extern uint64_t isr_iret_rflags;
 
 static void irq_send_eoi(uint32_t irq)
 {
@@ -88,55 +98,6 @@ static void irq_send_eoi(uint32_t irq)
         pic_send_eoi(irq);
     }
 }
-
-/* Register structure (matches current assembly push order in isr_stubs.S)
- *
- * Stack layout on entry to isr_common_stub/irq_common_stub (top -> bottom):
- *   [gs][fs][es][ds]
- *   [r15][r14][r13][r12][r11][r10][r9][r8]
- *   [rbp][rdi][rsi][rdx][rcx][rbx][rax]
- *   [int_no][err_code]
- *   [rip][cs][rflags][rsp][ss]  (rsp/ss are present only on privilege change)
- *
- * This is similar in spirit to XNU's saved state structure: минимальная обработка
- * в ASM, всё остальное — в C.
- */
-struct registers {
-    /* Segment registers saved explicitly in stubs */
-    uint64_t gs;
-    uint64_t fs;
-    uint64_t es;
-    uint64_t ds;
-
-    /* General-purpose registers (high to low) */
-    uint64_t r15;
-    uint64_t r14;
-    uint64_t r13;
-    uint64_t r12;
-    uint64_t r11;
-    uint64_t r10;
-    uint64_t r9;
-    uint64_t r8;
-
-    uint64_t rbp;
-    uint64_t rdi;
-    uint64_t rsi;
-    uint64_t rdx;
-    uint64_t rcx;
-    uint64_t rbx;
-    uint64_t rax;
-
-    /* Interrupt metadata pushed by stubs/CPU */
-    uint64_t int_no;
-    uint64_t err_code;
-
-    /* CPU-saved execution context */
-    uint64_t rip;
-    uint64_t cs;
-    uint64_t rflags;
-    uint64_t rsp;
-    uint64_t ss;
-};
 
 /* Safe VGA output function - does not use kputs/kprintf to avoid recursion */
 static void safe_vga_puts(uint8_t row, uint8_t col, const char* str, uint8_t color)
@@ -252,7 +213,7 @@ static const char* exception_names[] = {
  * 
  * @note Single entry point, proper routing, silent spurious handling
  */
-static void interrupt_dispatch(struct registers* regs)
+static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
 {
     uint32_t vector = regs->int_no;
     
@@ -264,14 +225,14 @@ static void interrupt_dispatch(struct registers* regs)
         if (irq > 15) {
             /* Invalid IRQ - send EOI and return silently */
             irq_send_eoi(irq);
-            return;
+            return regs;
         }
         
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
             ctx.pc = regs->rip;
-            ctx.sp = regs->rsp;
+            ctx.sp = 0;
             ctx.flags = regs->rflags;
             ctx.error_code = regs->err_code;
             ctx.vector = vector;
@@ -284,7 +245,12 @@ static void interrupt_dispatch(struct registers* regs)
         }
         
         irq_send_eoi(irq);
-        return;
+        if (vector == 32) {
+            /* Timer tick drives preemption */
+            scheduler_tick();
+            regs = scheduler_switch_from_irq(regs);
+        }
+        return regs;
     }
     
     /* Handle exception (0-31) */
@@ -293,7 +259,7 @@ static void interrupt_dispatch(struct registers* regs)
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
             ctx.pc = regs->rip;
-            ctx.sp = regs->rsp;
+            ctx.sp = 0;
             ctx.flags = regs->rflags;
             ctx.error_code = regs->err_code;
             ctx.vector = vector;
@@ -301,14 +267,14 @@ static void interrupt_dispatch(struct registers* regs)
             ctx.arch_specific = regs;
             
             interrupt_handlers[vector](&ctx);
-            return;
+            return regs;
         }
         
         /* Reserved exceptions (15, 22-31) - ignore silently */
         /* Exception 21 (Control Protection Exception) - can occur on some CPUs, ignore */
         if (vector == 15 || vector == 21 || (vector >= 22 && vector <= 31)) {
             /* These are reserved or can occur spuriously and should not cause panic */
-            return;
+            return regs;
         }
         
         /* Exception 7 (No Coprocessor) - can occur if FPU is used in interrupt handler */
@@ -316,10 +282,55 @@ static void interrupt_dispatch(struct registers* regs)
         if (vector == 7) {
             /* This can occur if FPU is used in interrupt handler */
             /* Just return silently - FPU operations should not be done in interrupt context */
-            return;
+            return regs;
         }
 
         /* Serial exception dump for boot.log */
+        serial_write_str("\n[EXC] irq_iret rsp=");
+        serial_write_hex64(irq_iret_rsp);
+        serial_write_str(" rip=");
+        serial_write_hex64(irq_iret_rip);
+        serial_write_str(" cs=");
+        serial_write_hex64(irq_iret_cs);
+        serial_write_str(" rflags=");
+        serial_write_hex64(irq_iret_rflags);
+        serial_write_str("\n");
+        if (irq_iret_rsp) {
+            uint64_t* p = (uint64_t*)(uintptr_t)irq_iret_rsp;
+            serial_write_str("[EXC] iretq stack rip/cs/rflags=");
+            serial_write_hex64(p[0]);
+            serial_write_str(" ");
+            serial_write_hex64(p[1]);
+            serial_write_str(" ");
+            serial_write_hex64(p[2]);
+            serial_write_str("\n");
+            serial_write_str("[EXC] iretq stack window=");
+            serial_write_hex64(p[-2]);
+            serial_write_str(" ");
+            serial_write_hex64(p[-1]);
+            serial_write_str(" ");
+            serial_write_hex64(p[0]);
+            serial_write_str(" ");
+            serial_write_hex64(p[1]);
+            serial_write_str(" ");
+            serial_write_hex64(p[2]);
+            serial_write_str(" ");
+            serial_write_hex64(p[3]);
+            serial_write_str(" ");
+            serial_write_hex64(p[4]);
+            serial_write_str("\n");
+        }
+
+        serial_write_str("[EXC] isr_iret rsp=");
+        serial_write_hex64(isr_iret_rsp);
+        serial_write_str(" rip=");
+        serial_write_hex64(isr_iret_rip);
+        serial_write_str(" cs=");
+        serial_write_hex64(isr_iret_cs);
+        serial_write_str(" rflags=");
+        serial_write_hex64(isr_iret_rflags);
+        serial_write_str("\n");
+
         serial_write_str("\n[EXC] v=");
         serial_write_hex64(vector);
         serial_write_str(" rip=");
@@ -333,6 +344,26 @@ static void interrupt_dispatch(struct registers* regs)
             serial_write_str("[EXC] cr2=");
             serial_write_hex64(cr2);
             serial_write_str("\n");
+        }
+        if (vector == 13) {
+            struct {
+                uint16_t limit;
+                uint64_t base;
+            } __attribute__((packed)) gdtr;
+            __asm__ volatile ("sgdt %0" : "=m"(gdtr));
+            serial_write_str("[EXC] gdtr base=");
+            serial_write_hex64(gdtr.base);
+            serial_write_str(" limit=");
+            serial_write_hex64(gdtr.limit);
+            serial_write_str("\n");
+            if (gdtr.base) {
+                uint64_t* gdt = (uint64_t*)(uintptr_t)gdtr.base;
+                serial_write_str("[EXC] gdt[1]=");
+                serial_write_hex64(gdt[1]);
+                serial_write_str(" gdt[2]=");
+                serial_write_hex64(gdt[2]);
+                serial_write_str("\n");
+            }
         }
 
         /* Extra minimal dump at top-left to avoid being scrolled out */
@@ -360,7 +391,7 @@ static void interrupt_dispatch(struct registers* regs)
         safe_vga_hex(19, 5, regs->rip, 0x0F);
         
         safe_vga_puts(20, 0, "RSP: ", 0x0F);
-        safe_vga_hex(20, 5, regs->rsp, 0x0F);
+        safe_vga_puts(20, 5, "n/a", 0x0F);
         
         safe_vga_puts(21, 0, "RFLAGS: ", 0x0F);
         safe_vga_hex(21, 8, regs->rflags, 0x0F);
@@ -381,21 +412,22 @@ static void interrupt_dispatch(struct registers* regs)
         for (;;) {
             __asm__ volatile ("hlt");
         }
-        return;
+        return regs;
     }
     
     /* Unknown interrupt vector (48-255) - ignore silently */
     /* These are typically spurious interrupts or reserved vectors */
+    return regs;
 }
 
 /* ISR handler (called from assembly for exceptions 0-31) */
-void isr_handler(struct registers* regs)
+interrupt_frame_t* isr_handler(interrupt_frame_t* regs)
 {
-    interrupt_dispatch(regs);
+    return interrupt_dispatch(regs);
 }
 
 /* IRQ handler (called from assembly for IRQ 32-47) */
-void irq_handler(struct registers* regs)
+interrupt_frame_t* irq_handler(interrupt_frame_t* regs)
 {
-    interrupt_dispatch(regs);
+    return interrupt_dispatch(regs);
 }

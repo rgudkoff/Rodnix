@@ -1,6 +1,27 @@
 ; isr_stubs.S - ISR (Interrupt Service Routine) stubs for x86_64
 ; These are assembly wrappers that call C handlers
 
+section .bss
+align 8
+global irq_iret_rsp
+global irq_iret_rip
+global irq_iret_cs
+global irq_iret_rflags
+global isr_iret_rsp
+global isr_iret_rip
+global isr_iret_cs
+global isr_iret_rflags
+irq_iret_rsp:    resq 1
+irq_iret_rip:    resq 1
+irq_iret_cs:     resq 1
+irq_iret_rflags: resq 1
+isr_iret_rsp:    resq 1
+isr_iret_rip:    resq 1
+isr_iret_cs:     resq 1
+isr_iret_rflags: resq 1
+
+section .text
+
 %macro ISR_NOERRCODE 1
 global isr%1
 isr%1:
@@ -116,7 +137,12 @@ isr_common_stub:
     ; Call C handler
     mov rdi, rsp    ; Pass pointer to registers
     call isr_handler
+    ; Optional context switch: handler returns new frame in rax
+    test rax, rax
+    jz isr_done
+    mov rsp, rax
     
+isr_done:
     ; Restore segment registers (use kernel data selector)
     add rsp, 32
     mov ax, 0x10
@@ -124,6 +150,22 @@ isr_common_stub:
     mov es, ax
     mov fs, ax
     mov gs, ax
+
+    ; Diagnostic capture: compute iretq stack values before restoring regs
+    lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
+    mov [isr_iret_rsp], rdx
+    mov rax, [rdx]
+    mov [isr_iret_rip], rax
+    mov rax, [rdx + 8]
+    mov [isr_iret_cs], rax
+    mov rax, [rdx + 16]
+    mov [isr_iret_rflags], rax
+
+    ; Minimal markers to port 0xE9 and COM1 (0x3F8) before iretq
+    mov al, 'E'
+    out 0xE9, al
+    mov dx, 0x3F8
+    out dx, al
     
     ; Restore all registers
     pop r15
@@ -188,6 +230,10 @@ irq_common_stub:
     ; Call C handler (EOI is sent in irq_handler)
     mov rdi, rsp    ; Pass pointer to registers
     call irq_handler
+    ; Optional context switch: handler returns new frame in rax
+    test rax, rax
+    jz irq_done
+    mov rsp, rax
     
 irq_done:
     ; Restore segment registers (use kernel data selector)
@@ -197,6 +243,18 @@ irq_done:
     mov es, ax
     mov fs, ax
     mov gs, ax
+
+    ; Diagnostic capture: compute iretq stack values before restoring regs
+    lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
+    mov [irq_iret_rsp], rdx
+    mov rax, [rdx]
+    mov [irq_iret_rip], rax
+    mov rax, [rdx + 8]
+    mov [irq_iret_cs], rax
+    mov rax, [rdx + 16]
+    mov [irq_iret_rflags], rax
+
+    ; (diag disabled) avoid flooding boot.log on every IRQ
     
     ; Restore all registers
     pop r15

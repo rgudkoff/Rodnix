@@ -14,32 +14,9 @@
 #include "idt.h"
 #include "pic.h"
 #include "apic.h"
+#include "interrupt_frame.h"
 #include <stddef.h>
 #include <stdbool.h>
-
-/* ============================================================================
- * Register Structure (matches assembly push order)
- * ============================================================================ */
-
-/**
- * @struct registers
- * @brief CPU register state saved during interrupt
- * 
- * This structure matches the order in which registers are pushed onto
- * the stack by the interrupt handler stubs in isr_stubs.S.
- * 
- * @note The order is: r15, r14, ..., r8, rdi, rsi, rbp, rbx, rdx, rcx, rax,
- *       then error_code, int_no, then rip, cs, rflags, rsp, ss.
- */
-struct registers {
-    uint64_t r15, r14, r13, r12;      /* General purpose registers R15-R12 */
-    uint64_t r11, r10, r9, r8;         /* General purpose registers R11-R8 */
-    uint64_t rdi, rsi, rbp, rsp_orig;  /* General purpose registers RDI, RSI, RBP, RSP */
-    uint64_t rbx, rdx, rcx, rax;       /* General purpose registers RBX, RDX, RCX, RAX */
-    uint64_t int_no, err_code;         /* Interrupt number and error code */
-    uint64_t rip, cs, rflags;          /* Instruction pointer, code segment, flags */
-    uint64_t rsp, ss;                  /* Stack pointer, stack segment */
-};
 
 /* ============================================================================
  * Global State
@@ -56,8 +33,8 @@ volatile irql_t current_irql = IRQL_PASSIVE;
  * ============================================================================ */
 
 /* ISR and IRQ handlers (defined in assembly stubs) */
-extern void isr_handler(struct registers* regs);
-extern void irq_handler(struct registers* regs);
+extern interrupt_frame_t* isr_handler(interrupt_frame_t* regs);
+extern interrupt_frame_t* irq_handler(interrupt_frame_t* regs);
 
 /* ============================================================================
  * Internal Helper Functions
@@ -73,11 +50,11 @@ extern void irq_handler(struct registers* regs);
  * @note This function extracts relevant information from the x86_64-specific
  *       register structure and populates the generic interrupt context.
  */
-static void convert_interrupt_context(struct registers* regs, interrupt_context_t* ctx)
+static void convert_interrupt_context(interrupt_frame_t* regs, interrupt_context_t* ctx)
 {
     /* Extract basic CPU state */
     ctx->pc = regs->rip;
-    ctx->sp = regs->rsp;
+    ctx->sp = 0;
     ctx->flags = regs->rflags;
     ctx->error_code = regs->err_code;
     ctx->vector = regs->int_no;
@@ -90,7 +67,7 @@ static void convert_interrupt_context(struct registers* regs, interrupt_context_
     x86_64_interrupt_context_t* arch_ctx = &arch_ctx_storage[regs->int_no];
     
     arch_ctx->regs.rip = regs->rip;
-    arch_ctx->regs.rsp = regs->rsp;
+    arch_ctx->regs.rsp = 0;
     arch_ctx->regs.rflags = regs->rflags;
     arch_ctx->error_code = regs->err_code;
     arch_ctx->vector = regs->int_no;
@@ -99,7 +76,7 @@ static void convert_interrupt_context(struct registers* regs, interrupt_context_
 }
 
 /* Wrapper for x86_64 interrupt handlers */
-static void __attribute__((unused)) interrupt_wrapper(struct registers* regs)
+static void __attribute__((unused)) interrupt_wrapper(interrupt_frame_t* regs)
 {
     interrupt_context_t ctx;
     convert_interrupt_context(regs, &ctx);
@@ -111,8 +88,8 @@ static void __attribute__((unused)) interrupt_wrapper(struct registers* regs)
 }
 
 /* Forward declarations */
-void isr_handler(struct registers* regs);
-void irq_handler(struct registers* regs);
+interrupt_frame_t* isr_handler(interrupt_frame_t* regs);
+interrupt_frame_t* irq_handler(interrupt_frame_t* regs);
 
 /* ============================================================================
  * Public Interface

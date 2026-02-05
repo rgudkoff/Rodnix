@@ -6,6 +6,7 @@
 #include "../core/task.h"
 #include "heap.h"
 #include "../core/cpu.h"
+#include "../arch/x86_64/interrupt_frame.h"
 #include "../core/interrupts.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -106,22 +107,28 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
 
     uintptr_t sp = (uintptr_t)stack + KERNEL_STACK_SIZE;
     sp &= ~(uintptr_t)0xF; /* 16-byte align */
-    /* Reserve space for saved regs + return address + padding (64 bytes). */
-    sp -= 64;
-    uint64_t* frame = (uint64_t*)sp;
-    frame[0] = 0; /* r15 */
-    frame[1] = 0; /* r14 */
-    frame[2] = 0; /* r13 */
-    frame[3] = 0; /* r12 */
-    frame[4] = 0; /* rbp */
-    frame[5] = 0; /* rbx */
-    frame[6] = (uint64_t)(uintptr_t)thread_trampoline; /* ret */
-    frame[7] = 0; /* padding */
+    /* Ensure RSP%16==8 at thread_trampoline entry after iretq */
+    sp -= 8;
+    sp -= sizeof(interrupt_frame_t);
+    interrupt_frame_t* frame = (interrupt_frame_t*)sp;
+    extern void* memset(void* s, int c, size_t n);
+    memset(frame, 0, sizeof(*frame));
+    frame->rip = (uint64_t)(uintptr_t)thread_trampoline;
+    uint16_t cs = 0;
+    __asm__ volatile ("mov %%cs, %0" : "=r"(cs));
+    frame->cs = cs;      /* use current kernel code segment */
+    frame->rflags = 0x202; /* IF=1, reserved bit set */
+    frame->int_no = 0;
+    frame->err_code = 0;
+    /* Provide space for potential iretq stack-pops (RSP/SS) */
+    uint64_t* raw = (uint64_t*)(uintptr_t)frame;
+    raw[24] = (uint64_t)(uintptr_t)(stack + KERNEL_STACK_SIZE - 8); /* rsp if needed */
+    raw[25] = 0x10; /* ss if needed */
 
     thread->thread_id = next_thread_id++;
     thread->task = task;
-    thread->context.stack_pointer = sp;
-    thread->context.program_counter = 0;
+    thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
+    thread->context.program_counter = frame->rip;
     thread->state = THREAD_STATE_NEW;
     thread->priority = PRIORITY_DEFAULT;
     thread->entry = entry;
