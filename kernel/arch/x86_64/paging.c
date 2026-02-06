@@ -217,7 +217,8 @@ uint64_t paging_create_user_pml4(void)
         return 0;
     }
     for (uint64_t i = 256; i < 512; i++) {
-        new_pml4[i] = cur[i];
+        /* Kernel mappings must remain supervisor-only in user PML4 */
+        new_pml4[i] = cur[i] & ~PTE_USER;
     }
     return phys;
 }

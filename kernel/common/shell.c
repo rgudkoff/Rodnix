@@ -18,6 +18,7 @@
 #include "../fs/vfs.h"
 #include "../core/cpu.h"
 #include "../core/memory.h"
+#include "../core/task.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
@@ -25,6 +26,7 @@
 #include "../../include/utsname.h"
 #include "../posix/posix_syscall.h"
 #include "../common/scheduler.h"
+#include "../common/heap.h"
 #include "../core/interrupts.h"
 #include "../fabric/fabric.h"
 #include <stddef.h>
@@ -38,6 +40,28 @@
 #define SHELL_MAX_LINE_LENGTH  256
 #define SHELL_MAX_ARGS         16
 #define SHELL_PROMPT           "  rodnix> "
+
+typedef struct {
+    char* path;
+} run_args_t;
+
+static void shell_run_thread(void* arg)
+{
+    run_args_t* ra = (run_args_t*)arg;
+    if (!ra || !ra->path) {
+        scheduler_exit_current();
+        return;
+    }
+    kputs("[RUN] user thread start\n");
+    extern int loader_exec(const char* path);
+    int ret = loader_exec(ra->path);
+    if (ret != RDNX_OK) {
+        kputs("run: failed\n");
+    }
+    kfree(ra->path);
+    kfree(ra);
+    scheduler_exit_current();
+}
 
 /* ============================================================================
  * Shell State
@@ -83,6 +107,7 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  mem       - Alias for memory\n");
     kputs("  uname     - Show kernel identity\n");
     kputs("  uptime    - Show system uptime\n");
+    kputs("  run       - Run userland program\n");
     kputs("  timer     - Show timer information\n");
     kputs("  echo      - Echo arguments\n");
     kputs("  sched     - Show scheduler statistics\n");
@@ -615,6 +640,61 @@ static int shell_cmd_ring3(int argc, char** argv)
     return ret;
 }
 
+static int shell_cmd_run(int argc, char** argv)
+{
+    if (argc < 2 || !argv[1]) {
+        kputs("Usage: run <path>\n");
+        return RDNX_E_INVALID;
+    }
+    size_t len = strlen(argv[1]);
+    char* path = (char*)kmalloc(len + 1);
+    if (!path) {
+        return RDNX_E_NOMEM;
+    }
+    memcpy(path, argv[1], len + 1);
+    /* Trim trailing slashes to allow /bin/init/ */
+    while (len > 1 && path[len - 1] == '/') {
+        path[len - 1] = '\0';
+        len--;
+    }
+    if (len == 0) {
+        kfree(path);
+        return RDNX_E_INVALID;
+    }
+
+    run_args_t* args = (run_args_t*)kmalloc(sizeof(run_args_t));
+    if (!args) {
+        kfree(path);
+        return RDNX_E_NOMEM;
+    }
+    args->path = path;
+
+    task_t* task = task_get_current();
+    if (!task) {
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_INVALID;
+    }
+    thread_t* thread = thread_create(task, shell_run_thread, args);
+    if (!thread) {
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_NOMEM;
+    }
+    /* Prefer running userland immediately */
+    thread->priority = 200;
+    kprintf("[RUN] schedule user thread tid=%llu\n",
+            (unsigned long long)thread->thread_id);
+    thread->joiner = thread_get_current();
+    kprintf("[RUN] block shell tid=%llu\n",
+            (unsigned long long)thread->joiner->thread_id);
+    /* Block shell before switching away to avoid it staying READY */
+    scheduler_block();
+    scheduler_add_thread(thread);
+    __asm__ volatile ("int $32");
+    return RDNX_OK;
+}
+
 /**
  * @function shell_cmd_exit
  * @brief Exit shell (reboot system)
@@ -669,6 +749,7 @@ static const struct shell_command commands[] = {
     {"ls",      shell_cmd_ls,      "List directory"},
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
+    {"run",     shell_cmd_run,     "Run userland program"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };

@@ -266,7 +266,10 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             interrupt_handlers[vector](&ctx);
         } else {
             /* Unhandled IRQ - mask it silently (no panic) */
-            pic_disable_irq(irq);
+            /* Keep timer IRQ enabled to preserve preemption. */
+            if (irq != 0) {
+                pic_disable_irq(irq);
+            }
         }
         
         irq_send_eoi(irq);

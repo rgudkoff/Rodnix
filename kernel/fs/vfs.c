@@ -363,8 +363,10 @@ static int vfs_import_initrd(void)
 
     const initrd_header_t* hdr = (const initrd_header_t*)vfs_initrd_data;
     if (hdr->magic != INITRD_MAGIC) {
+        kputs("[VFS] initrd: bad magic\n");
         return -1;
     }
+    kprintf("[VFS] initrd: entries=%u\n", (unsigned)hdr->entry_count);
 
     const uint8_t* base = (const uint8_t*)vfs_initrd_data;
     size_t entries_size = hdr->entry_count * sizeof(initrd_entry_t);
@@ -379,11 +381,38 @@ static int vfs_import_initrd(void)
         if (e->path[0] == '\0') {
             continue;
         }
+        kprintf("[VFS] initrd entry: %s (%u bytes)\n", e->path, (unsigned)e->size);
         size_t end = (size_t)e->offset + (size_t)e->size;
         if (end > vfs_initrd_size) {
             continue;
         }
-        vfs_node_t* node = vfs_create_node(vfs_root, e->path, VFS_NODE_FILE);
+        /* Ensure parent directories exist */
+        char dirbuf[128];
+        size_t plen = strlen(e->path);
+        if (plen == 0 || plen >= sizeof(dirbuf)) {
+            continue;
+        }
+        memcpy(dirbuf, e->path, plen + 1);
+        if (dirbuf[0] != '/') {
+            continue;
+        }
+        for (char* p = dirbuf + 1; *p; p++) {
+            if (*p == '/') {
+                *p = '\0';
+                vfs_mkdir(dirbuf);
+                *p = '/';
+            }
+        }
+
+        char leaf[32];
+        vfs_node_t* parent = vfs_resolve_parent(e->path, leaf, sizeof(leaf));
+        if (!parent) {
+            continue;
+        }
+        vfs_node_t* node = vfs_find_child(parent, leaf);
+        if (!node) {
+            node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
+        }
         if (!node) {
             continue;
         }
@@ -427,7 +456,7 @@ int vfs_is_ready(void)
 
 int vfs_mkdir(const char* path)
 {
-    if (!path || !vfs_ready) {
+    if (!path || !vfs_root) {
         return RDNX_E_INVALID;
     }
     if (strcmp(path, "/") == 0) {

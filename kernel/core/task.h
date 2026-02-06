@@ -104,6 +104,7 @@ typedef struct thread {
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
     struct thread* sched_next; /* Следующий в очереди планировщика */
+    struct thread* joiner;     /* Поток, ожидающий завершения */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } thread_t;
 

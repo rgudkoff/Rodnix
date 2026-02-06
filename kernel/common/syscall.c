@@ -1,6 +1,7 @@
 #include "syscall.h"
 #include "../posix/posix_syscall.h"
 #include "../../include/error.h"
+#include "../../include/console.h"
 #include <stddef.h>
 
 static syscall_fn_t syscall_table[SYSCALL_MAX];
@@ -21,6 +22,30 @@ static uint64_t sys_nop(uint64_t a1,
     return RDNX_OK;
 }
 
+static uint64_t sys_write(uint64_t a1,
+                          uint64_t a2,
+                          uint64_t a3,
+                          uint64_t a4,
+                          uint64_t a5,
+                          uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    const char* buf = (const char*)(uintptr_t)a1;
+    uint64_t len = a2;
+    if (!buf) {
+        return RDNX_E_INVALID;
+    }
+    if (len > 4096) {
+        len = 4096;
+    }
+    for (uint64_t i = 0; i < len; i++) {
+        kputc(buf[i]);
+    }
+    return (uint64_t)len;
+}
 void syscall_init(void)
 {
     for (uint32_t i = 0; i < SYSCALL_MAX; i++) {
@@ -28,6 +53,7 @@ void syscall_init(void)
     }
 
     syscall_register(SYS_NOP, sys_nop);
+    syscall_register(SYS_WRITE, sys_write);
     posix_syscall_init();
 }
 

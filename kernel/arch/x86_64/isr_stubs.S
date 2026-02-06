@@ -148,13 +148,30 @@ isr_common_stub:
     mov rsp, rax
     
 isr_done:
-    ; Restore segment registers (use kernel data selector)
+    ; Decide return CPL by inspecting saved CS
+    mov rax, [rsp + 176]   ; saved CS in CPU frame
+    test al, 0x3
+    jz .isr_kernel_return
+    ; User return: restore original segment registers from stack
+    mov rax, [rsp + 24]    ; ds
+    mov ds, ax
+    mov rax, [rsp + 16]    ; es
+    mov es, ax
+    mov rax, [rsp + 8]     ; fs
+    mov fs, ax
+    mov rax, [rsp + 0]     ; gs
+    mov gs, ax
+    add rsp, 32
+    jmp .isr_after_segs
+.isr_kernel_return:
+    ; Kernel return: restore kernel data selector
     add rsp, 32
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
+.isr_after_segs:
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
@@ -235,13 +252,30 @@ irq_common_stub:
     mov rsp, rax
     
 irq_done:
-    ; Restore segment registers (use kernel data selector)
+    ; Decide return CPL by inspecting saved CS
+    mov rax, [rsp + 176]   ; saved CS in CPU frame
+    test al, 0x3
+    jz .irq_kernel_return
+    ; User return: restore original segment registers from stack
+    mov rax, [rsp + 24]    ; ds
+    mov ds, ax
+    mov rax, [rsp + 16]    ; es
+    mov es, ax
+    mov rax, [rsp + 8]     ; fs
+    mov fs, ax
+    mov rax, [rsp + 0]     ; gs
+    mov gs, ax
+    add rsp, 32
+    jmp .irq_after_segs
+.irq_kernel_return:
+    ; Kernel return: restore kernel data selector
     add rsp, 32
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
+.irq_after_segs:
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)

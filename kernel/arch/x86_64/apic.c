@@ -144,6 +144,7 @@ struct madt_ioapic {
  * ============================================================================ */
 
 static volatile uint32_t* apic_base = NULL;
+static uint64_t apic_base_phys_global = 0;
 static bool apic_initialized = false;
 static bool apic_available = false;
 
@@ -394,6 +395,16 @@ static uint32_t apic_read_register(uint32_t offset)
         #endif
         return 0;
     }
+    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
+        uint64_t phys = msr & 0xFFFFF000;
+        if (phys) {
+            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
+        }
+        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+            return 0;
+        }
+    }
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
@@ -451,9 +462,40 @@ static void apic_write_register(uint32_t offset, uint32_t value)
     if (!apic_base) {
         return;
     }
+    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
+        uint64_t phys = msr & 0xFFFFF000;
+        if (phys) {
+            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
+        }
+        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+            return;
+        }
+    }
     /* APIC registers are 32-bit aligned, so divide by 4 using bit shift */
     apic_base[offset >> 2] = value;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+}
+
+static void apic_reset_local(void)
+{
+    if (!apic_base) {
+        return;
+    }
+    /* Mask all LVT entries before enabling APIC */
+    apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_THERMAL, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_PERF, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT1, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_ERROR, APIC_LVT_MASKED);
+
+    /* Clear Error Status Register (write twice per Intel recommendation) */
+    apic_write_register(APIC_ESR, 0);
+    apic_write_register(APIC_ESR, 0);
+
+    /* Allow all priorities */
+    apic_write_register(APIC_TPR, 0);
 }
 
 /**
@@ -605,6 +647,7 @@ int apic_init(void)
     extern int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
     
     /* APIC region is 4KB, map it with PCD flag for uncached access */
+    apic_base_phys_global = apic_base_phys;
     uint64_t apic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(apic_base_phys);
     uint64_t mmio_flags = 0x001 | 0x002 | 0x010; /* PRESENT | RW | PCD (uncached) */
     
@@ -628,7 +671,12 @@ int apic_init(void)
     
     kputs("[APIC-6.4] Base assigned\n");
     __asm__ volatile ("" ::: "memory");
-    
+
+    kputs("[APIC-6.5] Reset LAPIC state\n");
+    __asm__ volatile ("" ::: "memory");
+    apic_reset_local();
+    __asm__ volatile ("" ::: "memory");
+
     kputs("[APIC-7] Read SVR\n");
     __asm__ volatile ("" ::: "memory");
     /* Enable APIC (set SVR enable bit) */

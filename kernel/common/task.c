@@ -183,10 +183,8 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     frame->rflags = 0x202; /* IF=1, reserved bit set */
     frame->int_no = 0;
     frame->err_code = 0;
-    /* Provide space for potential iretq stack-pops (RSP/SS) */
-    uint64_t* raw = (uint64_t*)(uintptr_t)frame;
-    raw[24] = (uint64_t)(uintptr_t)(stack + KERNEL_STACK_SIZE - 8); /* rsp if needed */
-    raw[25] = 0x10; /* ss if needed */
+    frame->rsp = (uint64_t)(uintptr_t)(stack + KERNEL_STACK_SIZE - 8);
+    frame->ss = 0x10;
 
     thread->thread_id = next_thread_id++;
     thread->task = task;
@@ -210,6 +208,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->stack = stack;
     thread->stack_size = KERNEL_STACK_SIZE;
     thread->sched_next = NULL;
+    thread->joiner = NULL;
     thread->arch_specific = NULL;
 
     return thread;

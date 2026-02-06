@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+userland/build/
 *.o
 *.a
 *.so
@@ -25,6 +26,9 @@ build/
 # ISO and boot files
 iso/
 rodnix.iso
+
+# Userland rootfs binaries
+userland/rootfs/bin/
 
 # Object files (keep source, ignore compiled)
 **/*.o

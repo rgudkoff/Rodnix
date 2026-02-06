@@ -35,57 +35,31 @@ LDFLAGS = -m elf_x86_64 -T link.ld --no-warn-mismatch -z max-page-size=0x1000
 
 BUILD_DIR = build
 ISO_DIR   = iso
+USERLAND_DIR = userland
+USERLAND_ROOTFS = $(USERLAND_DIR)/rootfs
+INITRD_IMG = $(BUILD_DIR)/initrd.img
 
 # ===== Sources =====
-KERNEL_C_SRCS = \
-	kernel/main.c \
-	kernel/fs/vfs.c \
-	kernel/common/scheduler.c \
-	kernel/common/syscall.c \
-	kernel/common/ipc.c \
-	kernel/common/idl_runtime.c \
-	kernel/common/idl_demo.c \
-	kernel/common/security.c \
-	kernel/common/bootstrap.c \
-	kernel/common/loader.c \
-	kernel/posix/posix_syscall.c \
-	kernel/common/console.c \
-	kernel/common/debug.c \
-	kernel/common/task.c \
-	kernel/common/string.c \
-	kernel/common/heap.c \
-	kernel/common/shell.c \
-	kernel/arch/x86_64/interrupts.c \
-	kernel/arch/x86_64/idt.c \
-	kernel/arch/x86_64/pic.c \
-	kernel/arch/x86_64/apic.c \
-	kernel/arch/x86_64/isr_handlers.c \
-	kernel/arch/x86_64/cpu.c \
-	kernel/arch/x86_64/gdt.c \
-	kernel/arch/x86_64/pmm.c \
-	kernel/arch/x86_64/paging.c \
-	kernel/arch/x86_64/pit.c \
-	kernel/arch/x86_64/memory.c \
-	kernel/arch/x86_64/boot.c \
-	kernel/arch/x86_64/usermode.c \
-	kernel/net/net.c \
-	kernel/net/socket.c \
-	kernel/fabric/fabric.c \
-	kernel/fabric/spin.c \
-	kernel/fabric/bus/virt.c \
-	kernel/fabric/bus/pci.c \
-	kernel/fabric/bus/ps2.c \
-	kernel/input/input_core.c \
-	drivers/fabric/hid/hid_kbd.c
+KERNEL_C_SRCS :=
+KERNEL_ASM_SRCS :=
+DRIVERS_C_SRCS :=
+BOOT_ASM_SRCS :=
 
-KERNEL_ASM_SRCS = \
-	boot/boot.S \
-	kernel/arch/x86_64/isr_stubs.S
+include kernel/Makefile
+include drivers/Makefile
+include boot/Makefile
 
-KERNEL_C_OBJS   = $(KERNEL_C_SRCS:.c=.o)
-KERNEL_ASM_OBJS = $(KERNEL_ASM_SRCS:.S=.o)
+ALL_C_SRCS   = $(KERNEL_C_SRCS) $(DRIVERS_C_SRCS)
+ALL_ASM_SRCS = $(KERNEL_ASM_SRCS) $(BOOT_ASM_SRCS)
+
+KERNEL_C_OBJS   = $(ALL_C_SRCS:.c=.o)
+KERNEL_ASM_OBJS = $(ALL_ASM_SRCS:.S=.o)
 OBJS = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS))
 DEPS = $(OBJS:.o=.d)
+
+KERNEL_OBJS  = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_SRCS:.c=.o) $(KERNEL_ASM_SRCS:.S=.o))
+DRIVERS_OBJS = $(addprefix $(BUILD_DIR)/, $(DRIVERS_C_SRCS:.c=.o))
+BOOT_OBJS    = $(addprefix $(BUILD_DIR)/, $(BOOT_ASM_SRCS:.S=.o))
 
 KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
 ISO_OUT    = rodnix.iso
@@ -120,7 +94,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check help check-deps idl
+.PHONY: all clean run iso debug check help check-deps idl userland initrd kernel drivers boot
 
 # ===== Build =====
 all: $(KERNEL_BIN)
@@ -146,10 +120,13 @@ $(BUILD_DIR)/%.o: %.S
 	@echo "[AS] $<"
 
 # ===== ISO =====
-iso: $(KERNEL_BIN)
+iso: $(KERNEL_BIN) initrd
 	@rm -rf $(ISO_DIR)
 	@mkdir -p $(ISO_DIR)/boot
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/rodnix.kernel
+	@if [ -f $(INITRD_IMG) ]; then \
+		cp $(INITRD_IMG) $(ISO_DIR)/boot/initrd.img; \
+	fi
 	@GRUB_MKRESCUE_CMD=""; \
 	if [ -x "$(GRUB_MKRESCUE_ALT_PATH)" ]; then \
 		GRUB_MKRESCUE_CMD="$(GRUB_MKRESCUE_ALT_PATH)"; \
@@ -261,8 +238,13 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all         - Build kernel (default)"
+	@echo "  kernel      - Build only kernel objects"
+	@echo "  drivers     - Build only driver objects"
+	@echo "  boot        - Build only boot objects"
 	@echo "  clean       - Remove build artifacts"
 	@echo "  idl         - Generate IDL headers"
+	@echo "  userland    - Build userland binaries"
+	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
 	@echo "  run         - Run kernel in QEMU"
 	@echo "  debug       - Run with debugger support"
@@ -271,5 +253,17 @@ help:
 	@echo "  help        - Show this help"
 	@echo ""
 	@echo "For installation instructions, see INSTALL.md"
+
+userland:
+	@$(MAKE) -C $(USERLAND_DIR)
+
+kernel: $(KERNEL_OBJS)
+
+drivers: $(DRIVERS_OBJS)
+
+boot: $(BOOT_OBJS)
+
+initrd: userland scripts/mkinitrd.py
+	@python3 scripts/mkinitrd.py $(USERLAND_ROOTFS) $(INITRD_IMG)
 
 -include $(DEPS)

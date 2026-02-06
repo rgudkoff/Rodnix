@@ -136,6 +136,16 @@ void scheduler_block(void);
 void scheduler_unblock(thread_t* thread);
 
 /**
+ * Wake a thread and enqueue it if needed.
+ */
+void scheduler_wake(thread_t* thread);
+
+/**
+ * Exit current thread (mark DEAD and reschedule)
+ */
+void scheduler_exit_current(void);
+
+/**
  * Sleep for a specified time
  * @param milliseconds Time to sleep in milliseconds
  */

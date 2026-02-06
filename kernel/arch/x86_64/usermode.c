@@ -24,6 +24,11 @@ static const uint8_t user_stub_code[] = {
 
 static uint64_t user_pml4_phys = 0;
 
+void usermode_set_pml4(uint64_t pml4_phys)
+{
+    user_pml4_phys = pml4_phys;
+}
+
 int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 {
     if (!entry || !user_stack || !rsp0_out) {

@@ -24,20 +24,21 @@
  * Serial Input (COM1) - optional fallback for headless QEMU
  * ============================================================================ */
 
+#ifndef SERIAL_INPUT_ENABLED
+#define SERIAL_INPUT_ENABLED 0
+#endif
+
 #define SERIAL_COM1_BASE 0x3F8
 #define SERIAL_DATA      0
 #define SERIAL_LSR       5
 
+#if SERIAL_INPUT_ENABLED
 static inline uint8_t inb(uint16_t port)
 {
     uint8_t value;
     __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
     return value;
 }
-
-#ifndef SERIAL_INPUT_ENABLED
-#define SERIAL_INPUT_ENABLED 0
-#endif
 
 static int serial_read_char(void)
 {
@@ -64,6 +65,17 @@ static bool serial_has_char(void)
     }
     return (lsr & 0x01) != 0;
 }
+#else
+static int __attribute__((unused)) serial_read_char(void)
+{
+    return -1;
+}
+
+static bool __attribute__((unused)) serial_has_char(void)
+{
+    return false;
+}
+#endif
 
 /* ============================================================================
  * InputCore Constants

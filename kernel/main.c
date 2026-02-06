@@ -222,6 +222,9 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     boot_info_t* bi = boot_get_info();
     if (bi && bi->initrd_start && bi->initrd_size) {
+        kprintf("[INIT-9.6] initrd: start=0x%llx size=%llu\n",
+                (unsigned long long)bi->initrd_start,
+                (unsigned long long)bi->initrd_size);
         void* initrd = X86_64_PHYS_TO_VIRT(bi->initrd_start);
         vfs_set_initrd(initrd, (size_t)bi->initrd_size);
     }

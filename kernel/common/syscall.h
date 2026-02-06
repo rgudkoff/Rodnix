@@ -15,6 +15,7 @@ typedef uint64_t (*syscall_fn_t)(uint64_t a1,
 
 enum {
     SYS_NOP = 0,
+    SYS_WRITE = 1,
 };
 
 void syscall_init(void);

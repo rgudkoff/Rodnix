@@ -6,6 +6,7 @@
 #include "scheduler.h"
 #include "../core/interrupts.h"
 #include "../arch/x86_64/interrupt_frame.h"
+#include "../arch/x86_64/gdt.h"
 #include "../../include/debug.h"
 #include "../../include/error.h"
 #include <stddef.h>
@@ -46,6 +47,15 @@ static void ready_enqueue(thread_t* thread);
 static thread_t* ready_dequeue(void);
 static int ready_queue_index_for_thread(const thread_t* thread);
 static void scheduler_reset_timeslice(const thread_t* thread);
+
+static inline void scheduler_update_tss(thread_t* thread)
+{
+    if (!thread || !thread->stack || thread->stack_size == 0) {
+        return;
+    }
+    uint64_t rsp0 = (uint64_t)(uintptr_t)thread->stack + thread->stack_size - 16;
+    tss_set_rsp0(rsp0);
+}
 
 static int clamp_dyn_priority(int value, int base)
 {
@@ -345,6 +355,14 @@ void scheduler_block(void)
         return;
     }
 
+    static int log_count = 0;
+    if (log_count < 6) {
+        kprintf("[SCHED] block tid=%llu state=%d\n",
+                (unsigned long long)current_thread->thread_id,
+                (int)current_thread->state);
+        log_count++;
+    }
+
     in_scheduler = true;
 
     if (current_thread->state != THREAD_STATE_RUNNING) {
@@ -352,6 +370,11 @@ void scheduler_block(void)
     }
     current_thread->state = THREAD_STATE_BLOCKED;
     current_thread->last_sleep_tick = sched_ticks;
+    if (log_count < 6) {
+        kprintf("[SCHED] block set tid=%llu state=%d\n",
+                (unsigned long long)current_thread->thread_id,
+                (int)current_thread->state);
+    }
     stats.blocked_tasks++;
     resched_pending = true;
     in_scheduler = false;
@@ -383,6 +406,34 @@ void scheduler_unblock(thread_t* thread)
         ready_enqueue(thread);
     } else {
         DEBUG_WARN("unblock: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
+    }
+}
+
+void scheduler_wake(thread_t* thread)
+{
+    if (!thread) {
+        return;
+    }
+    if (thread->state != THREAD_STATE_READY) {
+        thread->state = THREAD_STATE_READY;
+        ready_enqueue(thread);
+        return;
+    }
+    if (!thread->sched_next && thread != current_thread) {
+        ready_enqueue(thread);
+    }
+}
+
+void scheduler_exit_current(void)
+{
+    if (!current_thread) {
+        return;
+    }
+    current_thread->state = THREAD_STATE_DEAD;
+    resched_pending = true;
+    __asm__ volatile ("int $32");
+    for (;;) {
+        cpu_idle();
     }
 }
 
@@ -506,6 +557,15 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     }
 
     in_scheduler = true;
+    static int log_count = 0;
+    if (log_count < 8) {
+        kprintf("[SCHED] irq switch: resched=%d current=%llu state=%d ready=%llu\n",
+                resched_pending ? 1 : 0,
+                (unsigned long long)(current_thread ? current_thread->thread_id : 0),
+                (current_thread ? (int)current_thread->state : -1),
+                (unsigned long long)stats.ready_tasks);
+        log_count++;
+    }
     TRACE_EVENT("sched: switch_from_irq");
     /* If no reschedule is pending and we already have a current thread, keep running */
     if (current_thread && !resched_pending) {
@@ -522,6 +582,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         if (first->task) {
             task_set_current(first->task);
         }
+        scheduler_update_tss(first);
         stats.running_tasks = 1;
         stats.total_switches++;
         first->state = THREAD_STATE_RUNNING;
@@ -551,16 +612,21 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     if (next->task) {
         task_set_current(next->task);
     }
+    scheduler_update_tss(next);
     stats.running_tasks = 1;
     stats.total_switches++;
 
-    if (prev) {
+    if (prev && prev->state == THREAD_STATE_RUNNING) {
         prev->state = THREAD_STATE_READY;
     }
     next->state = THREAD_STATE_RUNNING;
     scheduler_reset_timeslice(next);
 
     in_scheduler = false;
+    if (log_count < 8) {
+        kprintf("[SCHED] switch to tid=%llu\n",
+                (unsigned long long)next->thread_id);
+    }
     return (interrupt_frame_t*)(uintptr_t)next->context.stack_pointer;
 }
 
