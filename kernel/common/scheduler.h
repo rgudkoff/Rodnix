@@ -49,6 +49,16 @@ typedef struct {
     uint64_t blocked_tasks;    /* Number of blocked tasks */
 } scheduler_stats_t;
 
+typedef struct {
+    uint32_t queue_len;
+    uint32_t queue_hwm;
+    uint64_t enqueued;
+    uint64_t reaped;
+    uint64_t deferred;
+    uint64_t dropped;
+    uint64_t runs;
+} scheduler_reap_stats_t;
+
 /* ============================================================================
  * Initialization
  * ============================================================================ */
@@ -206,6 +216,13 @@ struct interrupt_frame* scheduler_switch_from_irq(struct interrupt_frame* frame)
 int scheduler_get_stats(scheduler_stats_t* stats);
 
 /**
+ * Get reaper queue statistics
+ * @param stats Pointer to structure to fill
+ * @return 0 on success, negative value on error
+ */
+int scheduler_get_reap_stats(scheduler_reap_stats_t* stats);
+
+/**
  * Get scheduler tick counter
  * @return Tick count since scheduler start
  */
@@ -228,5 +245,10 @@ void scheduler_clear_inherit(thread_t* target);
  * Dump scheduler state to console (debug helper)
  */
 void scheduler_debug_dump(void);
+
+/**
+ * Reap finished threads queued by scheduler (non-IRQ context).
+ */
+void scheduler_reap_finished(void);
 
 #endif /* _RODNIX_COMMON_SCHEDULER_H */

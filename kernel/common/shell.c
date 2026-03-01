@@ -27,6 +27,7 @@
 #include "../posix/posix_syscall.h"
 #include "../common/scheduler.h"
 #include "../common/heap.h"
+#include "../common/loader.h"
 #include "../core/interrupts.h"
 #include "../fabric/fabric.h"
 #include <stddef.h>
@@ -45,18 +46,34 @@ typedef struct {
     char* path;
 } run_args_t;
 
+static void shell_wake_joiner_if_needed(thread_t* worker)
+{
+    if (!worker || !worker->joiner) {
+        return;
+    }
+    thread_t* joiner = worker->joiner;
+    worker->joiner = NULL;
+    joiner->priority = 220;
+    joiner->base_priority = joiner->priority;
+    joiner->dyn_priority = joiner->priority;
+    joiner->inherited_priority = joiner->priority;
+    joiner->has_inherited = 0;
+    scheduler_wake(joiner);
+}
+
 static void shell_run_thread(void* arg)
 {
     run_args_t* ra = (run_args_t*)arg;
     if (!ra || !ra->path) {
+        shell_wake_joiner_if_needed(thread_get_current());
         scheduler_exit_current();
         return;
     }
     kputs("[RUN] user thread start\n");
-    extern int loader_exec(const char* path);
     int ret = loader_exec(ra->path);
     if (ret != RDNX_OK) {
-        kputs("run: failed\n");
+        kprintf("run: failed (%d)\n", ret);
+        shell_wake_joiner_if_needed(thread_get_current());
     }
     kfree(ra->path);
     kfree(ra);
@@ -127,7 +144,11 @@ static int shell_cmd_sched(int argc, char** argv)
     (void)argv;
 
     extern int scheduler_get_stats(scheduler_stats_t* out_stats);
+    extern int scheduler_get_reap_stats(scheduler_reap_stats_t* out_stats);
+    extern int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
     scheduler_stats_t stats;
+    scheduler_reap_stats_t reap_stats;
+    task_stack_cache_stats_t stack_stats;
     if (scheduler_get_stats(&stats) != 0) {
         kputs("scheduler stats unavailable\n");
         return RDNX_E_GENERIC;
@@ -139,6 +160,26 @@ static int shell_cmd_sched(int argc, char** argv)
     kprintf("  running_tasks:  %llu\n", (unsigned long long)stats.running_tasks);
     kprintf("  ready_tasks:    %llu\n", (unsigned long long)stats.ready_tasks);
     kprintf("  blocked_tasks:  %llu\n", (unsigned long long)stats.blocked_tasks);
+    if (scheduler_get_reap_stats(&reap_stats) == 0) {
+        kprintf("Reaper:\n");
+        kprintf("  queue_len:      %u\n", (unsigned)reap_stats.queue_len);
+        kprintf("  queue_hwm:      %u\n", (unsigned)reap_stats.queue_hwm);
+        kprintf("  enqueued:       %llu\n", (unsigned long long)reap_stats.enqueued);
+        kprintf("  reaped:         %llu\n", (unsigned long long)reap_stats.reaped);
+        kprintf("  deferred:       %llu\n", (unsigned long long)reap_stats.deferred);
+        kprintf("  dropped:        %llu\n", (unsigned long long)reap_stats.dropped);
+    }
+    if (task_get_stack_cache_stats(&stack_stats) == 0) {
+        kprintf("Stack Cache:\n");
+        kprintf("  in_cache:       %u/%u\n",
+                (unsigned)stack_stats.cache_count,
+                (unsigned)stack_stats.cache_capacity);
+        kprintf("  hits/misses:    %llu/%llu\n",
+                (unsigned long long)stack_stats.cache_hits,
+                (unsigned long long)stack_stats.cache_misses);
+        kprintf("  retired:        %llu\n", (unsigned long long)stack_stats.retired);
+        kprintf("  poison_fail:    %llu\n", (unsigned long long)stack_stats.poison_failures);
+    }
     scheduler_debug_dump();
     return 0;
 }
@@ -669,14 +710,27 @@ static int shell_cmd_run(int argc, char** argv)
     }
     args->path = path;
 
-    task_t* task = task_get_current();
-    if (!task) {
+    task_t* parent_task = task_get_current();
+    if (!parent_task) {
         kfree(args->path);
         kfree(args);
         return RDNX_E_INVALID;
     }
-    thread_t* thread = thread_create(task, shell_run_thread, args);
+    task_t* user_task = task_create();
+    if (!user_task) {
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_NOMEM;
+    }
+    user_task->state = TASK_STATE_READY;
+    task_set_ids(user_task,
+                 parent_task->uid,
+                 parent_task->gid,
+                 parent_task->euid,
+                 parent_task->egid);
+    thread_t* thread = thread_create(user_task, shell_run_thread, args);
     if (!thread) {
+        task_destroy(user_task);
         kfree(args->path);
         kfree(args);
         return RDNX_E_NOMEM;
@@ -867,6 +921,7 @@ void shell_run(void)
     __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
+        scheduler_reap_finished();
         interrupts_enable();
         interrupts_disable();
         kputs(SHELL_PROMPT);
@@ -889,6 +944,7 @@ void shell_run(void)
             shell_execute_command(argc, argv);
             shell_state.command_count++;
         }
+        scheduler_reap_finished();
         scheduler_ast_check();
     }
 }

@@ -74,6 +74,7 @@ Apple MIG: интерфейс описывается в `.defs`, после че
 ## Планы
 
 - Устойчивый VMM и выделение ядра в higher-half.
+- VM-архитектура по слоям `vm_map -> vm_object -> pmap` с fault/COW/pager path.
 - Минимальный планировщик и потоки.
 - VFS и RAMFS.
 - Системные вызовы и минимальный userspace.

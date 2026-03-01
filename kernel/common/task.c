@@ -8,16 +8,40 @@
 #include "../core/cpu.h"
 #include "../arch/x86_64/interrupt_frame.h"
 #include "../core/interrupts.h"
+#include "../fs/vfs.h"
 #include "../../include/error.h"
 #include <stddef.h>
 #include <stdint.h>
 
 #define KERNEL_STACK_SIZE (16 * 1024)
+#define STACK_POISON_BYTE 0xCC
 
 static task_t* current_task = NULL;
 static thread_t* current_thread = NULL;
 static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
+
+#define STACK_CACHE_SIZE 32
+static void* stack_cache[STACK_CACHE_SIZE] = {0};
+static uint32_t stack_cache_count = 0;
+static uint64_t stack_cache_hits = 0;
+static uint64_t stack_cache_misses = 0;
+static uint64_t stack_cache_retired = 0;
+static uint64_t stack_cache_poison_failures = 0;
+
+static bool stack_has_poison(const void* stack)
+{
+    if (!stack) {
+        return false;
+    }
+    uint64_t p = 0;
+    for (int i = 0; i < 8; i++) {
+        p = (p << 8) | (uint64_t)STACK_POISON_BYTE;
+    }
+    const uint64_t* lo = (const uint64_t*)stack;
+    const uint64_t* hi = (const uint64_t*)((const uint8_t*)stack + KERNEL_STACK_SIZE - sizeof(uint64_t));
+    return (*lo == p) && (*hi == p);
+}
 
 static void thread_trampoline(void)
 {
@@ -37,6 +61,52 @@ static void thread_trampoline(void)
     for (;;) {
         cpu_idle();
     }
+}
+
+void* task_kernel_stack_acquire(void)
+{
+    while (stack_cache_count > 0) {
+        void* stack = stack_cache[--stack_cache_count];
+        stack_cache[stack_cache_count] = NULL;
+        stack_cache_hits++;
+        if (!stack_has_poison(stack)) {
+            stack_cache_poison_failures++;
+            kfree(stack);
+            continue;
+        }
+        return stack;
+    }
+    stack_cache_misses++;
+    return kmalloc(KERNEL_STACK_SIZE);
+}
+
+void task_kernel_stack_retire(void* stack, size_t size)
+{
+    if (!stack || size != KERNEL_STACK_SIZE) {
+        return;
+    }
+    extern void* memset(void* s, int c, size_t n);
+    memset(stack, STACK_POISON_BYTE, KERNEL_STACK_SIZE);
+    stack_cache_retired++;
+    if (stack_cache_count < STACK_CACHE_SIZE) {
+        stack_cache[stack_cache_count++] = stack;
+        return;
+    }
+    kfree(stack);
+}
+
+int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
+{
+    if (!out_stats) {
+        return RDNX_E_INVALID;
+    }
+    out_stats->cache_count = stack_cache_count;
+    out_stats->cache_capacity = STACK_CACHE_SIZE;
+    out_stats->cache_hits = stack_cache_hits;
+    out_stats->cache_misses = stack_cache_misses;
+    out_stats->retired = stack_cache_retired;
+    out_stats->poison_failures = stack_cache_poison_failures;
+    return RDNX_OK;
 }
 
 task_t* task_get_current(void)
@@ -83,6 +153,7 @@ task_t* task_create(void)
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
     }
+    task->thread_count = 0;
     task->ref_count = 1;
     task->arch_specific = NULL;
     return task;
@@ -92,6 +163,14 @@ void task_destroy(task_t* task)
 {
     if (!task) {
         return;
+    }
+    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
+        vfs_file_t* file = (vfs_file_t*)task->fd_table[i];
+        if (file) {
+            vfs_close(file);
+            kfree(file);
+            task->fd_table[i] = NULL;
+        }
     }
     kfree(task);
 }
@@ -115,6 +194,11 @@ uint32_t task_get_euid(const task_t* task)
 uint32_t task_get_egid(const task_t* task)
 {
     return task ? task->egid : 0;
+}
+
+uint32_t task_get_thread_count(const task_t* task)
+{
+    return task ? task->thread_count : 0;
 }
 
 int task_fd_alloc(task_t* task, void* handle)
@@ -162,7 +246,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
         return NULL;
     }
 
-    void* stack = kmalloc(KERNEL_STACK_SIZE);
+    void* stack = task_kernel_stack_acquire();
     if (!stack) {
         kfree(thread);
         return NULL;
@@ -209,7 +293,10 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->stack_size = KERNEL_STACK_SIZE;
     thread->sched_next = NULL;
     thread->joiner = NULL;
+    thread->reap_queued = 0;
+    thread->reap_after_tick = 0;
     thread->arch_specific = NULL;
+    task->thread_count++;
 
     return thread;
 }
@@ -219,8 +306,11 @@ void thread_destroy(thread_t* thread)
     if (!thread) {
         return;
     }
+    if (thread->task && thread->task->thread_count > 0) {
+        thread->task->thread_count--;
+    }
     if (thread->stack) {
-        kfree(thread->stack);
+        task_kernel_stack_retire(thread->stack, thread->stack_size);
     }
     kfree(thread);
 }

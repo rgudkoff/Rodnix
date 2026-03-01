@@ -23,6 +23,9 @@
 - Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`, `UNAME`.
 - Реализованы базовые `SETUID/SETEUID/SETGID/SETEGID` (только для root).
 - Добавлены `OPEN/CLOSE/READ/WRITE` поверх VFS (in‑kernel, без userland).
+- Добавлен `POSIX_SYS_EXIT` (wake joiner + завершение user thread).
+- Диспетчер сначала обслуживает `SYS_NOP` (legacy), затем POSIX namespace, чтобы избежать конфликтов номеров.
+- Добавлена базовая валидация user pointers/ranges для `OPEN/READ/WRITE/UNAME`.
 - Неизвестный номер возвращает `RDNX_E_UNSUPPORTED`.
 - Временная модель: `open` возвращает fd из per‑task таблицы (простая фиксированная таблица).
 
@@ -62,6 +65,7 @@
 - `12` — `READ` — experimental
 - `13` — `WRITE` — experimental
 - `14` — `UNAME` — stable
+- `15` — `EXIT` — experimental
 
 Свободные номера помечаются как `RESERVED` и не переиспользуются.
 

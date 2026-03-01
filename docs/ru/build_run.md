@@ -7,7 +7,14 @@
 - `x86_64-elf-gcc` и `x86_64-elf-ld`
 - `nasm`
 - `qemu-system-x86_64`
-- `grub-mkrescue` (для ISO)
+- `grub-mkrescue` с BIOS‑модулями GRUB (`i386-pc`)
+- `xorriso` и `mtools` (для сборки ISO)
+
+На macOS (Homebrew) проверенный набор:
+
+```bash
+brew install qemu x86_64-elf-binutils x86_64-elf-gcc nasm xorriso mtools i686-elf-grub
+```
 
 ## Сборка
 
@@ -22,6 +29,14 @@ make
 make iso
 make run
 ```
+
+Если QEMU пишет `No bootable device`, проверьте, что ISO содержит BIOS boot image:
+
+```bash
+xorriso -indev rodnix.iso -report_el_torito plain
+```
+
+В выводе должен быть `El Torito boot img ... BIOS ... /boot/grub/i386-pc/eltorito.img`.
 
 ## Отладка (GDB)
 
@@ -46,3 +61,11 @@ gdb build/rodnix.kernel
 ```bash
 scripts/ci/smoke_qemu.sh
 ```
+
+Проверка минимального userland/posix пути вручную:
+
+```text
+rodnix> run /bin/init
+```
+
+Ожидается вывод из userland с `POSIX smoke test start/done` и возврат к `rodnix>`.

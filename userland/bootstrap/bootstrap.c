@@ -7,6 +7,7 @@
 #include "posix_syscall.h"
 
 #define SYS_NOP 0
+#define VFS_OPEN_READ 1
 
 static long posix_write_str(const char* s)
 {
@@ -17,21 +18,76 @@ static long posix_write_str(const char* s)
     return posix_write(1, s, (uint64_t)len);
 }
 
+static void write_u64(uint64_t v)
+{
+    char buf[32];
+    int i = 0;
+    if (v == 0) {
+        posix_write(1, "0", 1);
+        return;
+    }
+    while (v > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (i > 0) {
+        i--;
+        posix_write(1, &buf[i], 1);
+    }
+}
+
+static void write_hex_byte(uint8_t b)
+{
+    char hex[2];
+    static const char table[] = "0123456789ABCDEF";
+    hex[0] = table[(b >> 4) & 0xF];
+    hex[1] = table[b & 0xF];
+    posix_write(1, hex, 2);
+}
+
 int main(void)
 {
-    posix_write_str("[USER] init: hello from ring3 (posix write)\n");
-    posix_write_str("[USER] init: press a key to test stdin...\n");
-    char ch = 0;
-    if (posix_read(0, &ch, 1) == 1) {
-        char out[32];
-        out[0] = '['; out[1] = 'U'; out[2] = 'S'; out[3] = 'E'; out[4] = 'R';
-        out[5] = ']'; out[6] = ' '; out[7] = 'i'; out[8] = 'n'; out[9] = 'i';
-        out[10] = 't'; out[11] = ':'; out[12] = ' '; out[13] = 'g'; out[14] = 'o';
-        out[15] = 't'; out[16] = ' '; out[17] = '\''; out[18] = ch; out[19] = '\'';
-        out[20] = '\n'; out[21] = '\0';
-        posix_write(1, out, 21);
+    posix_write_str("[USER] init: POSIX smoke test start\n");
+
+    posix_write_str("[USER] getpid=");
+    {
+        long pid = posix_getpid();
+        if (pid < 0) {
+            posix_write_str("ERR\n");
+        } else {
+            write_u64((uint64_t)pid);
+            posix_write_str("\n");
+        }
     }
-    posix_exit(0);
+
+    {
+        long fd = posix_open("/bin/init", VFS_OPEN_READ);
+        if (fd < 0) {
+            posix_write_str("[USER] open('/bin/init') failed\n");
+        } else {
+            uint8_t hdr[4] = {0, 0, 0, 0};
+            long n = posix_read((int)fd, hdr, sizeof(hdr));
+            posix_write_str("[USER] read('/bin/init') bytes=");
+            if (n < 0) {
+                posix_write_str("ERR\n");
+            } else {
+                write_u64((uint64_t)n);
+                posix_write_str(" hdr=");
+                for (long i = 0; i < n; i++) {
+                    write_hex_byte(hdr[i]);
+                }
+                posix_write_str("\n");
+            }
+            if (posix_close((int)fd) < 0) {
+                posix_write_str("[USER] close failed\n");
+            } else {
+                posix_write_str("[USER] close ok\n");
+            }
+        }
+    }
+
+    posix_write_str("[USER] init: POSIX smoke test done\n");
+    (void)posix_exit(0);
     for (;;) {
         (void)rdnx_syscall0(SYS_NOP);
     }

@@ -8,9 +8,11 @@
 
 Документация:
 - Требуется приоритетный планировщик + таймслайс (MLQ/priority queues).
+- Целевая эволюция: иерархическая модель `bucket -> thread_group -> thread`,
+  QoS-aware вытеснение и anti-starvation окна (см. `docs/ru/scheduler.md`).
 
 Реализация:
-- `kernel/common/scheduler.c` — MLQ с 3 уровнями (low/normal/high).
+- `kernel/common/scheduler/` — модульный планировщик (state/runqueue/control/tick/switch/reaper/debug).
 - Приоритеты используются для выбора очереди.
 - Политики CFS/FIFO/PRIORITY в enum, реализованы RR/FIFO/PRIORITY на базовом уровне.
 
@@ -18,6 +20,9 @@
 - Классы `SCHED_CLASS_TIMESHARE/REALTIME` есть; квант зависит от приоритета и CPU‑bound (упрощённая политика).
 - Динамика приоритетов реализована (boost при пробуждении, penalty по `sched_usage`) только для TIMESHARE, без тонкой настройки и разных кривых.
 - IPC‑наследование приоритетов есть, но best‑effort (стек глубиной 4, без сложных сценариев и анализа цепочек зависимостей).
+- Нет уровня QoS bucket scheduling (EDF-like/budget).
+- Нет уровня fairness по `thread_group`.
+- Нет `warp window`/`starvation avoidance window` и связанных SLA-метрик.
 
 ## Таймерный тик (IRQ32)
 
@@ -56,17 +61,16 @@
 
 Реализация:
 - Добавлен каркас userland в `userland/` и скелет bootstrap‑сервера.
-- Запуск userland отсутствует (нет loader и ring3).
+- Есть минимальный запуск userland: `run /bin/init` из shell загружает ELF64 и уходит в ring3.
 - В ядре зарезервирован bootstrap‑порт (placeholder).
 - Есть временный kernel‑mode bootstrap server (thread).
-- Есть loader‑stub (без реальной загрузки и ring3).
-- Базовая инфраструктура ring3 (GDT user‑сегменты + TSS RSP0) и тестовый user‑stub.
-- Тестовый user‑stub использует отдельный PML4 с kernel higher‑half.
+- Есть loader ELF64 ET_EXEC + переключение CR3 на user PML4.
+- Есть ring3-инфраструктура (GDT user‑сегменты + TSS RSP0) и syscall trap `int 0x80`.
 
 Разница:
-- Нет реального userland процесса (только тестовый ring3‑stub).
+- Нет полноценной process model (fork/exec/wait, изоляция процессов, lifecycle).
 - Нет userland bootstrap‑сервера и протокола раздачи портов (временно работает kernel‑mode bootstrap thread).
-- Нет полноценного loader/ring3 с загрузкой образов и безопасным syscall‑путём.
+- Нет зрелой модели безопасности/изоляции для userland и стабильного userspace ABI.
 
 ## Системные вызовы (BSD‑слой)
 
@@ -85,7 +89,7 @@
 
 Разница:
 - Нет полноценной таблицы syscalls и набора вызовов.
-- Нет полноценного userland и реального трапа из ring3 (есть только тестовый user‑stub).
+- Userland есть только в минимальном профиле (один ELF, базовые вызовы, без POSIX process semantics).
  - Есть минимальная per‑task fd‑таблица, но нет полноценного POSIX‑семантического поведения (dup, cloexec, права и т.п.).
 
 ## VFS

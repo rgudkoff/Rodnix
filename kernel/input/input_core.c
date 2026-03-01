@@ -25,7 +25,7 @@
  * ============================================================================ */
 
 #ifndef SERIAL_INPUT_ENABLED
-#define SERIAL_INPUT_ENABLED 0
+#define SERIAL_INPUT_ENABLED 1
 #endif
 
 #define SERIAL_COM1_BASE 0x3F8

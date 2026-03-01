@@ -2,7 +2,13 @@
 
 KERNEL_C_SRCS += \
 	kernel/main.c \
-	kernel/common/scheduler.c \
+	kernel/common/scheduler/state.c \
+	kernel/common/scheduler/runqueue.c \
+	kernel/common/scheduler/control.c \
+	kernel/common/scheduler/tick.c \
+	kernel/common/scheduler/switch.c \
+	kernel/common/scheduler/reaper.c \
+	kernel/common/scheduler/debug.c \
 	kernel/common/syscall.c \
 	kernel/common/ipc.c \
 	kernel/common/idl_runtime.c \

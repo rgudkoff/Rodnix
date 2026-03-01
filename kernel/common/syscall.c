@@ -81,9 +81,21 @@ uint64_t syscall_dispatch(uint64_t num,
         kputs("[SYSCALL] trap received\n");
         logged = 1;
     }
+
+    /* Keep SYS_NOP compatible for legacy ring3 stubs. */
+    if (num == SYS_NOP && syscall_table[SYS_NOP]) {
+        return syscall_table[SYS_NOP](a1, a2, a3, a4, a5, a6);
+    }
+
+    /* Prefer POSIX namespace to avoid collisions with legacy SYS_* ids. */
+    uint64_t posix_ret = posix_syscall_dispatch(num, a1, a2, a3, a4, a5, a6);
+    if (posix_ret != (uint64_t)RDNX_E_UNSUPPORTED) {
+        return posix_ret;
+    }
+
     if (num < SYSCALL_MAX && syscall_table[num]) {
         return syscall_table[num](a1, a2, a3, a4, a5, a6);
     }
 
-    return posix_syscall_dispatch(num, a1, a2, a3, a4, a5, a6);
+    return (uint64_t)RDNX_E_UNSUPPORTED;
 }

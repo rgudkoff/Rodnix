@@ -76,6 +76,7 @@ typedef struct task {
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
+    uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } task_t;
@@ -105,6 +106,8 @@ typedef struct thread {
     size_t stack_size;         /* Размер стека */
     struct thread* sched_next; /* Следующий в очереди планировщика */
     struct thread* joiner;     /* Поток, ожидающий завершения */
+    uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
+    uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } thread_t;
 
@@ -181,6 +184,42 @@ uint32_t task_get_euid(const task_t* task);
  * @return egid
  */
 uint32_t task_get_egid(const task_t* task);
+
+/**
+ * Получение количества потоков задачи
+ * @param task Указатель на задачу
+ * @return Число потоков
+ */
+uint32_t task_get_thread_count(const task_t* task);
+
+typedef struct {
+    uint32_t cache_count;
+    uint32_t cache_capacity;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t retired;
+    uint64_t poison_failures;
+} task_stack_cache_stats_t;
+
+/**
+ * Acquire kernel thread stack (reused from cache or freshly allocated).
+ * @return Stack base pointer or NULL
+ */
+void* task_kernel_stack_acquire(void);
+
+/**
+ * Retire kernel thread stack for deferred reuse.
+ * @param stack Stack base pointer
+ * @param size Stack size
+ */
+void task_kernel_stack_retire(void* stack, size_t size);
+
+/**
+ * Get kernel stack cache statistics.
+ * @param out_stats Pointer to structure to fill
+ * @return 0 on success, negative value on error
+ */
+int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
 
 /* ============================================================================
  * Функции для потоков

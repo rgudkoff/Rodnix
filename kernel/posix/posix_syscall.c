@@ -15,6 +15,50 @@
 #include <stddef.h>
 
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];
+#define POSIX_PATH_MAX 256
+
+static bool posix_is_user_range(const void* ptr, size_t len)
+{
+    if (!ptr) {
+        return false;
+    }
+    uintptr_t start = (uintptr_t)ptr;
+    if (start == 0 || start >= X86_64_KERNEL_VIRT_BASE) {
+        return false;
+    }
+    if (len == 0) {
+        return true;
+    }
+    uintptr_t end = 0;
+    if (__builtin_add_overflow(start, len - 1, &end)) {
+        return false;
+    }
+    return end < X86_64_KERNEL_VIRT_BASE;
+}
+
+static int posix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src)
+{
+    if (!dst || dst_size == 0 || !user_src) {
+        return RDNX_E_INVALID;
+    }
+    uintptr_t base = (uintptr_t)user_src;
+    if (base == 0 || base >= X86_64_KERNEL_VIRT_BASE) {
+        return RDNX_E_INVALID;
+    }
+    for (size_t i = 0; i < dst_size; i++) {
+        uintptr_t cur = base + i;
+        if (cur >= X86_64_KERNEL_VIRT_BASE) {
+            return RDNX_E_INVALID;
+        }
+        char c = user_src[i];
+        dst[i] = c;
+        if (c == '\0') {
+            return RDNX_OK;
+        }
+    }
+    dst[dst_size - 1] = '\0';
+    return RDNX_E_INVALID;
+}
 
 static uint64_t posix_nosys(uint64_t a1,
                             uint64_t a2,
@@ -222,15 +266,24 @@ static uint64_t posix_open(uint64_t a1,
     (void)a6;
     const char* path = (const char*)(uintptr_t)a1;
     int flags = (int)a2;
+    char path_buf[POSIX_PATH_MAX];
+    if (posix_copy_user_cstr(path_buf, sizeof(path_buf), path) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
     if (!file) {
         return (uint64_t)RDNX_E_NOMEM;
     }
-    if (vfs_open(path, flags, file) != RDNX_OK) {
+    if (vfs_open(path_buf, flags, file) != RDNX_OK) {
         kfree(file);
         return (uint64_t)RDNX_E_NOTFOUND;
     }
     task_t* task = task_get_current();
+    if (!task) {
+        vfs_close(file);
+        kfree(file);
+        return (uint64_t)RDNX_E_INVALID;
+    }
     int fd = task_fd_alloc(task, file);
     if (fd < 0) {
         vfs_close(file);
@@ -253,6 +306,9 @@ static uint64_t posix_close(uint64_t a1,
     (void)a5;
     (void)a6;
     task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     if (!file) {
         return (uint64_t)RDNX_E_INVALID;
@@ -274,10 +330,13 @@ static uint64_t posix_read(uint64_t a1,
     (void)a5;
     (void)a6;
     task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     void* buf = (void*)(uintptr_t)a2;
     size_t len = (size_t)a3;
-    if (!buf) {
+    if (!posix_is_user_range(buf, len)) {
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!file) {
@@ -345,10 +404,13 @@ static uint64_t posix_write(uint64_t a1,
     (void)a5;
     (void)a6;
     task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)a1);
     const void* buf = (const void*)(uintptr_t)a2;
     size_t len = (size_t)a3;
-    if (!buf) {
+    if (!posix_is_user_range(buf, len)) {
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!file) {
@@ -380,7 +442,7 @@ static uint64_t posix_uname(uint64_t a1,
     (void)a5;
     (void)a6;
     utsname_t* u = (utsname_t*)(uintptr_t)a1;
-    if (!u) {
+    if (!posix_is_user_range(u, sizeof(*u))) {
         return (uint64_t)RDNX_E_INVALID;
     }
     memset(u, 0, sizeof(*u));

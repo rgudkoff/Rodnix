@@ -15,14 +15,23 @@
 ## Статус (сейчас)
 
 - В репозитории есть каркас bootstrap‑сервера в `userland/bootstrap/`.
-- Есть минимальный ELF‑loader и запуск ring3 через `loader_exec()`.
+- Есть минимальный ELF‑loader и запуск ring3 через `loader_exec()` (`run /bin/init`).
 - Syscall boundary (0x80) активен, есть базовые POSIX‑syscalls.
 - В ядре зарезервирован bootstrap‑порт (placeholder), протокола нет.
 - Есть временный kernel‑mode bootstrap server (thread), отвечающий статусом `0`.
-- Есть минимальный loader‑stub в ядре (ELF64 ET_EXEC, PT_LOAD).
-- Добавлена базовая инфраструктура ring3 (GDT user‑сегменты + TSS RSP0) и тестовый user‑stub.
-- Введён отдельный PML4 для user‑stub (ядро мапится в higher‑half).
+- Есть загрузка ELF64 ET_EXEC/PT_LOAD в user PML4 (ядро в higher‑half).
+- Добавлена базовая ring3‑инфраструктура (GDT user‑сегменты + TSS RSP0).
+- `shell run` поднимает отдельный user task и будит shell после `posix_exit`.
 - Initrd поддерживается как источник файлов (`/bin/init`).
+
+## Проверенный smoke‑test
+
+- Команда: `run /bin/init`.
+- Проверенные syscall-и в userland:
+  - `getpid`
+  - `open/read/close` (чтение ELF заголовка `/bin/init`)
+  - `write` (лог в консоль)
+  - `exit` (возврат управления в shell)
 
 ## Инварианты
 
@@ -33,4 +42,5 @@
 
 - `userland/` и `userland/bootstrap/`.
 - `kernel/common/loader.c` и `kernel/arch/x86_64/usermode.c`.
+- `kernel/common/shell.c` (команда `run`, lifecycle shell/user thread).
 - `scripts/mkinitrd.py`, `boot/grub/grub.cfg`.
