@@ -30,6 +30,7 @@ enum {
     POSIX_SYS_WRITE = 13,
     POSIX_SYS_UNAME = 14,
     POSIX_SYS_EXIT = 15,
+    POSIX_SYS_EXEC = 16,
 };
 
 void posix_syscall_init(void);

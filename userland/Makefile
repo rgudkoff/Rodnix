@@ -22,18 +22,21 @@ BUILD_DIR = build
 ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
-USERLAND_C_SRCS += \
-	bootstrap/bootstrap.c
+INIT_SRCS = init/init.c
+SH_SRCS = shell/shell.c
 
-SRCS = $(USERLAND_C_SRCS)
-OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o)) $(BUILD_DIR)/crt0.o
+CRT0_OBJ = $(BUILD_DIR)/crt0.o
+INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ)
+SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
+SH_ELF = $(BUILD_DIR)/sh.elf
 INIT_BIN = $(BIN_DIR)/init
+SH_BIN = $(BIN_DIR)/sh
 
 .PHONY: all clean
 
-all: $(INIT_BIN)
+all: $(INIT_BIN) $(SH_BIN)
 
 $(BUILD_DIR)/crt0.o: crt0.S
 	@mkdir -p $(dir $@)
@@ -43,11 +46,19 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(INIT_ELF): $(OBJS) link.ld
+$(INIT_ELF): $(INIT_OBJS) link.ld
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(INIT_OBJS)
+
+$(SH_ELF): $(SH_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SH_OBJS)
 
 $(INIT_BIN): $(INIT_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SH_BIN): $(SH_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

@@ -1,6 +1,7 @@
 #include "posix_syscall.h"
 #include "../core/task.h"
 #include "../common/security.h"
+#include "../common/loader.h"
 #include "../fs/vfs.h"
 #include "../common/heap.h"
 #include "../../include/error.h"
@@ -403,6 +404,30 @@ static uint64_t posix_exit(uint64_t a1,
     return 0;
 }
 
+static uint64_t posix_exec(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    const char* user_path = (const char*)(uintptr_t)a1;
+    char path_buf[POSIX_PATH_MAX];
+    int rc = posix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    if (rc != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int ret = loader_exec(path_buf);
+    return (uint64_t)ret;
+}
+
 static uint64_t posix_write(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,
@@ -477,6 +502,7 @@ void posix_syscall_init(void)
     posix_syscall_register(POSIX_SYS_WRITE, posix_write);
     posix_syscall_register(POSIX_SYS_UNAME, posix_uname);
     posix_syscall_register(POSIX_SYS_EXIT, posix_exit);
+    posix_syscall_register(POSIX_SYS_EXEC, posix_exec);
 }
 
 int posix_syscall_register(uint32_t num, posix_syscall_fn_t fn)

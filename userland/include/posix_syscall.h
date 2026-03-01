@@ -26,6 +26,7 @@ enum {
     POSIX_SYS_WRITE = 13,
     POSIX_SYS_UNAME = 14,
     POSIX_SYS_EXIT = 15,
+    POSIX_SYS_EXEC = 16,
 };
 
 static inline long posix_getpid(void)
@@ -61,6 +62,11 @@ static inline long posix_uname(void* u)
 static inline long posix_exit(int code)
 {
     return rdnx_syscall1(POSIX_SYS_EXIT, code);
+}
+
+static inline long posix_exec(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_EXEC, (long)(uintptr_t)path);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */
