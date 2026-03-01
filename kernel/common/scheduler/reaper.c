@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "../heap.h"
+#include "../tracev2.h"
 #include "../../../include/error.h"
+#include "../../../include/debug.h"
 
 #define REAP_QUEUE_SIZE 64
 #define REAP_GRACE_TICKS 128
@@ -52,9 +54,14 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
     }
     uint32_t next_tail = (reap_tail + 1u) % REAP_QUEUE_SIZE;
     if (next_tail == reap_head) {
-        /* Drop only in overflow case to avoid stalling the scheduler. */
+        /*
+         * Losing DEAD threads leaks stacks/descriptors and breaks lifecycle
+         * accounting. Fail fast instead of silently dropping cleanup work.
+         */
         reap_stats.dropped++;
-        return;
+        tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_REAPER_OVERFLOW,
+                     reap_stats.queue_len, reap_stats.dropped);
+        PANIC("scheduler reaper queue overflow");
     }
     dead_thread->reap_after_tick = sched_ticks + REAP_GRACE_TICKS;
     dead_thread->reap_queued = 1;
@@ -98,10 +105,10 @@ void scheduler_reap_dead_threads(void)
         reap_stats.reaped++;
         if (owner && owner != task_get_current()) {
             if (owner->thread_count == 0) {
-                owner->state = TASK_STATE_DEAD;
+                scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
                 task_destroy(owner);
             } else {
-                owner->state = TASK_STATE_ZOMBIE;
+                scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_threads_remaining");
             }
         }
     }
@@ -122,7 +129,7 @@ void scheduler_reaper_start(void)
     if (!reaper_task) {
         return;
     }
-    reaper_task->state = TASK_STATE_READY;
+    scheduler_task_set_state(reaper_task, TASK_STATE_READY, "reaper_start");
     reaper_thread = thread_create(reaper_task, scheduler_reaper_main, NULL);
     if (!reaper_thread) {
         task_destroy(reaper_task);

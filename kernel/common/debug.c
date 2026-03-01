@@ -43,11 +43,11 @@ static void panic_dump_state(void)
     __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
 
     kputs("State:\n");
-    kprintf("  RSP=0x%llx RBP=0x%llx RFLAGS=0x%llx\n",
+    kprintf("  RSP=%llx RBP=%llx RFLAGS=%llx\n",
             (unsigned long long)rsp,
             (unsigned long long)rbp,
             (unsigned long long)rflags);
-    kprintf("  CR0=0x%llx CR2=0x%llx CR3=0x%llx CR4=0x%llx\n",
+    kprintf("  CR0=%llx CR2=%llx CR3=%llx CR4=%llx\n",
             (unsigned long long)cr0,
             (unsigned long long)cr2,
             (unsigned long long)cr3,

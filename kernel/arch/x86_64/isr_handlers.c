@@ -14,6 +14,7 @@
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
 #include "../../common/syscall.h"
+#include "../../common/tracev2.h"
 #include "interrupt_frame.h"
 #include "types.h"
 #include "config.h"
@@ -283,6 +284,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     
     /* Handle exception (0-31) */
     if (vector < 32) {
+        tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -369,6 +371,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         if (vector == 14) {
             uint64_t cr2;
             __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_PAGE, cr2, regs->rip);
             serial_write_str("[EXC] cr2=");
             serial_write_hex64(cr2);
             serial_write_str("\n");

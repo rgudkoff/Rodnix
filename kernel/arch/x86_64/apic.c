@@ -885,10 +885,6 @@ int ioapic_init(void)
         kprintf("[IOAPIC-1.2] ERROR: Failed to map I/O APIC page (error=%d)\n", map_result);
         kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
         __asm__ volatile ("" ::: "memory");
-        /* DEBUG: остановиться, чтобы можно было увидеть логи */
-        for (;;) {
-            __asm__ volatile ("hlt");
-        }
         return -1;
     }
     
@@ -916,8 +912,8 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     #endif
     
-    /* Check if ID register is readable (should not be all 0xFF or 0x00) */
-    if (id_reg == 0xFFFFFFFF || id_reg == 0x00000000) {
+    /* Only 0xFFFFFFFF is a hard failure. ID==0 can be valid (e.g. QEMU). */
+    if (id_reg == 0xFFFFFFFF) {
         kputs("[IOAPIC-2.2] WARNING: I/O APIC ID register returns invalid value\n");
         kputs("[IOAPIC-2.3] I/O APIC may not be present at this address; using PIC for external IRQs\n");
         __asm__ volatile ("" ::: "memory");

@@ -19,6 +19,85 @@ thread_t* ready_tail[READY_QUEUE_LEVELS] = {0};
 
 scheduler_reap_stats_t reap_stats = {0};
 
+static bool scheduler_thread_transition_valid(thread_state_t from, thread_state_t to)
+{
+    if (from == to) {
+        return true;
+    }
+    switch (from) {
+    case THREAD_STATE_NEW:
+        return to == THREAD_STATE_READY || to == THREAD_STATE_DEAD;
+    case THREAD_STATE_READY:
+        return to == THREAD_STATE_RUNNING || to == THREAD_STATE_BLOCKED || to == THREAD_STATE_DEAD;
+    case THREAD_STATE_RUNNING:
+        return to == THREAD_STATE_READY || to == THREAD_STATE_BLOCKED || to == THREAD_STATE_DEAD;
+    case THREAD_STATE_BLOCKED:
+        return to == THREAD_STATE_READY || to == THREAD_STATE_DEAD;
+    case THREAD_STATE_SLEEPING:
+        return to == THREAD_STATE_READY || to == THREAD_STATE_DEAD;
+    case THREAD_STATE_DEAD:
+        return false;
+    default:
+        return false;
+    }
+}
+
+static bool scheduler_task_transition_valid(task_state_t from, task_state_t to)
+{
+    if (from == to) {
+        return true;
+    }
+    switch (from) {
+    case TASK_STATE_NEW:
+        return to == TASK_STATE_READY || to == TASK_STATE_DEAD;
+    case TASK_STATE_READY:
+        return to == TASK_STATE_RUNNING || to == TASK_STATE_BLOCKED || to == TASK_STATE_ZOMBIE || to == TASK_STATE_DEAD;
+    case TASK_STATE_RUNNING:
+        return to == TASK_STATE_READY || to == TASK_STATE_BLOCKED || to == TASK_STATE_ZOMBIE || to == TASK_STATE_DEAD;
+    case TASK_STATE_BLOCKED:
+    case TASK_STATE_SLEEPING:
+        return to == TASK_STATE_READY || to == TASK_STATE_ZOMBIE || to == TASK_STATE_DEAD;
+    case TASK_STATE_ZOMBIE:
+        return to == TASK_STATE_DEAD;
+    case TASK_STATE_DEAD:
+        return false;
+    default:
+        return false;
+    }
+}
+
+void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason)
+{
+    if (!thread) {
+        return;
+    }
+    thread_state_t old_state = thread->state;
+    if (!scheduler_thread_transition_valid(old_state, new_state)) {
+        DEBUG_WARN("thread state transition tid=%llu %d->%d reason=%s",
+                   (unsigned long long)thread->thread_id,
+                   (int)old_state,
+                   (int)new_state,
+                   reason ? reason : "?");
+    }
+    thread->state = new_state;
+}
+
+void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* reason)
+{
+    if (!task) {
+        return;
+    }
+    task_state_t old_state = task->state;
+    if (!scheduler_task_transition_valid(old_state, new_state)) {
+        DEBUG_WARN("task state transition task=%llu %d->%d reason=%s",
+                   (unsigned long long)task->task_id,
+                   (int)old_state,
+                   (int)new_state,
+                   reason ? reason : "?");
+    }
+    task->state = new_state;
+}
+
 int scheduler_init(void)
 {
     if (scheduler_initialized) {
@@ -103,7 +182,7 @@ int scheduler_add_thread(thread_t* thread)
     if (thread->state != THREAD_STATE_NEW && thread->state != THREAD_STATE_READY) {
         DEBUG_WARN("add_thread: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
     }
-    thread->state = THREAD_STATE_READY;
+    scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_add_thread");
     thread->base_priority = thread->priority;
     thread->dyn_priority = thread->priority;
     thread->inherited_priority = thread->priority;

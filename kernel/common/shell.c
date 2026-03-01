@@ -46,26 +46,10 @@ typedef struct {
     char* path;
 } run_args_t;
 
-static void shell_wake_joiner_if_needed(thread_t* worker)
-{
-    if (!worker || !worker->joiner) {
-        return;
-    }
-    thread_t* joiner = worker->joiner;
-    worker->joiner = NULL;
-    joiner->priority = 220;
-    joiner->base_priority = joiner->priority;
-    joiner->dyn_priority = joiner->priority;
-    joiner->inherited_priority = joiner->priority;
-    joiner->has_inherited = 0;
-    scheduler_wake(joiner);
-}
-
 static void shell_run_thread(void* arg)
 {
     run_args_t* ra = (run_args_t*)arg;
     if (!ra || !ra->path) {
-        shell_wake_joiner_if_needed(thread_get_current());
         scheduler_exit_current();
         return;
     }
@@ -73,7 +57,6 @@ static void shell_run_thread(void* arg)
     int ret = loader_exec(ra->path);
     if (ret != RDNX_OK) {
         kprintf("run: failed (%d)\n", ret);
-        shell_wake_joiner_if_needed(thread_get_current());
     }
     kfree(ra->path);
     kfree(ra);
@@ -383,7 +366,7 @@ static int shell_cmd_cpu(int argc, char** argv)
     kprintf("  apic_id:  %u\n", info.apic_id);
     kprintf("  vendor:   %s\n", info.vendor ? info.vendor : "unknown");
     kprintf("  model:    %s\n", info.model ? info.model : "unknown");
-    kprintf("  features: 0x%x\n", info.features);
+    kprintf("  features: %x\n", info.features);
     kprintf("  cores:    %u\n", info.cores);
     kprintf("  threads:  %u\n", info.threads);
     kputs("\n");

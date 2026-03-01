@@ -10,6 +10,7 @@
 
 #include "../../core/memory.h"
 #include "../../core/boot.h"
+#include "../../common/tracev2.h"
 #include "../../../include/console.h"
 #include "../../../include/debug.h"
 #include "types.h"
@@ -91,6 +92,7 @@ int memory_init(void)
     extern boot_info_t* boot_get_info(void);
     
     kputs("[MEM-1] Start\n");
+    tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_ENTER, 0, 0);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-2] Call paging_init\n");
@@ -98,6 +100,7 @@ int memory_init(void)
     /* Initialize paging first (uses existing page tables from boot.S) */
     if (paging_init() != 0) {
         kputs("[MEM-ERR] paging_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 1, 0);
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
@@ -149,11 +152,13 @@ int memory_init(void)
                                PMM_BITMAP_PHYS_ADDR, bi->mmap_addr,
                                bi->mmap_size, bi->mmap_entry_size) != 0) {
             kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
+            tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 2, 0);
             __asm__ volatile ("sti");
             return -1;
         }
     } else if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
         kputs("[MEM-ERR] pmm_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 3, 0);
         __asm__ volatile ("sti");
         return -1;
     }
@@ -186,6 +191,7 @@ int memory_init(void)
     extern int paging_bootstrap_physmap(uint64_t max_phys);
     if (paging_bootstrap_physmap(physmap_max) != 0) {
         kputs("[MEM-ERR] bootstrap physmap failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 4, 0);
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
@@ -203,6 +209,7 @@ int memory_init(void)
     extern int heap_init(size_t initial_pages);
     if (heap_init(16) != 0) {
         kputs("[MEM-ERR] heap_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 5, 0);
         return -1;
     }
 
@@ -228,6 +235,8 @@ int memory_init(void)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-OK] Done\n");
+    tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_DONE,
+                 pmm_get_free_pages(), pmm_get_used_pages());
     return 0;
 }
 

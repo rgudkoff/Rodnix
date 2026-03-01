@@ -262,7 +262,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     uint8_t config = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config read: 0x%x\n", (unsigned)config);
+        kprintf("[HID-KBD] Controller config read: %x\n", (unsigned)config);
     }
 
     /* Ensure IRQ1 enabled, system flag set, keyboard interface enabled */
@@ -278,7 +278,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     kbd_write_data(config);
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config written: 0x%x\n", (unsigned)config);
+        kprintf("[HID-KBD] Controller config written: %x\n", (unsigned)config);
     }
 
     /* Flush any pending data */
@@ -301,7 +301,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     uint8_t ack = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Keyboard ACK: 0x%x\n", (unsigned)ack);
+        kprintf("[HID-KBD] Keyboard ACK: %x\n", (unsigned)ack);
     }
     
     /* Register IRQ1 through Fabric and enable it if possible */
@@ -313,13 +313,16 @@ static int hid_kbd_attach(fabric_device_t *dev)
         if (apic_is_available()) {
             if (ioapic_is_available()) {
                 kputs("[HID-KBD] IOAPIC present, forcing PIC routing for IRQ1\n");
+                kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (legacy route)\n");
                 pic_enable_irq(1);
             } else {
                 kputs("[HID-KBD] IRQ1 routed via PIC (LAPIC EOI)\n");
+                kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (IOAPIC unavailable)\n");
                 pic_enable_irq(1);
             }
         } else {
             kputs("[HID-KBD] IRQ1 routed via PIC\n");
+            kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (APIC unavailable)\n");
             pic_enable_irq(1);
         }
         /* IRQ path is active; disable polling to avoid duplicate reads */

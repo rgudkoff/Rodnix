@@ -374,19 +374,6 @@ static uint64_t posix_exit(uint64_t a1,
     (void)a5;
     (void)a6;
     thread_t* cur = thread_get_current();
-    if (cur && cur->joiner) {
-        thread_t* joiner = cur->joiner;
-        cur->joiner = NULL;
-        kprintf("[EXIT] wake joiner tid=%llu state=%d\n",
-                (unsigned long long)joiner->thread_id,
-                (int)joiner->state);
-        joiner->priority = 220;
-        joiner->base_priority = joiner->priority;
-        joiner->dyn_priority = joiner->priority;
-        joiner->inherited_priority = joiner->priority;
-        joiner->has_inherited = 0;
-        scheduler_wake(joiner);
-    }
     kprintf("[EXIT] thread %llu exiting\n",
             (unsigned long long)(cur ? cur->thread_id : 0));
     scheduler_exit_current();

@@ -1,5 +1,25 @@
 #include "internal.h"
+#include "../tracev2.h"
 #include "../../../include/debug.h"
+
+static void scheduler_exit_wake_joiner(thread_t* exiting)
+{
+    if (!exiting || !exiting->joiner) {
+        return;
+    }
+
+    thread_t* joiner = exiting->joiner;
+    exiting->joiner = NULL;
+
+    /* Keep wake semantics deterministic for shell/run and POSIX exit paths. */
+    joiner->priority = 220;
+    joiner->base_priority = 220;
+    joiner->dyn_priority = 220;
+    joiner->inherited_priority = 220;
+    joiner->has_inherited = 0;
+
+    scheduler_wake(joiner);
+}
 
 static void scheduler_yield_internal(bool irq_context)
 {
@@ -39,7 +59,9 @@ void scheduler_block(void)
     if (current_thread->state != THREAD_STATE_RUNNING) {
         DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)current_thread->thread_id, current_thread->state);
     }
-    current_thread->state = THREAD_STATE_BLOCKED;
+    scheduler_thread_set_state(current_thread, THREAD_STATE_BLOCKED, "scheduler_block");
+    tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
+                 current_thread->thread_id, current_thread->state);
     current_thread->last_sleep_tick = sched_ticks;
     if (log_count < 6) {
         kprintf("[SCHED] block set tid=%llu state=%d\n",
@@ -70,7 +92,7 @@ void scheduler_unblock(thread_t* thread)
                 thread->dyn_priority = clamp_dyn_priority(dyn, base);
             }
         }
-        thread->state = THREAD_STATE_READY;
+        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_unblock");
         if (stats.blocked_tasks > 0) {
             stats.blocked_tasks--;
         }
@@ -89,12 +111,12 @@ void scheduler_wake(thread_t* thread)
         if (stats.blocked_tasks > 0) {
             stats.blocked_tasks--;
         }
-        thread->state = THREAD_STATE_READY;
+        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_blocked");
         ready_enqueue(thread);
         return;
     }
     if (thread->state != THREAD_STATE_READY) {
-        thread->state = THREAD_STATE_READY;
+        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_other");
         ready_enqueue(thread);
         return;
     }
@@ -108,7 +130,15 @@ void scheduler_exit_current(void)
     if (!current_thread) {
         return;
     }
-    current_thread->state = THREAD_STATE_DEAD;
+
+    scheduler_exit_wake_joiner(current_thread);
+    scheduler_thread_set_state(current_thread, THREAD_STATE_DEAD, "scheduler_exit_current");
+    tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_EXIT,
+                 current_thread->thread_id,
+                 current_thread->task ? current_thread->task->task_id : 0);
+    if (current_thread->task && current_thread->task->state != TASK_STATE_DEAD) {
+        scheduler_task_set_state(current_thread->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
+    }
     resched_pending = true;
     __asm__ volatile ("int $32");
     for (;;) {

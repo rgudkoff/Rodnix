@@ -36,6 +36,9 @@ extern thread_t* ready_tail[READY_QUEUE_LEVELS];
 
 extern scheduler_reap_stats_t reap_stats;
 
+void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason);
+void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* reason);
+
 void ready_enqueue(thread_t* thread);
 thread_t* ready_dequeue(void);
 int ready_queue_index_for_thread(const thread_t* thread);

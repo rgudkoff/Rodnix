@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../tracev2.h"
 #include "../../../include/debug.h"
 
 interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
@@ -39,7 +40,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         scheduler_update_tss(first);
         stats.running_tasks = 1;
         stats.total_switches++;
-        first->state = THREAD_STATE_RUNNING;
+        scheduler_thread_set_state(first, THREAD_STATE_RUNNING, "switch_first");
         scheduler_reset_timeslice(first);
         in_scheduler = false;
         return (interrupt_frame_t*)(uintptr_t)first->context.stack_pointer;
@@ -47,15 +48,22 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     current_thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
     if (current_thread->state == THREAD_STATE_RUNNING) {
-        current_thread->state = THREAD_STATE_READY;
+        scheduler_thread_set_state(current_thread, THREAD_STATE_READY, "switch_preempt");
         ready_enqueue(current_thread);
     }
 
     thread_t* next = ready_dequeue();
     if (!next || next == current_thread) {
-        if (current_thread) {
-            current_thread->state = THREAD_STATE_RUNNING;
+        if (current_thread && current_thread->state != THREAD_STATE_DEAD) {
+            scheduler_thread_set_state(current_thread, THREAD_STATE_RUNNING, "switch_continue_current");
+            in_scheduler = false;
+            return frame;
         }
+        /*
+         * Never resume a DEAD thread.
+         * This indicates that no runnable fallback thread exists.
+         */
+        PANIC_IF(true, "scheduler: no runnable threads after current thread exit");
         in_scheduler = false;
         return frame;
     }
@@ -71,13 +79,15 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     stats.total_switches++;
 
     if (prev && prev->state == THREAD_STATE_RUNNING) {
-        prev->state = THREAD_STATE_READY;
+        scheduler_thread_set_state(prev, THREAD_STATE_READY, "switch_prev_ready");
     }
     if (prev && prev->state == THREAD_STATE_DEAD) {
         scheduler_reap_enqueue(prev);
     }
-    next->state = THREAD_STATE_RUNNING;
+    scheduler_thread_set_state(next, THREAD_STATE_RUNNING, "switch_next_running");
     scheduler_reset_timeslice(next);
+    tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_SWITCH,
+                 prev ? prev->thread_id : 0, next->thread_id);
 
     in_scheduler = false;
     if (log_count < 8) {
