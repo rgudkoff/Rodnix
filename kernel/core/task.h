@@ -115,7 +115,11 @@ typedef struct thread {
     size_t stack_size;         /* Размер стека */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
+    TAILQ_ENTRY(thread) wait_timeout_link; /* Узел глобального timeout-list ожидания */
     struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */
+    uint64_t wait_deadline_tick;    /* Дедлайн ожидания в тиках (0=без дедлайна) */
+    uint8_t wait_timeout_armed;     /* Поток находится в timeout-list ожидания */
+    uint8_t wait_timed_out;         /* Поток разбужен по timeout waitq */
     struct thread* joiner;     /* Поток, ожидающий завершения */
     uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
     uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */

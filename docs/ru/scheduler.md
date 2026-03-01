@@ -24,6 +24,7 @@
 - boost при пробуждении, penalty для CPU-bound, clamping.
 - базовое IPC priority inheritance (best-effort).
 - deferred reaper + отдельный reaper-thread + базовые метрики reaper/stack-cache.
+- единый `waitq`-путь ожидания для sleep/IPC с timeout-list.
 
 ## Целевая модель (v1-v2)
 
@@ -102,6 +103,7 @@
 - per-bucket runtime и wait-time,
 - starvation events и warp activations,
 - reaper queue stats, stack-cache stats.
+- waitq stats: `sleep_waiters`, `timed_waiters`.
 
 ## Где смотреть в коде
 

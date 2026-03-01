@@ -2,6 +2,7 @@
 #define _RODNIX_COMMON_SCHEDULER_INTERNAL_H
 
 #include "../scheduler.h"
+#include "../waitq.h"
 #include "../../arch/x86_64/interrupt_frame.h"
 #include "../../../include/bsd/sys/queue.h"
 #include <stdbool.h>
@@ -36,6 +37,7 @@ TAILQ_HEAD(ready_queue_head, thread);
 extern struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 extern scheduler_reap_stats_t reap_stats;
+extern waitq_t scheduler_sleep_waitq;
 
 void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason);
 void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* reason);

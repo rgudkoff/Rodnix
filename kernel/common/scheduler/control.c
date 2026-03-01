@@ -151,9 +151,11 @@ void scheduler_sleep(uint64_t milliseconds)
     if (!current_thread) {
         return;
     }
-
-    (void)milliseconds;
-    scheduler_block();
+    if (milliseconds == 0) {
+        scheduler_yield();
+        return;
+    }
+    (void)waitq_wait(&scheduler_sleep_waitq, milliseconds);
 }
 
 void scheduler_set_priority(thread_t* thread, uint8_t priority)

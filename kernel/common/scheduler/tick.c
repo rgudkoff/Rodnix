@@ -7,6 +7,7 @@ void scheduler_tick(void)
     }
 
     sched_ticks++;
+    waitq_tick(sched_ticks);
     if (current_thread && current_thread->state == THREAD_STATE_RUNNING) {
         current_thread->sched_usage = (current_thread->sched_usage * 7) / 8;
         current_thread->sched_usage++;

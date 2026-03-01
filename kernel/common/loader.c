@@ -42,30 +42,30 @@ static int loader_read_file(const char* path, uint8_t** out_buf, size_t* out_siz
         return RDNX_E_NOTFOUND;
     }
 
-    size_t cap = 4096;
-    size_t len = 0;
-    uint8_t* buf = (uint8_t*)kmalloc(cap);
+    size_t size_hint = 0;
+    if (file.node && file.node->inode) {
+        size_hint = file.node->inode->size;
+    }
+    if (size_hint == 0) {
+        size_hint = 4096;
+    }
+
+    uint8_t* buf = (uint8_t*)kmalloc(size_hint);
     if (!buf) {
         vfs_close(&file);
         return RDNX_E_NOMEM;
     }
 
+    size_t len = 0;
     for (;;) {
-        if (len + 1024 > cap) {
-            size_t new_cap = cap * 2;
-            uint8_t* new_buf = (uint8_t*)kmalloc(new_cap);
-            if (!new_buf) {
-                kfree(buf);
-                vfs_close(&file);
-                return RDNX_E_NOMEM;
-            }
-            memcpy(new_buf, buf, len);
-            kfree(buf);
-            buf = new_buf;
-            cap = new_cap;
+        size_t chunk = size_hint - len;
+        if (chunk > 1024) {
+            chunk = 1024;
         }
-
-        int r = vfs_read(&file, buf + len, 1024);
+        if (chunk == 0) {
+            break;
+        }
+        int r = vfs_read(&file, buf + len, chunk);
         if (r <= 0) {
             break;
         }

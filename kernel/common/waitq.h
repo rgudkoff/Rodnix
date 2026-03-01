@@ -27,5 +27,9 @@ thread_t* waitq_dequeue(waitq_t* q);
 thread_t* waitq_wake_one(waitq_t* q);
 uint32_t waitq_wake_all(waitq_t* q);
 uint32_t waitq_count(const waitq_t* q);
+int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks);
+int waitq_wait(waitq_t* q, uint64_t timeout_ms);
+void waitq_tick(uint64_t now_ticks);
+uint32_t waitq_timed_count(void);
 
 #endif /* _RODNIX_COMMON_WAITQ_H */

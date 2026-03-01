@@ -44,3 +44,25 @@ Use one section per import:
 - Notes:
   - Imported from local FreeBSD snapshot directory provided by user.
   - `include/sys/cdefs.h` added as Rodnix compatibility shim for FreeBSD header dependencies.
+
+### `freebsd-posix-userland-base-2026-03-01`
+
+- Upstream: `https://github.com/freebsd/freebsd-src`
+- Upstream branch/tag: `main`
+- Upstream commit: `5ddfd1db271cc675997a942da599c342ccb53afa`
+- Imported on: `2026-03-01`
+- Imported by: `codex`
+- License: `BSD-2-Clause/BSD-3-Clause (per-file SPDX in imported files)`
+- Upstream path(s):
+  - `bin/sh/*`
+  - `include/{unistd.h,stdio.h,stdlib.h,string.h,signal.h,limits.h,time.h,termios.h,dirent.h,pwd.h,grp.h}`
+  - `sys/sys/{cdefs.h,queue.h,tree.h}` (from local user-provided snapshot)
+- Local path(s):
+  - `third_party/bsd/freebsd-src/bin/sh/*`
+  - `third_party/bsd/freebsd-src/include/*`
+  - `third_party/bsd/freebsd-src/sys/sys/*`
+- Modifications:
+  - `none (verbatim copy)`
+- Notes:
+  - This is a vendor/reference baseline for gradual POSIX/userland integration.
+  - Not wired into Rodnix build yet.

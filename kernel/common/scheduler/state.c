@@ -17,6 +17,7 @@ uint64_t sched_ticks = 0;
 struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 scheduler_reap_stats_t reap_stats = {0};
+waitq_t scheduler_sleep_waitq;
 
 static bool scheduler_thread_transition_valid(thread_state_t from, thread_state_t to)
 {
@@ -110,6 +111,7 @@ int scheduler_init(void)
     for (int i = 0; i < READY_QUEUE_LEVELS; i++) {
         TAILQ_INIT(&ready_queues[i]);
     }
+    waitq_init(&scheduler_sleep_waitq, "scheduler_sleep");
     ticks_per_slice = 1;
     ticks_until_preempt = ticks_per_slice;
     resched_pending = false;
@@ -237,6 +239,16 @@ int scheduler_get_reap_stats(scheduler_reap_stats_t* out_stats)
     }
     reap_stats.queue_len = scheduler_reap_queue_len();
     *out_stats = reap_stats;
+    return RDNX_OK;
+}
+
+int scheduler_get_waitq_stats(scheduler_waitq_stats_t* out_stats)
+{
+    if (!out_stats) {
+        return RDNX_E_INVALID;
+    }
+    out_stats->sleep_waiters = waitq_count(&scheduler_sleep_waitq);
+    out_stats->timed_waiters = waitq_timed_count();
     return RDNX_OK;
 }
 

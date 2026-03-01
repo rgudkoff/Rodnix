@@ -78,6 +78,8 @@ typedef struct port_set {
     port_t** ports;           /* Array of ports */
     uint32_t port_count;      /* Number of ports */
     uint32_t capacity;        /* Capacity of ports array */
+    waitq_t waiters;          /* Waiters blocked in port_set_receive */
+    struct port_set* next_all;/* Internal list of all port sets */
 } port_set_t;
 
 /* ============================================================================

@@ -128,9 +128,11 @@ static int shell_cmd_sched(int argc, char** argv)
 
     extern int scheduler_get_stats(scheduler_stats_t* out_stats);
     extern int scheduler_get_reap_stats(scheduler_reap_stats_t* out_stats);
+    extern int scheduler_get_waitq_stats(scheduler_waitq_stats_t* out_stats);
     extern int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
     scheduler_stats_t stats;
     scheduler_reap_stats_t reap_stats;
+    scheduler_waitq_stats_t waitq_stats;
     task_stack_cache_stats_t stack_stats;
     if (scheduler_get_stats(&stats) != 0) {
         kputs("scheduler stats unavailable\n");
@@ -151,6 +153,11 @@ static int shell_cmd_sched(int argc, char** argv)
         kprintf("  reaped:         %llu\n", (unsigned long long)reap_stats.reaped);
         kprintf("  deferred:       %llu\n", (unsigned long long)reap_stats.deferred);
         kprintf("  dropped:        %llu\n", (unsigned long long)reap_stats.dropped);
+    }
+    if (scheduler_get_waitq_stats(&waitq_stats) == 0) {
+        kprintf("Wait Queues:\n");
+        kprintf("  sleep_waiters:  %u\n", (unsigned)waitq_stats.sleep_waiters);
+        kprintf("  timed_waiters:  %u\n", (unsigned)waitq_stats.timed_waiters);
     }
     if (task_get_stack_cache_stats(&stack_stats) == 0) {
         kprintf("Stack Cache:\n");

@@ -16,6 +16,8 @@ Current imported third-party files include:
 
 - `include/bsd/sys/queue.h` (from FreeBSD `sys/sys/queue.h`)
 - `include/bsd/sys/tree.h` (from FreeBSD `sys/sys/tree.h`)
+- `third_party/bsd/freebsd-src/bin/sh/*` (from FreeBSD `bin/sh`)
+- `third_party/bsd/freebsd-src/include/*` (selected POSIX headers from FreeBSD `include/`)
 
 These files retain original upstream copyright/license headers.
 

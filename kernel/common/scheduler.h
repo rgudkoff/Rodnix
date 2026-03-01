@@ -59,6 +59,11 @@ typedef struct {
     uint64_t runs;
 } scheduler_reap_stats_t;
 
+typedef struct {
+    uint32_t sleep_waiters;
+    uint32_t timed_waiters;
+} scheduler_waitq_stats_t;
+
 /* ============================================================================
  * Initialization
  * ============================================================================ */
@@ -221,6 +226,7 @@ int scheduler_get_stats(scheduler_stats_t* stats);
  * @return 0 on success, negative value on error
  */
 int scheduler_get_reap_stats(scheduler_reap_stats_t* stats);
+int scheduler_get_waitq_stats(scheduler_waitq_stats_t* stats);
 
 /**
  * Get scheduler tick counter

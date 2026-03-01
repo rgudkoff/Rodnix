@@ -13,7 +13,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define KERNEL_STACK_SIZE (16 * 1024)
+#define KERNEL_STACK_SIZE (32 * 1024)
 #define STACK_POISON_BYTE 0xCC
 
 static task_t* current_task = NULL;
@@ -43,6 +43,16 @@ static uint64_t stack_cache_hits = 0;
 static uint64_t stack_cache_misses = 0;
 static uint64_t stack_cache_retired = 0;
 static uint64_t stack_cache_poison_failures = 0;
+
+static inline irql_t task_stack_cache_lock(void)
+{
+    return set_irql(IRQL_HIGH);
+}
+
+static inline void task_stack_cache_unlock(irql_t old)
+{
+    (void)set_irql(old);
+}
 
 static bool stack_has_poison(const void* stack)
 {
@@ -80,18 +90,31 @@ static void thread_trampoline(void)
 
 void* task_kernel_stack_acquire(void)
 {
-    while (stack_cache_count > 0) {
-        void* stack = stack_cache[--stack_cache_count];
-        stack_cache[stack_cache_count] = NULL;
-        stack_cache_hits++;
+    for (;;) {
+        void* stack = NULL;
+        irql_t old = task_stack_cache_lock();
+        if (stack_cache_count > 0) {
+            stack = stack_cache[--stack_cache_count];
+            stack_cache[stack_cache_count] = NULL;
+            stack_cache_hits++;
+        }
+        task_stack_cache_unlock(old);
+
+        if (!stack) {
+            break;
+        }
         if (!stack_has_poison(stack)) {
+            irql_t old2 = task_stack_cache_lock();
             stack_cache_poison_failures++;
+            task_stack_cache_unlock(old2);
             kfree(stack);
             continue;
         }
         return stack;
     }
+    irql_t old = task_stack_cache_lock();
     stack_cache_misses++;
+    task_stack_cache_unlock(old);
     return kmalloc(KERNEL_STACK_SIZE);
 }
 
@@ -102,11 +125,14 @@ void task_kernel_stack_retire(void* stack, size_t size)
     }
     extern void* memset(void* s, int c, size_t n);
     memset(stack, STACK_POISON_BYTE, KERNEL_STACK_SIZE);
+    irql_t old = task_stack_cache_lock();
     stack_cache_retired++;
     if (stack_cache_count < STACK_CACHE_SIZE) {
         stack_cache[stack_cache_count++] = stack;
+        task_stack_cache_unlock(old);
         return;
     }
+    task_stack_cache_unlock(old);
     kfree(stack);
 }
 
@@ -115,12 +141,14 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
     if (!out_stats) {
         return RDNX_E_INVALID;
     }
+    irql_t old = task_stack_cache_lock();
     out_stats->cache_count = stack_cache_count;
     out_stats->cache_capacity = STACK_CACHE_SIZE;
     out_stats->cache_hits = stack_cache_hits;
     out_stats->cache_misses = stack_cache_misses;
     out_stats->retired = stack_cache_retired;
     out_stats->poison_failures = stack_cache_poison_failures;
+    task_stack_cache_unlock(old);
     return RDNX_OK;
 }
 
@@ -342,7 +370,12 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->sched_link.tqe_prev = NULL;
     thread->wait_link.tqe_next = NULL;
     thread->wait_link.tqe_prev = NULL;
+    thread->wait_timeout_link.tqe_next = NULL;
+    thread->wait_timeout_link.tqe_prev = NULL;
     thread->waitq_owner = NULL;
+    thread->wait_deadline_tick = 0;
+    thread->wait_timeout_armed = 0;
+    thread->wait_timed_out = 0;
     thread->joiner = NULL;
     thread->reap_queued = 0;
     thread->reap_after_tick = 0;

@@ -18,6 +18,7 @@ static bool ipc_initialized = false;
 static uint64_t next_port_id = 1;
 static uint64_t next_set_id = 1;
 static port_t* bootstrap_port = NULL;
+static port_set_t* all_port_sets_head = NULL;
 
 /* Simple port table (fixed size for now) */
 #define IPC_MAX_PORTS 1024
@@ -161,6 +162,31 @@ static inline int port_table_index(uint64_t port_id)
         return -1;
     }
     return (int)(port_id - 1);
+}
+
+static bool port_set_contains_port(const port_set_t* set, const port_t* port)
+{
+    if (!set || !port) {
+        return false;
+    }
+    for (uint32_t i = 0; i < set->port_count; i++) {
+        if (set->ports[i] == port) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void ipc_wake_port_sets_for_port(port_t* port)
+{
+    if (!port) {
+        return;
+    }
+    for (port_set_t* set = all_port_sets_head; set; set = set->next_all) {
+        if (port_set_contains_port(set, port)) {
+            (void)waitq_wake_one(&set->waiters);
+        }
+    }
 }
 
 int ipc_init(void)
@@ -341,6 +367,7 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
 
     (void)waitq_wake_one(&port->waiters);
+    ipc_wake_port_sets_for_port(port);
     
     return RDNX_OK;
 }
@@ -398,37 +425,29 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
             }
             return RDNX_OK;
         }
-        if (timeout == 0) {
-            if (!receiver) {
-                if (port->owner_thread) {
-                    scheduler_clear_inherit(port->owner_thread);
-                }
-                return RDNX_E_INVALID;
+        if (!receiver) {
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
             }
-            if (!waitq_contains(&port->waiters, receiver)) {
-                int qret = waitq_enqueue(&port->waiters, receiver);
-                if (qret != RDNX_OK && qret != RDNX_E_BUSY) {
-                    if (port->owner_thread) {
-                        scheduler_clear_inherit(port->owner_thread);
-                    }
-                    return qret;
-                }
-            }
-            scheduler_block();
-            /* Force immediate reschedule to avoid busy loop */
-            __asm__ volatile ("int $32");
-            continue;
+            return RDNX_E_INVALID;
         }
-        if (deadline && scheduler_get_ticks() >= deadline) {
+
+        int wret = waitq_wait_until(&port->waiters, deadline);
+        if (wret == RDNX_E_TIMEOUT) {
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
+            }
+            return RDNX_E_TIMEOUT;
+        }
+        if (wret != RDNX_OK) {
             if (receiver && waitq_contains(&port->waiters, receiver)) {
                 (void)waitq_remove(&port->waiters, receiver);
             }
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
-            return RDNX_E_TIMEOUT;
+            return wret;
         }
-        scheduler_yield();
     }
     
 }
@@ -484,6 +503,9 @@ port_set_t* port_set_create(void)
     set->ports = NULL;
     set->port_count = 0;
     set->capacity = 0;
+    waitq_init(&set->waiters, "ipc_portset_waiters");
+    set->next_all = all_port_sets_head;
+    all_port_sets_head = set;
     
     return set;
 }
@@ -498,6 +520,18 @@ void port_set_destroy(port_set_t* set)
         kfree(set->ports);
         set->ports = NULL;
     }
+    waitq_wake_all(&set->waiters);
+    if (all_port_sets_head == set) {
+        all_port_sets_head = set->next_all;
+    } else {
+        for (port_set_t* it = all_port_sets_head; it; it = it->next_all) {
+            if (it->next_all == set) {
+                it->next_all = set->next_all;
+                break;
+            }
+        }
+    }
+    set->next_all = NULL;
     kfree(set);
 }
 
@@ -575,6 +609,12 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
         if (deadline && scheduler_get_ticks() >= deadline) {
             return -1;
         }
-        scheduler_yield();
+        int wret = waitq_wait_until(&set->waiters, deadline);
+        if (wret == RDNX_E_TIMEOUT) {
+            return -1;
+        }
+        if (wret != RDNX_OK) {
+            return -1;
+        }
     }
 }

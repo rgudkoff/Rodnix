@@ -36,8 +36,10 @@
 - Сообщения фиксированного размера (heap‑буфер до 4096 байт).
 - `ipc_message_t` содержит ABI‑header и проверяется при отправке.
 - Можно передавать порты в сообщениях (через массив port ids).
-- Есть простое ожидание с таймаутом: polling + `scheduler_yield()`.
-- Таймауты сейчас привязаны к scheduler‑тику (грубая точность).
+- Ожидание получения переведено на `waitq` (без polling-цикла).
+- Таймауты реализованы через общий timeout-list `waitq` и обрабатываются в `scheduler_tick()`.
+- `ipc_receive()` использует единый путь `waitq_wait_until(...)`, пробуждение — `waitq_wake_one()/waitq_wake_all()`.
+- `port_set_receive()` также переведен на блокирующее ожидание через `waitq` (без `scheduler_yield()` polling).
 - Есть базовое IPC‑наследование приоритетов в `ipc_send_receive()`/`ipc_receive()`/`port_set_receive()` (best‑effort, стек глубиной 4).
 - Есть минимальная проверка прав (send/receive), но без per‑task namespace и полноценной модели прав.
 - Нет peek и нет продвинутых политик очередей.

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../heap.h"
 #include "../tracev2.h"
+#include "../../core/interrupts.h"
 #include "../../../include/error.h"
 #include "../../../include/debug.h"
 
@@ -13,23 +14,40 @@ static uint32_t reap_tail = 0;
 static task_t* reaper_task = NULL;
 static thread_t* reaper_thread = NULL;
 
+static inline irql_t reaper_lock(void)
+{
+    return set_irql(IRQL_HIGH);
+}
+
+static inline void reaper_unlock(irql_t old)
+{
+    (void)set_irql(old);
+}
+
 static thread_t* scheduler_reap_dequeue(void)
 {
+    irql_t old = reaper_lock();
     if (reap_head == reap_tail) {
+        reaper_unlock(old);
         return NULL;
     }
     thread_t* t = reap_queue[reap_head];
     reap_queue[reap_head] = NULL;
     reap_head = (reap_head + 1u) % REAP_QUEUE_SIZE;
+    reaper_unlock(old);
     return t;
 }
 
 static thread_t* scheduler_reap_peek(void)
 {
+    irql_t old = reaper_lock();
     if (reap_head == reap_tail) {
+        reaper_unlock(old);
         return NULL;
     }
-    return reap_queue[reap_head];
+    thread_t* t = reap_queue[reap_head];
+    reaper_unlock(old);
+    return t;
 }
 
 static void scheduler_reaper_main(void* arg)
@@ -44,7 +62,10 @@ static void scheduler_reaper_main(void* arg)
 
 uint32_t scheduler_reap_queue_len(void)
 {
-    return (reap_tail + REAP_QUEUE_SIZE - reap_head) % REAP_QUEUE_SIZE;
+    irql_t old = reaper_lock();
+    uint32_t qlen = (reap_tail + REAP_QUEUE_SIZE - reap_head) % REAP_QUEUE_SIZE;
+    reaper_unlock(old);
+    return qlen;
 }
 
 void scheduler_reap_enqueue(thread_t* dead_thread)
@@ -52,6 +73,7 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
     if (!dead_thread || dead_thread->reap_queued) {
         return;
     }
+    irql_t old = reaper_lock();
     uint32_t next_tail = (reap_tail + 1u) % REAP_QUEUE_SIZE;
     if (next_tail == reap_head) {
         /*
@@ -61,6 +83,7 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
         reap_stats.dropped++;
         tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_REAPER_OVERFLOW,
                      reap_stats.queue_len, reap_stats.dropped);
+        reaper_unlock(old);
         PANIC("scheduler reaper queue overflow");
     }
     dead_thread->reap_after_tick = sched_ticks + REAP_GRACE_TICKS;
@@ -72,6 +95,7 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
     if (qlen > reap_stats.queue_hwm) {
         reap_stats.queue_hwm = qlen;
     }
+    reaper_unlock(old);
 }
 
 void scheduler_reap_dead_threads(void)

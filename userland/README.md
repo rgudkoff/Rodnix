@@ -13,6 +13,8 @@
   Также поддержан запуск внешних программ без `run`:
   - `sh> <program> [args...]` (ищет `/bin/<program>`, если не задан абсолютный путь).
   - Аргументы передаются в userspace как `argc/argv` (MVP, без envp).
+- `/bin/echo` — внешний userspace-бинарник (не built-in shell-команда), запускается:
+  - `sh> echo hello world`
 - `/etc` в rootfs:
   - `/etc/motd` — приветствие, печатается `init` при старте;
   - `/etc/hostname` — hostname, читается `init`;
@@ -26,6 +28,11 @@
 POSIX syscall номера синхронизируются автоматически из
 `kernel/posix/syscalls.master` (в стиле XNU), генератор:
 `scripts/mkposixsyscalls.py`.
+
+Минимальный POSIX-совместимый заголовочный слой для userland находится в
+`userland/include`:
+- `unistd.h`, `fcntl.h`, `errno.h`
+- `sys/types.h`, `sys/fcntl.h`, `sys/wait.h`, `sys/stat.h`, `sys/errno.h`
 
 План:
 - минимальный loader и переход в ring3;

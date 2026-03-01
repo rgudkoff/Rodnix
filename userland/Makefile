@@ -24,19 +24,23 @@ BIN_DIR = $(ROOTFS_DIR)/bin
 
 INIT_SRCS = init/init.c
 SH_SRCS = shell/shell.c
+ECHO_SRCS = bin/echo.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ)
 SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ)
+ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
+ECHO_ELF = $(BUILD_DIR)/echo.elf
 INIT_BIN = $(BIN_DIR)/init
 SH_BIN = $(BIN_DIR)/sh
+ECHO_BIN = $(BIN_DIR)/echo
 
 .PHONY: all clean
 
-all: $(INIT_BIN) $(SH_BIN)
+all: $(INIT_BIN) $(SH_BIN) $(ECHO_BIN)
 
 $(BUILD_DIR)/crt0.o: crt0.S
 	@mkdir -p $(dir $@)
@@ -54,11 +58,19 @@ $(SH_ELF): $(SH_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(SH_OBJS)
 
+$(ECHO_ELF): $(ECHO_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(ECHO_OBJS)
+
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
 $(SH_BIN): $(SH_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(ECHO_BIN): $(ECHO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
