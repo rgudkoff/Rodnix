@@ -152,6 +152,7 @@ static void cmd_help(void)
     (void)write_str("  uname         - show system information\n");
     (void)write_str("  cat <path>    - print file content\n");
     (void)write_str("  smoke         - run basic POSIX smoke check\n");
+    (void)write_str("  ttytest       - interactive tty line test\n");
     (void)write_str("  exit          - terminate init process\n");
 }
 
@@ -235,6 +236,43 @@ static void cmd_cat(const char* path)
     (void)posix_close((int)fd);
 }
 
+static void cmd_ttytest(void)
+{
+    char line[SH_LINE_MAX];
+    char byte[4];
+
+    (void)write_str("ttytest: type a line and press Enter.\n");
+    (void)write_str("ttytest: Ctrl-U clears line, Ctrl-D on empty line returns EOF.\n");
+    (void)write_str("ttytest> ");
+
+    int n = read_line(line, (int)sizeof(line));
+    if (n < 0) {
+        (void)write_str("ttytest: read error\n");
+        return;
+    }
+
+    if (n == 0) {
+        (void)write_str("ttytest: empty line/EOF\n");
+        return;
+    }
+
+    (void)write_str("ttytest: len=");
+    write_u64((uint64_t)n);
+    (void)write_str(" text='");
+    (void)write_buf(line, (uint64_t)n);
+    (void)write_str("'\n");
+
+    (void)write_str("ttytest: bytes=");
+    for (int i = 0; i < n; i++) {
+        byte[0] = ' ';
+        byte[1] = "0123456789ABCDEF"[(line[i] >> 4) & 0x0F];
+        byte[2] = "0123456789ABCDEF"[line[i] & 0x0F];
+        byte[3] = '\0';
+        (void)write_str(byte);
+    }
+    (void)write_str("\n");
+}
+
 int main(void)
 {
     char line[SH_LINE_MAX];
@@ -277,6 +315,8 @@ int main(void)
             cmd_cat((argc >= 2) ? argv[1] : 0);
         } else if (str_eq(argv[0], "smoke")) {
             run_smoke();
+        } else if (str_eq(argv[0], "ttytest")) {
+            cmd_ttytest();
         } else if (str_eq(argv[0], "exit")) {
             (void)write_str("init exiting\n");
             (void)posix_exit(0);

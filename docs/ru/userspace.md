@@ -25,9 +25,11 @@
 - Initrd поддерживается как источник файлов (`/bin/init`).
 - По умолчанию bootstrap идёт через userspace `init` (не через kernel shell).
 - В `userland/bootstrap/bootstrap.c` есть минимальный userspace shell (`sh>`):
-  - `help`, `pid`, `uname`, `cat <path>`, `smoke`, `exit`.
+  - `help`, `pid`, `uname`, `cat <path>`, `smoke`, `ttytest`, `exit`.
   - stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`),
     привязанные к VFS-узлу `/dev/console`.
+  - `ttytest` используется для ручной проверки line discipline (`Ctrl-U`,
+    `Ctrl-D`, backspace, canonical newline).
 
 ## Проверенный smoke‑test
 

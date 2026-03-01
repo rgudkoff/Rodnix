@@ -25,6 +25,9 @@
  - Initrd подключается из boot‑модуля (Multiboot2 module) и импортируется в RAMFS.
 - Есть встроенный VFS-узел `/dev/console` (special inode), через который идут
   консольные `read/write` для userland.
+- `/dev/console` обслуживается через `kernel/common/tty_console.c`
+  (минимальный line discipline: echo, backspace, `Ctrl-U`, `Ctrl-C`, `Ctrl-D`,
+  canonical line mode).
 
 ## Инварианты
 

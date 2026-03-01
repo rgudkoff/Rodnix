@@ -5,8 +5,7 @@
 
 #include "vfs.h"
 #include "initrd.h"
-#include "../input/input.h"
-#include "../common/scheduler.h"
+#include "../common/tty_console.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
@@ -479,6 +478,7 @@ int vfs_init(void)
     if (vfs_import_initrd() != 0) {
         kputs("[VFS] initrd import failed\n");
     }
+    tty_console_init();
     if (vfs_setup_console_node() != 0) {
         kputs("[VFS] console node setup failed\n");
     }
@@ -609,36 +609,7 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
     }
     vfs_inode_t* inode = file->node->inode;
     if (inode->flags & VFS_INODE_CONSOLE) {
-        if (size == 0) {
-            return 0;
-        }
-        uint8_t* out = (uint8_t*)buffer;
-        size_t nread = 0;
-        while (nread < size) {
-            int c = input_read_char();
-            if (c < 0) {
-                if (nread > 0) {
-                    break;
-                }
-                scheduler_ast_check();
-                continue;
-            }
-            /* Minimal TTY-style echo for console stdin (fd0 opened RW). */
-            if (file->writable) {
-                if (c == '\b' || c == 0x7F) {
-                    kputc('\b');
-                    kputc(' ');
-                    kputc('\b');
-                } else if (c == '\r' || c == '\n') {
-                    c = '\n';
-                    kputc('\n');
-                } else {
-                    kputc((char)c);
-                }
-            }
-            out[nread++] = (uint8_t)c;
-        }
-        return (int)nread;
+        return tty_console_read(buffer, size, file->writable);
     }
     if (file->pos >= inode->size) {
         return 0;
@@ -657,11 +628,7 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
     }
     vfs_inode_t* inode = file->node->inode;
     if (inode->flags & VFS_INODE_CONSOLE) {
-        const char* s = (const char*)buffer;
-        for (size_t i = 0; i < size; i++) {
-            kputc(s[i]);
-        }
-        return (int)size;
+        return tty_console_write(buffer, size);
     }
     size_t end = file->pos + size;
     if (vfs_grow_file(file->node, end) != 0) {

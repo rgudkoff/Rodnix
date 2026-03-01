@@ -18,6 +18,7 @@ KERNEL_C_SRCS += \
 	kernel/common/loader.c \
 	kernel/common/bootlog.c \
 	kernel/common/tracev2.c \
+	kernel/common/tty_console.c \
 	kernel/posix/posix_syscall.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
