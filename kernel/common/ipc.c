@@ -204,7 +204,7 @@ port_t* port_allocate(port_type_t type)
     port->rights = PORT_RIGHT_RECEIVE | PORT_RIGHT_SEND;
     port->owner = task_get_current();
     port->owner_thread = thread_get_current();
-    port->waiter_thread = NULL;
+    waitq_init(&port->waiters, "ipc_port_waiters");
     port->ref_count = 1;
     port->queue = ipc_queue_create();
     if (!port->queue) {
@@ -231,7 +231,7 @@ void port_deallocate(port_t* port)
     
     if (port->ref_count == 0) {
         port->active = false;
-        port->waiter_thread = NULL;
+        waitq_wake_all(&port->waiters);
         ipc_queue_destroy((ipc_queue_t*)port->queue);
         port->queue = NULL;
         int idx = port_table_index(port->port_id);
@@ -340,13 +340,7 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
         return RDNX_E_BUSY;
     }
 
-    /* Wake a blocked receiver (v0: single waiter) */
-    if (port->waiter_thread) {
-        if (port->waiter_thread->state == THREAD_STATE_BLOCKED) {
-            scheduler_unblock(port->waiter_thread);
-        }
-        port->waiter_thread = NULL;
-    }
+    (void)waitq_wake_one(&port->waiters);
     
     return RDNX_OK;
 }
@@ -396,25 +390,39 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
     }
     for (;;) {
         if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+            if (receiver && waitq_contains(&port->waiters, receiver)) {
+                (void)waitq_remove(&port->waiters, receiver);
+            }
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
             return RDNX_OK;
         }
         if (timeout == 0) {
-            if (port->waiter_thread && port->waiter_thread != receiver) {
+            if (!receiver) {
                 if (port->owner_thread) {
                     scheduler_clear_inherit(port->owner_thread);
                 }
-                return RDNX_E_BUSY;
+                return RDNX_E_INVALID;
             }
-            port->waiter_thread = receiver;
+            if (!waitq_contains(&port->waiters, receiver)) {
+                int qret = waitq_enqueue(&port->waiters, receiver);
+                if (qret != RDNX_OK && qret != RDNX_E_BUSY) {
+                    if (port->owner_thread) {
+                        scheduler_clear_inherit(port->owner_thread);
+                    }
+                    return qret;
+                }
+            }
             scheduler_block();
             /* Force immediate reschedule to avoid busy loop */
             __asm__ volatile ("int $32");
             continue;
         }
         if (deadline && scheduler_get_ticks() >= deadline) {
+            if (receiver && waitq_contains(&port->waiters, receiver)) {
+                (void)waitq_remove(&port->waiters, receiver);
+            }
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }

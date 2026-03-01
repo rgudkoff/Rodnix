@@ -9,6 +9,7 @@
 #define _RODNIX_COMMON_IPC_H
 
 #include "../core/task.h"
+#include "waitq.h"
 #include "../../include/abi.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -44,7 +45,7 @@ typedef struct port {
     uint64_t rights;          /* Port rights */
     task_t* owner;            /* Owning task */
     thread_t* owner_thread;   /* Owning thread (best-effort) */
-    thread_t* waiter_thread;  /* Single blocked receiver (v0) */
+    waitq_t waiters;          /* Blocked receiver wait queue */
     uint32_t ref_count;       /* Reference count */
     void* queue;              /* Message queue */
     bool active;              /* Is port active */

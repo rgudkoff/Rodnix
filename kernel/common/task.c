@@ -175,10 +175,9 @@ task_t* task_create(void)
     task->main_thread = NULL;
     task->thread_count = 0;
     task->ref_count = 1;
-    RB_PARENT(task, task_id_link) = NULL;
-    RB_LEFT(task, task_id_link) = NULL;
-    RB_RIGHT(task, task_id_link) = NULL;
-    RB_COLOR(task, task_id_link) = RB_BLACK;
+    task->task_id_link.rbe_link[0] = NULL;
+    task->task_id_link.rbe_link[1] = NULL;
+    task->task_id_link.rbe_link[2] = NULL;
     task->next_all = all_tasks_head;
     all_tasks_head = task;
     (void)RB_INSERT(task_id_index, &all_tasks_by_id, task);
@@ -341,6 +340,9 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->stack_size = KERNEL_STACK_SIZE;
     thread->sched_link.tqe_next = NULL;
     thread->sched_link.tqe_prev = NULL;
+    thread->wait_link.tqe_next = NULL;
+    thread->wait_link.tqe_prev = NULL;
+    thread->waitq_owner = NULL;
     thread->joiner = NULL;
     thread->reap_queued = 0;
     thread->reap_after_tick = 0;

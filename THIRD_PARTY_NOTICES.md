@@ -12,6 +12,13 @@ BSD-derived imports are tracked in:
 
 - `third_party/bsd/SOURCES.md`
 
+Current imported third-party files include:
+
+- `include/bsd/sys/queue.h` (from FreeBSD `sys/sys/queue.h`)
+- `include/bsd/sys/tree.h` (from FreeBSD `sys/sys/tree.h`)
+
+These files retain original upstream copyright/license headers.
+
 Rules for adding third-party code:
 
 1. Keep original copyright and license headers in imported files.

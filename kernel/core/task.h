@@ -114,6 +114,8 @@ typedef struct thread {
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
+    TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
+    struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */
     struct thread* joiner;     /* Поток, ожидающий завершения */
     uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
     uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
