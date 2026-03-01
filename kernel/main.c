@@ -239,15 +239,14 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
 
-    /* If LAPIC is available, keep PIC enabled for legacy IRQs (PS/2) */
+    /* External IRQ routing status */
     if (apic_is_available()) {
         extern bool ioapic_is_available(void);
         if (ioapic_is_available()) {
-            kputs("[INIT-5.3] I/O APIC available, keep PIC enabled for legacy IRQs\n");
-            kputs("[DEGRADED] IRQ routing is mixed (IOAPIC + PIC legacy IRQs)\n");
+            kputs("[INIT-5.3] I/O APIC available, PIC masked (APIC mode)\n");
             __asm__ volatile ("" ::: "memory");
         } else {
-            kputs("[INIT-5.3] LAPIC available, I/O APIC not - keep PIC for external IRQ\n");
+            kputs("[INIT-5.3] LAPIC available, I/O APIC not - PIC fallback for external IRQ\n");
             kputs("[DEGRADED] External IRQ routing stays on PIC fallback path\n");
             __asm__ volatile ("" ::: "memory");
         }

@@ -269,7 +269,12 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             /* Unhandled IRQ - mask it silently (no panic) */
             /* Keep timer IRQ enabled to preserve preemption. */
             if (irq != 0) {
-                pic_disable_irq(irq);
+                extern bool ioapic_is_available(void);
+                if (apic_is_available() && ioapic_is_available()) {
+                    apic_disable_irq((uint8_t)irq);
+                } else {
+                    pic_disable_irq((uint8_t)irq);
+                }
             }
         }
         

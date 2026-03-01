@@ -78,7 +78,7 @@ void scheduler_reset_timeslice(const thread_t* thread)
 
 bool ready_thread_is_queued(const thread_t* thread)
 {
-    return thread && thread->sched_link.tqe_prev != NULL;
+    return thread && thread->ready_queued != 0;
 }
 
 void ready_enqueue(thread_t* thread)
@@ -96,6 +96,7 @@ void ready_enqueue(thread_t* thread)
         q = READY_QUEUE_LEVELS - 1;
     }
     TAILQ_INSERT_TAIL(&ready_queues[q], thread, sched_link);
+    thread->ready_queued = 1;
     stats.ready_tasks++;
 }
 
@@ -121,6 +122,9 @@ thread_t* ready_dequeue(void)
             DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
         }
         TAILQ_REMOVE(queue, thread, sched_link);
+        thread->sched_link.tqe_next = NULL;
+        thread->sched_link.tqe_prev = NULL;
+        thread->ready_queued = 0;
         if (stats.ready_tasks > 0) {
             stats.ready_tasks--;
         }
@@ -138,6 +142,9 @@ thread_t* ready_dequeue(void)
             DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
         }
         TAILQ_REMOVE(queue, thread, sched_link);
+        thread->sched_link.tqe_next = NULL;
+        thread->sched_link.tqe_prev = NULL;
+        thread->ready_queued = 0;
         if (stats.ready_tasks > 0) {
             stats.ready_tasks--;
         }

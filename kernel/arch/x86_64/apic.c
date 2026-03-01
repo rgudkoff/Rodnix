@@ -168,6 +168,7 @@ static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
 
 /* Forward declarations */
 static int ioapic_init(void);
+uint8_t apic_get_lapic_id(void);
 
 /* Find I/O APIC address from ACPI MADT */
 static uint64_t find_ioapic_from_madt(void)
@@ -702,12 +703,10 @@ int apic_init(void)
     apic_write_register(APIC_SVR, svr);
     __asm__ volatile ("" ::: "memory");
 
-    /* Route legacy PIC interrupts via LINT0 (ExtINT) */
-    kputs("[APIC-9.1] Configure LINT0 for ExtINT\n");
+    /* Keep legacy ExtINT path enabled until I/O APIC verdict is known. */
+    kputs("[APIC-9.1] Configure LINT0 for temporary ExtINT fallback\n");
     __asm__ volatile ("" ::: "memory");
-    /* Delivery mode ExtINT (0b111 << 8), unmasked (bit 16 = 0) */
     apic_write_register(APIC_LVT_LINT0, (0x7u << 8));
-    /* Mask LINT1 (optional) */
     apic_write_register(APIC_LVT_LINT1, (1u << 16));
     __asm__ volatile ("" ::: "memory");
     
@@ -737,6 +736,13 @@ int apic_init(void)
     int ioapic_result = ioapic_init();
     if (ioapic_result == 0) {
         kputs("[APIC-11.1] I/O APIC initialized successfully\n");
+        kputs("[APIC-11.2] Switching external IRQ routing to I/O APIC\n");
+        /* Stop accepting ExtINT from 8259 via LAPIC LINT0. */
+        apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+        /* Route legacy IRQs away from PIC and fully mask PIC lines. */
+        pic_set_imcr(true);
+        pic_disable();
+        kputs("[APIC-11.3] PIC masked and detached (APIC/IOAPIC mode)\n");
         __asm__ volatile ("" ::: "memory");
     } else {
         kputs("[APIC-11.2] I/O APIC init failed (error code above)\n");
@@ -744,6 +750,7 @@ int apic_init(void)
         kputs("[APIC-11.4] Check [IOAPIC-*] logs above for failure details\n");
         /* Route external IRQs to PIC (IMCR PIC mode) */
         pic_set_imcr(false);
+        /* Keep ExtINT path on LINT0 for PIC fallback mode. */
         __asm__ volatile ("" ::: "memory");
     }
     
@@ -963,7 +970,8 @@ int ioapic_init(void)
     }
     
     ioapic_version = (uint8_t)(ver & 0xFF);
-    ioapic_max_redir = (uint8_t)((ver >> 16) & 0xFF);
+    /* Bits 16..23 are maximum redirection entry index, so +1 gives count. */
+    ioapic_max_redir = (uint8_t)(((ver >> 16) & 0xFF) + 1u);
     
     #if APIC_DEBUG
     kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
@@ -975,11 +983,25 @@ int ioapic_init(void)
     #endif
     
     /* Validate extracted values */
-    if (ioapic_max_redir == 0 || ioapic_max_redir > 24) {
+    if (ioapic_max_redir == 0 || ioapic_max_redir > IOAPIC_MAX_REDIR) {
         #if APIC_DEBUG
         kputs("[IOAPIC-4.4] WARNING: Invalid max redir entries, using default 24\n");
         #endif
-        ioapic_max_redir = 24;
+        ioapic_max_redir = IOAPIC_MAX_REDIR;
+    }
+
+    /* Mask all I/O APIC lines until individual drivers enable required IRQs. */
+    uint8_t bsp_lapic_id = apic_get_lapic_id();
+    for (uint8_t i = 0; i < ioapic_max_redir; i++) {
+        uint32_t rte_low = IOAPIC_RTE_VECTOR(32 + i)
+                         | IOAPIC_RTE_DELIVERY_FIXED
+                         | IOAPIC_RTE_POLARITY_HIGH
+                         | IOAPIC_RTE_TRIGGER_EDGE
+                         | IOAPIC_RTE_DEST_MODE_PHYS
+                         | IOAPIC_RTE_MASKED;
+        uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID(bsp_lapic_id);
+        ioapic_write_register(IOAPIC_REDIR_TBL(i), rte_low);
+        ioapic_write_register(IOAPIC_REDIR_TBL_H(i), rte_high);
     }
     
     ioapic_initialized = true;

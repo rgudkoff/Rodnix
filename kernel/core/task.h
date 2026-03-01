@@ -114,6 +114,7 @@ typedef struct thread {
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
+    uint8_t ready_queued;      /* Поток находится в ready queue */
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
     TAILQ_ENTRY(thread) wait_timeout_link; /* Узел глобального timeout-list ожидания */
     struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */

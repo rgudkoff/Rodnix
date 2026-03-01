@@ -368,6 +368,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->stack_size = KERNEL_STACK_SIZE;
     thread->sched_link.tqe_next = NULL;
     thread->sched_link.tqe_prev = NULL;
+    thread->ready_queued = 0;
     thread->wait_link.tqe_next = NULL;
     thread->wait_link.tqe_prev = NULL;
     thread->wait_timeout_link.tqe_next = NULL;

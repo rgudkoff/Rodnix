@@ -312,9 +312,8 @@ static int hid_kbd_attach(fabric_device_t *dev)
     } else {
         if (apic_is_available()) {
             if (ioapic_is_available()) {
-                kputs("[HID-KBD] IOAPIC present, forcing PIC routing for IRQ1\n");
-                kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (legacy route)\n");
-                pic_enable_irq(1);
+                kputs("[HID-KBD] IRQ1 routed via I/O APIC\n");
+                apic_enable_irq(1);
             } else {
                 kputs("[HID-KBD] IRQ1 routed via PIC (LAPIC EOI)\n");
                 kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (IOAPIC unavailable)\n");
@@ -330,10 +329,6 @@ static int hid_kbd_attach(fabric_device_t *dev)
         kputs("[HID-KBD] IRQ1 enabled via Fabric (polling disabled)\n");
     }
     kputs("[HID-KBD] Keyboard driver attached successfully\n");
-    
-    /* Temporarily disable interrupts during initialization to avoid interference */
-    __asm__ volatile ("cli"); /* Disable interrupts */
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     
     /* Initialize keyboard ops */
     kputs("[HID-KBD] Initializing keyboard ops...\n");
@@ -363,27 +358,6 @@ static int hid_kbd_attach(fabric_device_t *dev)
     keyboard_service.context = NULL;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Keyboard service initialized\n");
-    
-    /* Re-enable interrupts */
-    kputs("[HID-KBD] Re-enabling interrupts (sti)...\n");
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier before sti */
-    
-    
-    __asm__ volatile ("sti"); /* Enable interrupts */
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier after sti */
-    
-    
-    kputs("[HID-KBD] Interrupts re-enabled\n");
-    
-    /* Small delay */
-    for (volatile int i = 0; i < 10000; i++) {
-        __asm__ volatile ("pause");
-    }
-    
-    /* Small delay to allow any pending interrupts to be processed */
-    for (volatile int i = 0; i < 5000; i++) {
-        __asm__ volatile ("pause");
-    }
     
     /* Publish keyboard service */
     kputs("[HID-KBD] Publishing keyboard service...\n");
