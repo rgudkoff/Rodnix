@@ -1,21 +1,48 @@
 /*
  * bootstrap.c
- * Minimal userland init stub.
+ * Minimal userspace init + interactive shell.
  */
 
+#include <stdint.h>
 #include "syscall.h"
 #include "posix_syscall.h"
 
 #define SYS_NOP 0
 #define VFS_OPEN_READ 1
 
-static long posix_write_str(const char* s)
+#define FD_STDIN  0
+#define FD_STDOUT 1
+#define FD_STDERR 2
+
+#define SH_LINE_MAX 128
+#define SH_ARG_MAX  8
+
+typedef struct {
+    uint32_t abi_version;
+    uint32_t size;
+} rdnx_abi_header_t;
+
+typedef struct {
+    rdnx_abi_header_t hdr;
+    char sysname[32];
+    char nodename[32];
+    char release[32];
+    char version[64];
+    char machine[32];
+} utsname_t;
+
+static long write_buf(const char* s, uint64_t len)
 {
-    long len = 0;
+    return posix_write(FD_STDOUT, s, len);
+}
+
+static long write_str(const char* s)
+{
+    uint64_t len = 0;
     while (s[len]) {
         len++;
     }
-    return posix_write(1, s, (uint64_t)len);
+    return write_buf(s, len);
 }
 
 static void write_u64(uint64_t v)
@@ -23,16 +50,16 @@ static void write_u64(uint64_t v)
     char buf[32];
     int i = 0;
     if (v == 0) {
-        posix_write(1, "0", 1);
+        (void)write_buf("0", 1);
         return;
     }
     while (v > 0 && i < (int)sizeof(buf)) {
-        buf[i++] = (char)('0' + (v % 10));
-        v /= 10;
+        buf[i++] = (char)('0' + (v % 10u));
+        v /= 10u;
     }
     while (i > 0) {
         i--;
-        posix_write(1, &buf[i], 1);
+        (void)write_buf(&buf[i], 1);
     }
 }
 
@@ -42,52 +69,222 @@ static void write_hex_byte(uint8_t b)
     static const char table[] = "0123456789ABCDEF";
     hex[0] = table[(b >> 4) & 0xF];
     hex[1] = table[b & 0xF];
-    posix_write(1, hex, 2);
+    (void)write_buf(hex, 2);
 }
 
-int main(void)
+static int str_eq(const char* a, const char* b)
 {
-    posix_write_str("[USER] init: POSIX smoke test start\n");
+    if (!a || !b) {
+        return 0;
+    }
+    while (*a && *b) {
+        if (*a != *b) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
 
-    posix_write_str("[USER] getpid=");
+static int parse_line(char* line, char** argv, int max_args)
+{
+    int argc = 0;
+    int in_word = 0;
+
+    for (int i = 0; line[i] != '\0' && argc < max_args; i++) {
+        char c = line[i];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+            if (in_word) {
+                line[i] = '\0';
+                in_word = 0;
+            }
+        } else if (!in_word) {
+            argv[argc++] = &line[i];
+            in_word = 1;
+        }
+    }
+
+    return argc;
+}
+
+static int read_line(char* out, int out_len)
+{
+    int pos = 0;
+    char ch = 0;
+
+    if (!out || out_len <= 1) {
+        return -1;
+    }
+
+    for (;;) {
+        long n = posix_read(FD_STDIN, &ch, 1);
+        if (n < 0) {
+            return -1;
+        }
+        if (n == 0) {
+            continue;
+        }
+
+        if (ch == '\r' || ch == '\n') {
+            out[pos] = '\0';
+            return pos;
+        }
+
+        if (ch == 0x7f || ch == 0x08) {
+            if (pos > 0) {
+                pos--;
+            }
+            continue;
+        }
+
+        if (pos + 1 < out_len) {
+            out[pos++] = ch;
+        }
+    }
+}
+
+static void cmd_help(void)
+{
+    (void)write_str("Commands:\n");
+    (void)write_str("  help          - show this help\n");
+    (void)write_str("  pid           - show current pid\n");
+    (void)write_str("  uname         - show system information\n");
+    (void)write_str("  cat <path>    - print file content\n");
+    (void)write_str("  smoke         - run basic POSIX smoke check\n");
+    (void)write_str("  exit          - terminate init process\n");
+}
+
+static void run_smoke(void)
+{
+    (void)write_str("[USER] init: POSIX smoke test start\n");
+    (void)write_str("[USER] getpid=");
     {
         long pid = posix_getpid();
         if (pid < 0) {
-            posix_write_str("ERR\n");
+            (void)write_str("ERR\n");
         } else {
             write_u64((uint64_t)pid);
-            posix_write_str("\n");
+            (void)write_str("\n");
         }
     }
 
     {
         long fd = posix_open("/bin/init", VFS_OPEN_READ);
         if (fd < 0) {
-            posix_write_str("[USER] open('/bin/init') failed\n");
+            (void)write_str("[USER] open('/bin/init') failed\n");
         } else {
             uint8_t hdr[4] = {0, 0, 0, 0};
             long n = posix_read((int)fd, hdr, sizeof(hdr));
-            posix_write_str("[USER] read('/bin/init') bytes=");
+            (void)write_str("[USER] read('/bin/init') bytes=");
             if (n < 0) {
-                posix_write_str("ERR\n");
+                (void)write_str("ERR\n");
             } else {
                 write_u64((uint64_t)n);
-                posix_write_str(" hdr=");
+                (void)write_str(" hdr=");
                 for (long i = 0; i < n; i++) {
                     write_hex_byte(hdr[i]);
                 }
-                posix_write_str("\n");
+                (void)write_str("\n");
             }
             if (posix_close((int)fd) < 0) {
-                posix_write_str("[USER] close failed\n");
+                (void)write_str("[USER] close failed\n");
             } else {
-                posix_write_str("[USER] close ok\n");
+                (void)write_str("[USER] close ok\n");
             }
         }
     }
+    (void)write_str("[USER] init: POSIX smoke test done\n");
+}
 
-    posix_write_str("[USER] init: POSIX smoke test done\n");
-    (void)posix_exit(0);
+static void cmd_uname(void)
+{
+    utsname_t u;
+    long ret = posix_uname(&u);
+    if (ret < 0) {
+        (void)write_str("uname: failed\n");
+        return;
+    }
+    (void)write_str(u.sysname);
+    (void)write_str(" ");
+    (void)write_str(u.release);
+    (void)write_str(" ");
+    (void)write_str(u.machine);
+    (void)write_str("\n");
+}
+
+static void cmd_cat(const char* path)
+{
+    char buf[64];
+    if (!path || path[0] == '\0') {
+        (void)write_str("cat: path required\n");
+        return;
+    }
+    long fd = posix_open(path, VFS_OPEN_READ);
+    if (fd < 0) {
+        (void)write_str("cat: open failed\n");
+        return;
+    }
+    for (;;) {
+        long n = posix_read((int)fd, buf, sizeof(buf));
+        if (n <= 0) {
+            break;
+        }
+        (void)posix_write(FD_STDOUT, buf, (uint64_t)n);
+    }
+    (void)posix_close((int)fd);
+}
+
+int main(void)
+{
+    char line[SH_LINE_MAX];
+    char* argv[SH_ARG_MAX];
+
+    (void)write_str("Rodnix userspace init\n");
+    run_smoke();
+    (void)write_str("Type 'help' for commands.\n");
+
+    for (;;) {
+        (void)write_str("sh> ");
+        int len = read_line(line, (int)sizeof(line));
+        if (len < 0) {
+            (void)write_str("read error\n");
+            continue;
+        }
+        if (len == 0) {
+            continue;
+        }
+
+        int argc = parse_line(line, argv, SH_ARG_MAX);
+        if (argc <= 0) {
+            continue;
+        }
+
+        if (str_eq(argv[0], "help")) {
+            cmd_help();
+        } else if (str_eq(argv[0], "pid")) {
+            long pid = posix_getpid();
+            (void)write_str("pid=");
+            if (pid < 0) {
+                (void)write_str("ERR\n");
+            } else {
+                write_u64((uint64_t)pid);
+                (void)write_str("\n");
+            }
+        } else if (str_eq(argv[0], "uname")) {
+            cmd_uname();
+        } else if (str_eq(argv[0], "cat")) {
+            cmd_cat((argc >= 2) ? argv[1] : 0);
+        } else if (str_eq(argv[0], "smoke")) {
+            run_smoke();
+        } else if (str_eq(argv[0], "exit")) {
+            (void)write_str("init exiting\n");
+            (void)posix_exit(0);
+        } else {
+            (void)write_str("unknown command\n");
+        }
+    }
+
     for (;;) {
         (void)rdnx_syscall0(SYS_NOP);
     }

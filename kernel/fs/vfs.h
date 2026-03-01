@@ -16,6 +16,7 @@ typedef enum {
 
 typedef struct vfs_inode {
     vfs_node_type_t type;
+    uint32_t flags;
     size_t size;
     size_t capacity;
     uint8_t* data;
@@ -50,6 +51,10 @@ enum {
     VFS_OPEN_WRITE  = 1 << 1,
     VFS_OPEN_CREATE = 1 << 2,
     VFS_OPEN_TRUNC  = 1 << 3
+};
+
+enum {
+    VFS_INODE_CONSOLE = 1u << 0
 };
 
 int vfs_init(void);

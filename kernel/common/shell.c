@@ -711,6 +711,12 @@ static int shell_cmd_run(int argc, char** argv)
                  parent_task->gid,
                  parent_task->euid,
                  parent_task->egid);
+    if (posix_bind_stdio_to_console(user_task) != RDNX_OK) {
+        task_destroy(user_task);
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_GENERIC;
+    }
     thread_t* thread = thread_create(user_task, shell_run_thread, args);
     if (!thread) {
         task_destroy(user_task);

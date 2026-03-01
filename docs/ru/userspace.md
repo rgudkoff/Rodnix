@@ -23,10 +23,16 @@
 - Добавлена базовая ring3‑инфраструктура (GDT user‑сегменты + TSS RSP0).
 - `shell run` поднимает отдельный user task и будит shell после `posix_exit`.
 - Initrd поддерживается как источник файлов (`/bin/init`).
+- По умолчанию bootstrap идёт через userspace `init` (не через kernel shell).
+- В `userland/bootstrap/bootstrap.c` есть минимальный userspace shell (`sh>`):
+  - `help`, `pid`, `uname`, `cat <path>`, `smoke`, `exit`.
+  - stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`),
+    привязанные к VFS-узлу `/dev/console`.
 
 ## Проверенный smoke‑test
 
-- Команда: `run /bin/init`.
+- По умолчанию: автозапуск `/bin/init` при boot.
+- Альтернатива: `run /bin/init` из kernel shell (debug mode).
 - Проверенные syscall-и в userland:
   - `getpid`
   - `open/read/close` (чтение ELF заголовка `/bin/init`)

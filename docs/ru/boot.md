@@ -38,9 +38,11 @@
    - `hid_kbd_init()` — клавиатура и IRQ маршрутизация.
    - `vfs_init()` — RAMFS/VFS.
    - Разрешение прерываний (`sti`) и старт таймера.
-   - `shell_init()` — подготовка shell.
-   - Создание потоков: `shell_thread`, `idle_thread`.
-   - `scheduler_add_thread()` для shell и idle.
+   - Выбор bootstrap-режима:
+     - по умолчанию запуск userspace `init` (`/bin/init`);
+     - `rdnx.shell=1` — принудительный kernel shell (debug mode).
+   - Создание потоков: `init_thread` (или `kernel_shell_thread`) и `idle_thread`.
+   - `scheduler_add_thread()` для bootstrap-потока и `idle`.
    - `scheduler_start()` — запуск планировщика и первый switch.
 
 3. IRQ 32 (таймер)
@@ -148,6 +150,9 @@ Ring-событие (`debug_event`):
 
 ### Boot-аргументы
 
+Полный актуальный список и примеры вынесены в отдельный документ:
+- `boot_args.md`
+
 По умолчанию человекочитаемый boot-log включен.
 
 Включить явно:
@@ -160,6 +165,13 @@ Ring-событие (`debug_event`):
 - `bootlog=quiet`
 
 Компактные события `boot:<phase>:<event>` в ring пишутся всегда.
+
+Режим bootstrap (как в XNU-подходе: shell не часть ядра по умолчанию):
+- `rdnx.init=/bin/init` — путь к первому userspace процессу (по умолчанию `/bin/init`).
+- `rdnx.shell=1` — запуск встроенного kernel shell вместо userspace init.
+
+Если запуск `rdnx.init` не удался, ядро включает fallback:
+- `[DEGRADED] userland init unavailable, starting kernel shell fallback`.
 
 ## Runtime Trace V2 (scheduler/memory/fault)
 

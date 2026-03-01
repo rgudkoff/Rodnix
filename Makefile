@@ -83,9 +83,14 @@ LIMINE := limine
 #   make run QEMU_ACCEL="-accel hvf"
 QEMU_ACCEL ?=
 
+# QEMU serial backend:
+# - По умолчанию используем mon:stdio для интерактивного ввода/вывода в терминале.
+# - Для старого поведения с логом в файл: QEMU_SERIAL="file:boot.log".
+QEMU_SERIAL ?= mon:stdio
+#
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
-QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial file:boot.log -no-reboot -no-shutdown \
+QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
                    -machine pc -cpu qemu64,+apic,+x2apic
 QEMU_DEBUG_FLAGS = -s -S
 
@@ -185,7 +190,7 @@ iso: $(KERNEL_BIN) initrd
 # ===== Run / Debug =====
 run: iso
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
-		echo "[*] Running QEMU $(QEMU_ACCEL), logging to boot.log"; \
+		echo "[*] Running QEMU $(QEMU_ACCEL), serial=$(QEMU_SERIAL), tee -> boot.log"; \
 		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
 		  qemu-system-x86_64 $(QEMU_FLAGS) ) 2>&1 | tee boot.log; \
 	else \

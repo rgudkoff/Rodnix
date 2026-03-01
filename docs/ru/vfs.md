@@ -23,6 +23,8 @@
 - Есть `vfs_mount_initrd_root()` для замены корня на initrd‑RAMFS.
 - Весь доступ сейчас идёт через RAMFS (in-memory).
  - Initrd подключается из boot‑модуля (Multiboot2 module) и импортируется в RAMFS.
+- Есть встроенный VFS-узел `/dev/console` (special inode), через который идут
+  консольные `read/write` для userland.
 
 ## Инварианты
 

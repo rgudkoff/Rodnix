@@ -9,13 +9,50 @@
 #include "../../include/utsname.h"
 #include "../../include/common.h"
 #include "../arch/x86_64/config.h"
-#include "../input/input.h"
 #include "../common/scheduler.h"
-#include "../core/task.h"
 #include <stddef.h>
 
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];
 #define POSIX_PATH_MAX 256
+
+static int posix_bind_fd_to_console(task_t* task, int fd, int open_flags)
+{
+    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
+        return RDNX_E_INVALID;
+    }
+
+    if (task->fd_table[fd]) {
+        vfs_file_t* old = (vfs_file_t*)task->fd_table[fd];
+        vfs_close(old);
+        kfree(old);
+        task->fd_table[fd] = NULL;
+    }
+
+    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    if (!file) {
+        return RDNX_E_NOMEM;
+    }
+    if (vfs_open("/dev/console", open_flags, file) != RDNX_OK) {
+        kfree(file);
+        return RDNX_E_NOTFOUND;
+    }
+
+    task->fd_table[fd] = file;
+    return RDNX_OK;
+}
+
+int posix_bind_stdio_to_console(task_t* task)
+{
+    int ret = posix_bind_fd_to_console(task, 0, VFS_OPEN_READ | VFS_OPEN_WRITE);
+    if (ret != RDNX_OK) {
+        return ret;
+    }
+    ret = posix_bind_fd_to_console(task, 1, VFS_OPEN_WRITE);
+    if (ret != RDNX_OK) {
+        return ret;
+    }
+    return posix_bind_fd_to_console(task, 2, VFS_OPEN_WRITE);
+}
 
 static bool posix_is_user_range(const void* ptr, size_t len)
 {
@@ -340,20 +377,6 @@ static uint64_t posix_read(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!file) {
-        int fd = (int)a1;
-        if (fd == 0) {
-            /* Minimal stdin support: block until 1 char available */
-            char* out = (char*)buf;
-            int c;
-            do {
-                c = input_read_char();
-                if (c == -1) {
-                    scheduler_ast_check();
-                }
-            } while (c == -1);
-            out[0] = (char)c;
-            return 1;
-        }
         return (uint64_t)RDNX_E_INVALID;
     }
     int ret = vfs_read(file, buf, len);
@@ -401,15 +424,6 @@ static uint64_t posix_write(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!file) {
-        /* Minimal stdout/stderr support */
-        int fd = (int)a1;
-        if (fd == 1 || fd == 2) {
-            const char* s = (const char*)buf;
-            for (size_t i = 0; i < len; i++) {
-                kputc(s[i]);
-            }
-            return (uint64_t)len;
-        }
         return (uint64_t)RDNX_E_INVALID;
     }
     int ret = vfs_write(file, buf, len);
