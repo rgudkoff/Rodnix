@@ -22,93 +22,19 @@ static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
 static task_t* all_tasks_head = NULL;
 RB_HEAD(task_id_index, task);
+static int task_id_cmp(task_t* lhs, task_t* rhs)
+{
+    if (lhs->task_id < rhs->task_id) {
+        return -1;
+    }
+    if (lhs->task_id > rhs->task_id) {
+        return 1;
+    }
+    return 0;
+}
+RB_PROTOTYPE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
+RB_GENERATE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
 static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
-
-static void task_id_index_insert(task_t* task)
-{
-    if (!task) {
-        return;
-    }
-
-    task_t* parent = NULL;
-    task_t* cur = RB_ROOT(&all_tasks_by_id);
-    while (cur) {
-        parent = cur;
-        if (task->task_id < cur->task_id) {
-            cur = RB_LEFT(cur, task_id_link);
-        } else if (task->task_id > cur->task_id) {
-            cur = RB_RIGHT(cur, task_id_link);
-        } else {
-            /* task_id is unique by construction; ignore duplicate insert. */
-            return;
-        }
-    }
-
-    RB_PARENT(task, task_id_link) = parent;
-    RB_LEFT(task, task_id_link) = NULL;
-    RB_RIGHT(task, task_id_link) = NULL;
-    if (!parent) {
-        RB_ROOT(&all_tasks_by_id) = task;
-    } else if (task->task_id < parent->task_id) {
-        RB_LEFT(parent, task_id_link) = task;
-    } else {
-        RB_RIGHT(parent, task_id_link) = task;
-    }
-}
-
-static void task_id_index_transplant(task_t* u, task_t* v)
-{
-    task_t* p = RB_PARENT(u, task_id_link);
-    if (!p) {
-        RB_ROOT(&all_tasks_by_id) = v;
-    } else if (u == RB_LEFT(p, task_id_link)) {
-        RB_LEFT(p, task_id_link) = v;
-    } else {
-        RB_RIGHT(p, task_id_link) = v;
-    }
-    if (v) {
-        RB_PARENT(v, task_id_link) = p;
-    }
-}
-
-static task_t* task_id_index_min(task_t* n)
-{
-    while (n && RB_LEFT(n, task_id_link)) {
-        n = RB_LEFT(n, task_id_link);
-    }
-    return n;
-}
-
-static void task_id_index_remove(task_t* task)
-{
-    if (!task) {
-        return;
-    }
-
-    if (!RB_LEFT(task, task_id_link)) {
-        task_id_index_transplant(task, RB_RIGHT(task, task_id_link));
-    } else if (!RB_RIGHT(task, task_id_link)) {
-        task_id_index_transplant(task, RB_LEFT(task, task_id_link));
-    } else {
-        task_t* succ = task_id_index_min(RB_RIGHT(task, task_id_link));
-        if (RB_PARENT(succ, task_id_link) != task) {
-            task_id_index_transplant(succ, RB_RIGHT(succ, task_id_link));
-            RB_RIGHT(succ, task_id_link) = RB_RIGHT(task, task_id_link);
-            if (RB_RIGHT(succ, task_id_link)) {
-                RB_PARENT(RB_RIGHT(succ, task_id_link), task_id_link) = succ;
-            }
-        }
-        task_id_index_transplant(task, succ);
-        RB_LEFT(succ, task_id_link) = RB_LEFT(task, task_id_link);
-        if (RB_LEFT(succ, task_id_link)) {
-            RB_PARENT(RB_LEFT(succ, task_id_link), task_id_link) = succ;
-        }
-    }
-
-    RB_PARENT(task, task_id_link) = NULL;
-    RB_LEFT(task, task_id_link) = NULL;
-    RB_RIGHT(task, task_id_link) = NULL;
-}
 
 #define STACK_CACHE_SIZE 32
 static void* stack_cache[STACK_CACHE_SIZE] = {0};
@@ -252,9 +178,10 @@ task_t* task_create(void)
     RB_PARENT(task, task_id_link) = NULL;
     RB_LEFT(task, task_id_link) = NULL;
     RB_RIGHT(task, task_id_link) = NULL;
+    RB_COLOR(task, task_id_link) = RB_BLACK;
     task->next_all = all_tasks_head;
     all_tasks_head = task;
-    task_id_index_insert(task);
+    (void)RB_INSERT(task_id_index, &all_tasks_by_id, task);
     task->arch_specific = NULL;
     return task;
 }
@@ -274,7 +201,7 @@ void task_destroy(task_t* task)
             }
         }
     }
-    task_id_index_remove(task);
+    (void)RB_REMOVE(task_id_index, &all_tasks_by_id, task);
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         vfs_file_t* file = (vfs_file_t*)task->fd_table[i];
         if (file) {
@@ -291,17 +218,9 @@ task_t* task_find_by_id(uint64_t task_id)
     if (task_id == 0) {
         return NULL;
     }
-    task_t* cur = RB_ROOT(&all_tasks_by_id);
-    while (cur) {
-        if (task_id < cur->task_id) {
-            cur = RB_LEFT(cur, task_id_link);
-        } else if (task_id > cur->task_id) {
-            cur = RB_RIGHT(cur, task_id_link);
-        } else {
-            return cur;
-        }
-    }
-    return NULL;
+    task_t key = {0};
+    key.task_id = task_id;
+    return RB_FIND(task_id_index, &all_tasks_by_id, &key);
 }
 
 void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid)
