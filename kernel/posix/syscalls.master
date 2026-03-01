@@ -1,0 +1,28 @@
+# Rodnix POSIX syscall master table
+# Format:
+#   <number> <name>
+#
+# Generated artifacts:
+#   - kernel/posix/posix_sysnums.h
+#   - userland/include/posix_sysnums.h
+#   - kernel/posix/posix_sysent.inc
+
+0 nosys
+1 getpid
+2 getuid
+3 geteuid
+4 getgid
+5 getegid
+6 setuid
+7 seteuid
+8 setgid
+9 setegid
+10 open
+11 close
+12 read
+13 write
+14 uname
+15 exit
+16 exec
+17 spawn
+18 waitpid

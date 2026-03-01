@@ -76,27 +76,26 @@ void scheduler_reset_timeslice(const thread_t* thread)
     }
 }
 
+bool ready_thread_is_queued(const thread_t* thread)
+{
+    return thread && thread->sched_link.tqe_prev != NULL;
+}
+
 void ready_enqueue(thread_t* thread)
 {
     if (!thread) {
         return;
     }
 
-    if (thread->sched_next) {
+    if (ready_thread_is_queued(thread)) {
         DEBUG_WARN("ready_enqueue: thread %llu already queued", (unsigned long long)thread->thread_id);
+        return;
     }
-    thread->sched_next = NULL;
     int q = ready_queue_index_for_thread(thread);
     if (q < 0 || q >= READY_QUEUE_LEVELS) {
         q = READY_QUEUE_LEVELS - 1;
     }
-    if (!ready_tail[q]) {
-        ready_head[q] = thread;
-        ready_tail[q] = thread;
-    } else {
-        ready_tail[q]->sched_next = thread;
-        ready_tail[q] = thread;
-    }
+    TAILQ_INSERT_TAIL(&ready_queues[q], thread, sched_link);
     stats.ready_tasks++;
 }
 
@@ -112,7 +111,8 @@ thread_t* ready_dequeue(void)
 
     if (start == end) {
         int q = start;
-        thread_t* thread = ready_head[q];
+        struct ready_queue_head* queue = &ready_queues[q];
+        thread_t* thread = TAILQ_FIRST(queue);
         if (!thread) {
             return NULL;
         }
@@ -120,11 +120,7 @@ thread_t* ready_dequeue(void)
         if (thread->state != THREAD_STATE_READY) {
             DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
         }
-        ready_head[q] = thread->sched_next;
-        if (!ready_head[q]) {
-            ready_tail[q] = NULL;
-        }
-        thread->sched_next = NULL;
+        TAILQ_REMOVE(queue, thread, sched_link);
         if (stats.ready_tasks > 0) {
             stats.ready_tasks--;
         }
@@ -132,7 +128,8 @@ thread_t* ready_dequeue(void)
     }
 
     for (int q = start; q >= end; q--) {
-        thread_t* thread = ready_head[q];
+        struct ready_queue_head* queue = &ready_queues[q];
+        thread_t* thread = TAILQ_FIRST(queue);
         if (!thread) {
             continue;
         }
@@ -140,11 +137,7 @@ thread_t* ready_dequeue(void)
         if (thread->state != THREAD_STATE_READY) {
             DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
         }
-        ready_head[q] = thread->sched_next;
-        if (!ready_head[q]) {
-            ready_tail[q] = NULL;
-        }
-        thread->sched_next = NULL;
+        TAILQ_REMOVE(queue, thread, sched_link);
         if (stats.ready_tasks > 0) {
             stats.ready_tasks--;
         }

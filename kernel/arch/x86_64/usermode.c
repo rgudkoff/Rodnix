@@ -70,7 +70,7 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     return RDNX_OK;
 }
 
-void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
+void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0, uint64_t arg1)
 {
     tss_set_rsp0(rsp0);
     extern void kputs(const char* str);
@@ -91,6 +91,8 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
         "mov %%ax, %%es\n\t"
         "mov %%ax, %%fs\n\t"
         "mov %%ax, %%gs\n\t"
+        "mov %4, %%rdi\n\t"
+        "mov %5, %%rsi\n\t"
         "pushq %0\n\t"
         "pushq %1\n\t"
         "pushq $0x202\n\t"
@@ -101,7 +103,9 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
         : "r"(user_ds),
           "r"(user_stack),
           "r"(user_cs),
-          "r"(entry)
-        : "memory", "rax"
+          "r"(entry),
+          "r"(arg0),
+          "r"(arg1)
+        : "memory", "rax", "rdi", "rsi"
     );
 }

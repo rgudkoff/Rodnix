@@ -95,6 +95,9 @@ void scheduler_reap_dead_threads(void)
         if (owner && owner->thread_count > 0) {
             owner->thread_count--;
         }
+        if (owner && owner->main_thread == dead) {
+            owner->main_thread = NULL;
+        }
         if (dead->stack) {
             task_kernel_stack_retire(dead->stack, dead->stack_size);
             dead->stack = NULL;
@@ -105,8 +108,16 @@ void scheduler_reap_dead_threads(void)
         reap_stats.reaped++;
         if (owner && owner != task_get_current()) {
             if (owner->thread_count == 0) {
-                scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
-                task_destroy(owner);
+                /*
+                 * POSIX wait semantics: keep child zombie until parent reaps it.
+                 * Kernel/orphan tasks are reclaimed immediately.
+                 */
+                if (owner->parent_task_id == 0 || owner->waited) {
+                    scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
+                    task_destroy(owner);
+                } else {
+                    scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");
+                }
             } else {
                 scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_threads_remaining");
             }

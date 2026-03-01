@@ -15,6 +15,13 @@
 
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];
 #define POSIX_PATH_MAX 256
+#define POSIX_ARG_MAX 16
+
+typedef struct {
+    char* path;
+    int argc;
+    char* argv[POSIX_ARG_MAX + 1];
+} posix_spawn_args_t;
 
 static int posix_bind_fd_to_console(task_t* task, int fd, int open_flags)
 {
@@ -391,17 +398,82 @@ static uint64_t posix_exit(uint64_t a1,
                            uint64_t a5,
                            uint64_t a6)
 {
-    (void)a1;
     (void)a2;
     (void)a3;
     (void)a4;
     (void)a5;
     (void)a6;
+    task_t* task = task_get_current();
+    if (task) {
+        task->exit_code = (int32_t)a1;
+        task->exited = 1;
+    }
     thread_t* cur = thread_get_current();
     kprintf("[EXIT] thread %llu exiting\n",
             (unsigned long long)(cur ? cur->thread_id : 0));
     scheduler_exit_current();
     return 0;
+}
+
+static void posix_spawn_thread(void* arg)
+{
+    posix_spawn_args_t* sa = (posix_spawn_args_t*)arg;
+    char path_buf[POSIX_PATH_MAX];
+    path_buf[0] = '\0';
+    const char* argv_local[POSIX_ARG_MAX + 1];
+    int argc_local = 0;
+    for (int i = 0; i < POSIX_ARG_MAX + 1; i++) {
+        argv_local[i] = NULL;
+    }
+    if (sa && sa->path) {
+        strncpy(path_buf, sa->path, sizeof(path_buf) - 1);
+        path_buf[sizeof(path_buf) - 1] = '\0';
+    }
+    if (sa) {
+        argc_local = sa->argc;
+        if (argc_local < 0) {
+            argc_local = 0;
+        }
+        if (argc_local > POSIX_ARG_MAX) {
+            argc_local = POSIX_ARG_MAX;
+        }
+        for (int i = 0; i < argc_local; i++) {
+            argv_local[i] = sa->argv[i];
+        }
+        argv_local[argc_local] = NULL;
+    }
+    if (sa) {
+        if (sa->path) {
+            kfree(sa->path);
+        }
+    }
+    if (path_buf[0] == '\0') {
+        if (sa) {
+            for (int i = 0; i < argc_local; i++) {
+                if (sa->argv[i]) {
+                    kfree(sa->argv[i]);
+                }
+            }
+            kfree(sa);
+        }
+        scheduler_exit_current();
+        return;
+    }
+    int ret = loader_execve(path_buf, argc_local, argv_local);
+    if (sa) {
+        for (int i = 0; i < argc_local; i++) {
+            if (sa->argv[i]) {
+                kfree(sa->argv[i]);
+            }
+        }
+        kfree(sa);
+    }
+    task_t* task = task_get_current();
+    if (task) {
+        task->exit_code = (ret == RDNX_OK) ? 0 : 127;
+        task->exited = 1;
+    }
+    scheduler_exit_current();
 }
 
 static uint64_t posix_exec(uint64_t a1,
@@ -426,6 +498,209 @@ static uint64_t posix_exec(uint64_t a1,
 
     int ret = loader_exec(path_buf);
     return (uint64_t)ret;
+}
+
+static uint64_t posix_spawn(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    task_t* parent = task_get_current();
+    if (!parent) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    const char* user_path = (const char*)(uintptr_t)a1;
+    const char* const* user_argv = (const char* const*)(uintptr_t)a2;
+    char path_buf[POSIX_PATH_MAX];
+    int rc = posix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    if (rc != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    size_t len = strlen(path_buf);
+    if (len == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    while (len > 1 && path_buf[len - 1] == '/') {
+        path_buf[len - 1] = '\0';
+        len--;
+    }
+
+    task_t* child = task_create();
+    if (!child) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    child->state = TASK_STATE_READY;
+    child->parent_task_id = parent->task_id;
+    task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+
+    if (posix_bind_stdio_to_console(child) != RDNX_OK) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_GENERIC;
+    }
+
+    posix_spawn_args_t* sa = (posix_spawn_args_t*)kmalloc(sizeof(*sa));
+    if (!sa) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    memset(sa, 0, sizeof(*sa));
+    sa->path = (char*)kmalloc(len + 1);
+    if (!sa->path) {
+        kfree(sa);
+        task_destroy(child);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    memcpy(sa->path, path_buf, len + 1);
+
+    if (!user_argv) {
+        sa->argc = 1;
+        sa->argv[0] = (char*)kmalloc(len + 1);
+        if (!sa->argv[0]) {
+            kfree(sa->path);
+            kfree(sa);
+            task_destroy(child);
+            return (uint64_t)RDNX_E_NOMEM;
+        }
+        memcpy(sa->argv[0], path_buf, len + 1);
+        sa->argv[1] = NULL;
+    } else {
+        int argc = 0;
+        for (; argc < POSIX_ARG_MAX; argc++) {
+            const char* uptr = NULL;
+            const void* slot = (const void*)(uintptr_t)((uintptr_t)user_argv + (uintptr_t)argc * sizeof(uintptr_t));
+            if (!posix_is_user_range(slot, sizeof(uintptr_t))) {
+                rc = RDNX_E_INVALID;
+                break;
+            }
+            uptr = user_argv[argc];
+            if (!uptr) {
+                break;
+            }
+            char tmp[POSIX_PATH_MAX];
+            rc = posix_copy_user_cstr(tmp, sizeof(tmp), uptr);
+            if (rc != RDNX_OK) {
+                break;
+            }
+            size_t alen = strlen(tmp);
+            sa->argv[argc] = (char*)kmalloc(alen + 1);
+            if (!sa->argv[argc]) {
+                rc = RDNX_E_NOMEM;
+                break;
+            }
+            memcpy(sa->argv[argc], tmp, alen + 1);
+        }
+        if (rc != RDNX_OK) {
+            for (int i = 0; i < POSIX_ARG_MAX; i++) {
+                if (sa->argv[i]) {
+                    kfree(sa->argv[i]);
+                }
+            }
+            kfree(sa->path);
+            kfree(sa);
+            task_destroy(child);
+            return (uint64_t)rc;
+        }
+        if (argc == 0) {
+            sa->argv[0] = (char*)kmalloc(len + 1);
+            if (!sa->argv[0]) {
+                kfree(sa->path);
+                kfree(sa);
+                task_destroy(child);
+                return (uint64_t)RDNX_E_NOMEM;
+            }
+            memcpy(sa->argv[0], path_buf, len + 1);
+            argc = 1;
+        }
+        sa->argc = argc;
+        sa->argv[argc] = NULL;
+    }
+
+    thread_t* th = thread_create(child, posix_spawn_thread, sa);
+    if (!th) {
+        for (int i = 0; i < POSIX_ARG_MAX; i++) {
+            if (sa->argv[i]) {
+                kfree(sa->argv[i]);
+            }
+        }
+        kfree(sa->path);
+        kfree(sa);
+        task_destroy(child);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    th->priority = 200;
+    scheduler_add_thread(th);
+    return (uint64_t)child->task_id;
+}
+
+static uint64_t posix_waitpid(uint64_t a1,
+                              uint64_t a2,
+                              uint64_t a3,
+                              uint64_t a4,
+                              uint64_t a5,
+                              uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    task_t* self = task_get_current();
+    thread_t* self_thread = thread_get_current();
+    if (!self || !self_thread || a1 == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int* user_status = (int*)(uintptr_t)a2;
+    if (user_status && !posix_is_user_range(user_status, sizeof(int))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint64_t pid = a1;
+    task_t* child = task_find_by_id(pid);
+    if (!child) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+    if (child->parent_task_id != self->task_id) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+
+    for (;;) {
+        bool exited = child->exited ||
+                      (child->thread_count == 0) ||
+                      (child->state == TASK_STATE_ZOMBIE) ||
+                      (child->state == TASK_STATE_DEAD);
+        if (exited) {
+            if (user_status) {
+                *user_status = child->exit_code;
+            }
+            child->waited = 1;
+            if (child->thread_count == 0) {
+                child->state = TASK_STATE_DEAD;
+                task_destroy(child);
+            }
+            return (uint64_t)pid;
+        }
+
+        thread_t* child_thread = child->main_thread;
+        if (!child_thread) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        if (child_thread->joiner && child_thread->joiner != self_thread) {
+            return (uint64_t)RDNX_E_BUSY;
+        }
+        child_thread->joiner = self_thread;
+        scheduler_block();
+        __asm__ volatile ("int $32");
+    }
 }
 
 static uint64_t posix_write(uint64_t a1,
@@ -486,23 +761,9 @@ void posix_syscall_init(void)
     for (uint32_t i = 0; i < POSIX_SYSCALL_MAX; i++) {
         posix_table[i] = NULL;
     }
-    posix_syscall_register(POSIX_SYS_NOSYS, posix_nosys);
-    posix_syscall_register(POSIX_SYS_GETPID, posix_getpid);
-    posix_syscall_register(POSIX_SYS_GETUID, posix_getuid);
-    posix_syscall_register(POSIX_SYS_GETEUID, posix_geteuid);
-    posix_syscall_register(POSIX_SYS_GETGID, posix_getgid);
-    posix_syscall_register(POSIX_SYS_GETEGID, posix_getegid);
-    posix_syscall_register(POSIX_SYS_SETUID, posix_setuid);
-    posix_syscall_register(POSIX_SYS_SETEUID, posix_seteuid);
-    posix_syscall_register(POSIX_SYS_SETGID, posix_setgid);
-    posix_syscall_register(POSIX_SYS_SETEGID, posix_setegid);
-    posix_syscall_register(POSIX_SYS_OPEN, posix_open);
-    posix_syscall_register(POSIX_SYS_CLOSE, posix_close);
-    posix_syscall_register(POSIX_SYS_READ, posix_read);
-    posix_syscall_register(POSIX_SYS_WRITE, posix_write);
-    posix_syscall_register(POSIX_SYS_UNAME, posix_uname);
-    posix_syscall_register(POSIX_SYS_EXIT, posix_exit);
-    posix_syscall_register(POSIX_SYS_EXEC, posix_exec);
+#define POSIX_REGISTER(num, fn) posix_syscall_register((num), (fn))
+#include "posix_sysent.inc"
+#undef POSIX_REGISTER
 }
 
 int posix_syscall_register(uint32_t num, posix_syscall_fn_t fn)

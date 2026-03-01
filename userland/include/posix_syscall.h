@@ -8,26 +8,7 @@
 
 #include <stdint.h>
 #include "syscall.h"
-
-enum {
-    POSIX_SYS_NOSYS = 0,
-    POSIX_SYS_GETPID = 1,
-    POSIX_SYS_GETUID = 2,
-    POSIX_SYS_GETEUID = 3,
-    POSIX_SYS_GETGID = 4,
-    POSIX_SYS_GETEGID = 5,
-    POSIX_SYS_SETUID = 6,
-    POSIX_SYS_SETEUID = 7,
-    POSIX_SYS_SETGID = 8,
-    POSIX_SYS_SETEGID = 9,
-    POSIX_SYS_OPEN = 10,
-    POSIX_SYS_CLOSE = 11,
-    POSIX_SYS_READ = 12,
-    POSIX_SYS_WRITE = 13,
-    POSIX_SYS_UNAME = 14,
-    POSIX_SYS_EXIT = 15,
-    POSIX_SYS_EXEC = 16,
-};
+#include "posix_sysnums.h"
 
 static inline long posix_getpid(void)
 {
@@ -67,6 +48,16 @@ static inline long posix_exit(int code)
 static inline long posix_exec(const char* path)
 {
     return rdnx_syscall1(POSIX_SYS_EXEC, (long)(uintptr_t)path);
+}
+
+static inline long posix_spawn(const char* path, const char* const argv[])
+{
+    return rdnx_syscall6(POSIX_SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv, 0, 0, 0, 0);
+}
+
+static inline long posix_waitpid(long pid, int* status)
+{
+    return rdnx_syscall6(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status, 0, 0, 0, 0);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

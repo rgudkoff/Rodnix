@@ -14,8 +14,7 @@ uint32_t ticks_per_slice = 1;
 volatile bool resched_pending = false;
 uint64_t sched_ticks = 0;
 
-thread_t* ready_head[READY_QUEUE_LEVELS] = {0};
-thread_t* ready_tail[READY_QUEUE_LEVELS] = {0};
+struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 scheduler_reap_stats_t reap_stats = {0};
 
@@ -109,8 +108,7 @@ int scheduler_init(void)
     current_policy = SCHED_POLICY_PRIORITY;
     scheduler_running = false;
     for (int i = 0; i < READY_QUEUE_LEVELS; i++) {
-        ready_head[i] = NULL;
-        ready_tail[i] = NULL;
+        TAILQ_INIT(&ready_queues[i]);
     }
     ticks_per_slice = 1;
     ticks_until_preempt = ticks_per_slice;

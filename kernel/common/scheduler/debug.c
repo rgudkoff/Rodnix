@@ -31,10 +31,12 @@ void scheduler_debug_dump(void)
 
     for (int q = READY_QUEUE_LEVELS - 1; q >= 0; q--) {
         uint32_t count = 0;
-        thread_t* it = ready_head[q];
-        while (it && count < 1024) {
+        thread_t* it = NULL;
+        TAILQ_FOREACH(it, &ready_queues[q], sched_link) {
             count++;
-            it = it->sched_next;
+            if (count >= 1024) {
+                break;
+            }
         }
         kprintf("[SCHED] q%d count=%u\n", q, count);
     }

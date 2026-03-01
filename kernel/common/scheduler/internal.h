@@ -3,6 +3,7 @@
 
 #include "../scheduler.h"
 #include "../../arch/x86_64/interrupt_frame.h"
+#include "../../../include/bsd/sys/queue.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -31,8 +32,8 @@ extern uint32_t ticks_per_slice;
 extern volatile bool resched_pending;
 extern uint64_t sched_ticks;
 
-extern thread_t* ready_head[READY_QUEUE_LEVELS];
-extern thread_t* ready_tail[READY_QUEUE_LEVELS];
+TAILQ_HEAD(ready_queue_head, thread);
+extern struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 extern scheduler_reap_stats_t reap_stats;
 
@@ -42,6 +43,7 @@ void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* 
 void ready_enqueue(thread_t* thread);
 thread_t* ready_dequeue(void);
 int ready_queue_index_for_thread(const thread_t* thread);
+bool ready_thread_is_queued(const thread_t* thread);
 
 int clamp_dyn_priority(int value, int base);
 int thread_effective_priority(const thread_t* thread);

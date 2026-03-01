@@ -17,8 +17,9 @@
 #include "../../include/common.h"
 
 #define USER_STACK_TOP 0x0000000080000000ULL
-#define USER_STACK_PAGES 4
 #define USER_PAGE_SIZE X86_64_PAGE_SIZE_4KB
+#define LOADER_ARG_MAX 16
+#define LOADER_ARG_STR_MAX 128
 
 static inline uint64_t align_down(uint64_t v, uint64_t align)
 {
@@ -140,15 +141,15 @@ static int loader_map_segment(uint64_t pml4_phys,
     return RDNX_OK;
 }
 
-static int loader_map_stack(uint64_t pml4_phys, uint64_t* out_stack_top)
+static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
 {
-    if (!out_stack_top) {
+    if (!out_img) {
         return RDNX_E_INVALID;
     }
 
-    uint64_t stack_top = USER_STACK_TOP;
-    for (uint32_t i = 0; i < USER_STACK_PAGES; i++) {
-        uint64_t va = USER_STACK_TOP - (uint64_t)(i + 1) * USER_PAGE_SIZE;
+    out_img->stack_bottom = USER_STACK_TOP - (uint64_t)LOADER_USER_STACK_PAGES * USER_PAGE_SIZE;
+    for (uint32_t i = 0; i < LOADER_USER_STACK_PAGES; i++) {
+        uint64_t va = out_img->stack_bottom + (uint64_t)i * USER_PAGE_SIZE;
         uint64_t phys = pmm_alloc_page_in_zone(PMM_ZONE_NORMAL);
         if (!phys) {
             return RDNX_E_NOMEM;
@@ -158,9 +159,102 @@ static int loader_map_stack(uint64_t pml4_phys, uint64_t* out_stack_top)
             return RDNX_E_GENERIC;
         }
         memset(X86_64_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);
+        out_img->stack_phys[i] = phys;
     }
 
-    *out_stack_top = stack_top - 16;
+    out_img->user_stack = USER_STACK_TOP - 16;
+    return RDNX_OK;
+}
+
+static int loader_stack_write(const loader_image_t* img, uint64_t user_va, const void* src, size_t len)
+{
+    if (!img || !src || len == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint64_t stack_top = USER_STACK_TOP;
+    if (user_va < img->stack_bottom || user_va + len > stack_top) {
+        return RDNX_E_INVALID;
+    }
+
+    const uint8_t* in = (const uint8_t*)src;
+    uint64_t cur = user_va;
+    size_t rem = len;
+    while (rem > 0) {
+        uint64_t page_off = cur - img->stack_bottom;
+        uint32_t page_idx = (uint32_t)(page_off / USER_PAGE_SIZE);
+        uint32_t in_page = (uint32_t)(page_off % USER_PAGE_SIZE);
+        if (page_idx >= LOADER_USER_STACK_PAGES) {
+            return RDNX_E_INVALID;
+        }
+        size_t chunk = USER_PAGE_SIZE - in_page;
+        if (chunk > rem) {
+            chunk = rem;
+        }
+        uint8_t* dst = (uint8_t*)X86_64_PHYS_TO_VIRT(img->stack_phys[page_idx]) + in_page;
+        memcpy(dst, in, chunk);
+        cur += chunk;
+        in += chunk;
+        rem -= chunk;
+    }
+
+    return RDNX_OK;
+}
+
+static int loader_prepare_user_argv(loader_image_t* img,
+                                    int argc,
+                                    const char* const argv[],
+                                    uint64_t* out_argv_ptr)
+{
+    if (!img || !out_argv_ptr) {
+        return RDNX_E_INVALID;
+    }
+    *out_argv_ptr = 0;
+    if (argc <= 0 || !argv) {
+        return RDNX_OK;
+    }
+    if (argc > LOADER_ARG_MAX) {
+        argc = LOADER_ARG_MAX;
+    }
+
+    uint64_t sp = img->user_stack;
+    uint64_t argv_user[LOADER_ARG_MAX];
+    for (int i = argc - 1; i >= 0; i--) {
+        const char* s = argv[i] ? argv[i] : "";
+        size_t slen = 0;
+        while (s[slen] && slen < (LOADER_ARG_STR_MAX - 1)) {
+            slen++;
+        }
+        sp -= (uint64_t)(slen + 1);
+        if (sp < img->stack_bottom) {
+            return RDNX_E_NOMEM;
+        }
+        int wr = loader_stack_write(img, sp, s, slen + 1);
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        argv_user[i] = sp;
+    }
+
+    sp &= ~0x7ULL;
+    sp -= (uint64_t)(argc + 1) * sizeof(uint64_t);
+    if (sp < img->stack_bottom) {
+        return RDNX_E_NOMEM;
+    }
+    for (int i = 0; i < argc; i++) {
+        int wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &argv_user[i], sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+    }
+    uint64_t null_ptr = 0;
+    int wr = loader_stack_write(img, sp + (uint64_t)argc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+    if (wr != RDNX_OK) {
+        return wr;
+    }
+
+    img->user_stack = sp & ~0xFULL;
+    *out_argv_ptr = sp;
     return RDNX_OK;
 }
 
@@ -201,15 +295,18 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         }
     }
 
-    uint64_t user_stack = 0;
-    int ret = loader_map_stack(pml4_phys, &user_stack);
+    out->pml4_phys = pml4_phys;
+    out->entry = eh->e_entry;
+    out->user_stack = 0;
+    out->stack_bottom = 0;
+    for (uint32_t i = 0; i < LOADER_USER_STACK_PAGES; i++) {
+        out->stack_phys[i] = 0;
+    }
+
+    int ret = loader_map_stack(pml4_phys, out);
     if (ret != RDNX_OK) {
         return ret;
     }
-
-    out->pml4_phys = pml4_phys;
-    out->entry = eh->e_entry;
-    out->user_stack = user_stack;
     return RDNX_OK;
 }
 
@@ -243,11 +340,16 @@ int loader_enter_user_stub(void)
         kputs("[LOADER] rsp0 missing\n");
         return RDNX_E_INVALID;
     }
-    usermode_enter(entry, user_stack, rsp0);
+    usermode_enter(entry, user_stack, rsp0, 0, 0);
     return 0;
 }
 
 int loader_exec(const char* path)
+{
+    return loader_execve(path, 0, NULL);
+}
+
+int loader_execve(const char* path, int argc, const char* const argv[])
 {
     if (!path) {
         return RDNX_E_INVALID;
@@ -277,11 +379,21 @@ int loader_exec(const char* path)
         return RDNX_E_INVALID;
     }
 
+    uint64_t argv_ptr = 0;
+    ret = loader_prepare_user_argv(&img, argc, argv, &argv_ptr);
+    if (ret != RDNX_OK) {
+        return ret;
+    }
+
     usermode_set_pml4(img.pml4_phys);
     if (cur && cur->task) {
         cur->task->address_space = (void*)(uintptr_t)img.pml4_phys;
     }
     kputs("[LOADER] entering userland\n");
-    usermode_enter((void*)(uintptr_t)img.entry, (void*)(uintptr_t)img.user_stack, rsp0);
+    usermode_enter((void*)(uintptr_t)img.entry,
+                   (void*)(uintptr_t)img.user_stack,
+                   rsp0,
+                   (uint64_t)(argc > 0 ? argc : 0),
+                   argv_ptr);
     return RDNX_OK;
 }

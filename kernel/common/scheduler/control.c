@@ -120,7 +120,7 @@ void scheduler_wake(thread_t* thread)
         ready_enqueue(thread);
         return;
     }
-    if (!thread->sched_next && thread != current_thread) {
+    if (!ready_thread_is_queued(thread) && thread != current_thread) {
         ready_enqueue(thread);
     }
 }

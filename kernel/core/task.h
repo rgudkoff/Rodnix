@@ -10,6 +10,8 @@
 
 #include "arch_types.h"
 #include "cpu.h"
+#include <bsd/sys/queue.h>
+#include <bsd/sys/tree.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -69,6 +71,7 @@ enum {
 
 typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
+    uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
     void* address_space;       /* Адресное пространство (vm_map) */
     task_state_t state;        /* Состояние задачи */
     uint32_t uid;              /* Реальный UID */
@@ -76,8 +79,14 @@ typedef struct task {
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
+    int32_t exit_code;         /* Код завершения процесса */
+    uint8_t exited;            /* Процесс завершен через posix_exit */
+    uint8_t waited;            /* Статус уже забран waitpid */
+    struct thread* main_thread;/* Основной поток процесса */
     uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */
+    struct task* next_all;     /* Связный список всех задач */
+    RB_ENTRY(task) task_id_link; /* Узел task_id-индекса */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } task_t;
 
@@ -104,7 +113,7 @@ typedef struct thread {
     void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
-    struct thread* sched_next; /* Следующий в очереди планировщика */
+    TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
     struct thread* joiner;     /* Поток, ожидающий завершения */
     uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
     uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
@@ -191,6 +200,13 @@ uint32_t task_get_egid(const task_t* task);
  * @return Число потоков
  */
 uint32_t task_get_thread_count(const task_t* task);
+
+/**
+ * Find task by task_id.
+ * @param task_id Numeric task id
+ * @return Pointer to task or NULL
+ */
+task_t* task_find_by_id(uint64_t task_id);
 
 typedef struct {
     uint32_t cache_count;

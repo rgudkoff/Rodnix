@@ -9,7 +9,10 @@
 - `/bin/init` — launcher (smoke + `exec("/bin/sh")`).
 - `/bin/sh` — интерактивный userspace shell (`sh>`), команды:
   `help`, `pid`, `hostname`, `motd`, `uname`, `cat <path>`,
-  `smoke`, `ttytest`, `exec <path>`, `exit`.
+  `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`.
+  Также поддержан запуск внешних программ без `run`:
+  - `sh> <program> [args...]` (ищет `/bin/<program>`, если не задан абсолютный путь).
+  - Аргументы передаются в userspace как `argc/argv` (MVP, без envp).
 - `/etc` в rootfs:
   - `/etc/motd` — приветствие, печатается `init` при старте;
   - `/etc/hostname` — hostname, читается `init`;
@@ -19,6 +22,10 @@
 - это минимальный путь без полноценной process model (`fork/wait`);
 - ABI и набор syscalls пока неполные;
 - bootstrap‑сервер в userland и сервисный запуск через IPC ещё в работе.
+
+POSIX syscall номера синхронизируются автоматически из
+`kernel/posix/syscalls.master` (в стиле XNU), генератор:
+`scripts/mkposixsyscalls.py`.
 
 План:
 - минимальный loader и переход в ring3;

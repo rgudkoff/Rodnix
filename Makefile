@@ -99,10 +99,10 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check help check-deps idl userland initrd kernel drivers boot
+.PHONY: all clean run iso debug check help check-deps idl userland initrd kernel drivers boot posix-syscalls
 
 # ===== Build =====
-all: $(KERNEL_BIN)
+all: posix-syscalls $(KERNEL_BIN)
 	@echo "[+] Built RodNIX kernel (64-bit)"
 
 $(KERNEL_BIN): $(OBJS) link.ld
@@ -259,7 +259,7 @@ help:
 	@echo ""
 	@echo "For installation instructions, see INSTALL.md"
 
-userland:
+userland: posix-syscalls
 	@$(MAKE) -C $(USERLAND_DIR)
 
 kernel: $(KERNEL_OBJS)
@@ -271,4 +271,9 @@ boot: $(BOOT_OBJS)
 initrd: userland scripts/mkinitrd.py
 	@python3 scripts/mkinitrd.py $(USERLAND_ROOTFS) $(INITRD_IMG)
 
+posix-syscalls: scripts/mkposixsyscalls.py kernel/posix/syscalls.master
+	@python3 scripts/mkposixsyscalls.py .
+
 -include $(DEPS)
+# Ensure generated POSIX syscall tables exist before compiling C/ASM objects.
+$(OBJS): | posix-syscalls

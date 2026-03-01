@@ -26,7 +26,9 @@
 - Userspace разделён на 2 программы:
   - `/bin/init` — launcher: smoke + `exec("/bin/sh")`;
   - `/bin/sh` — интерактивный shell (`help`, `pid`, `hostname`, `motd`,
-    `uname`, `cat`, `smoke`, `ttytest`, `exec <path>`, `exit`).
+    `uname`, `cat`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
+  - shell умеет запускать внешние программы напрямую:
+    `<program> [args...]` (по умолчанию как `/bin/<program>`, либо абсолютный путь).
 - В rootfs введён базовый `/etc`:
   - `/etc/motd` печатается `init` при старте;
   - `/etc/hostname` читается `init` и логируется;
@@ -35,6 +37,11 @@
   привязанные к VFS-узлу `/dev/console`.
 - `ttytest` используется для ручной проверки line discipline (`Ctrl-U`,
   `Ctrl-D`, backspace, canonical newline).
+- Таблица POSIX syscall-ов теперь ведётся в стиле XNU:
+  - master-файл: `kernel/posix/syscalls.master`;
+  - генерация: `scripts/mkposixsyscalls.py`;
+  - output: `kernel/posix/posix_sysnums.h`, `userland/include/posix_sysnums.h`,
+    `kernel/posix/posix_sysent.inc`.
 
 ## Проверенный smoke‑test
 
@@ -45,6 +52,8 @@
   - `open/read/close` (чтение ELF заголовка `/bin/init`)
   - `write` (лог в консоль)
   - `exec` (`/bin/init -> /bin/sh`, а также shell-команда `exec <path>`)
+  - `spawn/waitpid` (shell-команда `run <path>`)
+  - передача `argc/argv` в userspace для запуска внешних программ из shell
   - `exit` (возврат управления в shell)
 
 ## Инварианты

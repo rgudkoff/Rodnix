@@ -14,7 +14,7 @@
 #define FD_STDOUT 1
 
 #define SH_LINE_MAX 128
-#define SH_ARG_MAX  8
+#define SH_ARG_MAX  16
 
 typedef struct {
     uint32_t abi_version;
@@ -94,6 +94,8 @@ static int parse_line(char* line, char** argv, int max_args)
             in_word = 1;
         }
     }
+
+    argv[argc] = 0;
 
     return argc;
 }
@@ -253,6 +255,73 @@ static void cmd_ttytest(void)
     (void)write_str("\n");
 }
 
+static int cmd_run(int argc, char** argv, int verbose)
+{
+    int status = 0;
+    const char* path = (argc >= 1) ? argv[0] : 0;
+    if (!path || path[0] == '\0') {
+        (void)write_str("run: path required\n");
+        return -1;
+    }
+    long pid = posix_spawn(path, (const char* const*)argv);
+    if (pid < 0) {
+        return -1;
+    }
+    if (verbose) {
+        (void)write_str("run: pid=");
+        write_u64((uint64_t)pid);
+        (void)write_str("\n");
+    }
+    long wr = posix_waitpid(pid, &status);
+    if (wr < 0) {
+        (void)write_str("run: waitpid failed\n");
+        return -1;
+    }
+    if (verbose) {
+        (void)write_str("run: exit=");
+        write_u64((uint64_t)(uint32_t)status);
+        (void)write_str("\n");
+    }
+    if (status != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int cmd_autorun(int argc, char** argv)
+{
+    char path_buf[SH_LINE_MAX];
+    if (argc <= 0 || !argv || !argv[0]) {
+        return -1;
+    }
+
+    int has_slash = 0;
+    for (int i = 0; argv[0][i] != '\0'; i++) {
+        if (argv[0][i] == '/') {
+            has_slash = 1;
+            break;
+        }
+    }
+
+    if (has_slash) {
+        return cmd_run(argc, argv, 0);
+    }
+
+    int p = 0;
+    const char* prefix = "/bin/";
+    while (prefix[p] != '\0' && p + 1 < (int)sizeof(path_buf)) {
+        path_buf[p] = prefix[p];
+        p++;
+    }
+    for (int i = 0; argv[0][i] != '\0' && p + 1 < (int)sizeof(path_buf); i++) {
+        path_buf[p++] = argv[0][i];
+    }
+    path_buf[p] = '\0';
+
+    argv[0] = path_buf;
+    return cmd_run(argc, argv, 0);
+}
+
 static void cmd_help(void)
 {
     (void)write_str("Commands:\n");
@@ -261,9 +330,11 @@ static void cmd_help(void)
     (void)write_str("  hostname      - print /etc/hostname\n");
     (void)write_str("  motd          - print /etc/motd\n");
     (void)write_str("  uname         - show system information\n");
+    (void)write_str("  ls            - placeholder (readdir syscall pending)\n");
     (void)write_str("  cat <path>    - print file content\n");
     (void)write_str("  smoke         - run basic POSIX smoke check\n");
     (void)write_str("  ttytest       - interactive tty line test\n");
+    (void)write_str("  run <path>    - spawn program and wait for exit\n");
     (void)write_str("  exec <path>   - exec another program\n");
     (void)write_str("  exit          - terminate shell process\n");
 }
@@ -271,7 +342,7 @@ static void cmd_help(void)
 int main(void)
 {
     char line[SH_LINE_MAX];
-    char* argv[SH_ARG_MAX];
+    char* argv[SH_ARG_MAX + 1];
 
     (void)write_str("Rodnix userspace shell (/bin/sh)\n");
     (void)write_str("Type 'help' for commands.\n");
@@ -309,12 +380,22 @@ int main(void)
             cmd_cat("/etc/motd");
         } else if (str_eq(argv[0], "uname")) {
             cmd_uname();
+        } else if (str_eq(argv[0], "ls")) {
+            (void)write_str("ls: not implemented yet in userspace (readdir syscall pending)\n");
         } else if (str_eq(argv[0], "cat")) {
             cmd_cat((argc >= 2) ? argv[1] : 0);
         } else if (str_eq(argv[0], "smoke")) {
             run_smoke();
         } else if (str_eq(argv[0], "ttytest")) {
             cmd_ttytest();
+        } else if (str_eq(argv[0], "run")) {
+            if (argc < 2) {
+                (void)write_str("run: path required\n");
+            } else {
+                if (cmd_run(argc - 1, &argv[1], 1) < 0) {
+                    (void)write_str("run: spawn failed\n");
+                }
+            }
         } else if (str_eq(argv[0], "exec")) {
             if (argc < 2) {
                 (void)write_str("exec: path required\n");
@@ -328,7 +409,9 @@ int main(void)
             (void)write_str("shell exiting\n");
             (void)posix_exit(0);
         } else {
-            (void)write_str("unknown command\n");
+            if (cmd_autorun(argc, argv) < 0) {
+                (void)write_str("command not found or failed\n");
+            }
         }
     }
 
