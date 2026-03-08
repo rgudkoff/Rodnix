@@ -589,6 +589,25 @@ void console_init(void)
     vga_row = 0;
     vga_col = 0;
     vga_color = 0x0F;
+
+    {
+        extern uint64_t cpu_get_time(void);
+        extern uint64_t cpu_get_frequency(void);
+        uint64_t tsc_freq = cpu_get_frequency();
+        if (tsc_freq > 0) {
+            tsc_uptime_base = cpu_get_time();
+            tsc_uptime_base_set = true;
+        }
+    }
+
+    {
+        uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+        if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
+            rtc_uptime_base_sec = rtc_unix_seconds(y, mo, d, h, mi, s);
+            rtc_uptime_base_set = true;
+        }
+    }
+
     serial_init();
     /* Initialize cursor position */
     update_cursor(vga_row, vga_col);
