@@ -10,6 +10,31 @@
 #include "syscall.h"
 #include "posix_sysnums.h"
 
+#ifndef RDNX_STDIN_INT80_READ_WORKAROUND
+#define RDNX_STDIN_INT80_READ_WORKAROUND 1
+#endif
+
+static inline long posix_read_int80(int fd, void* buf, uint64_t len)
+{
+    long ret;
+    register long r10 __asm__("r10") = 0;
+    register long r8  __asm__("r8")  = 0;
+    register long r9  __asm__("r9")  = 0;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(POSIX_SYS_READ),
+          "D"((long)fd),
+          "S"((long)(uintptr_t)buf),
+          "d"((long)len),
+          "r"(r10),
+          "r"(r8),
+          "r"(r9)
+        : "memory"
+    );
+    return ret;
+}
+
 static inline long posix_getpid(void)
 {
     return rdnx_syscall0(POSIX_SYS_GETPID);
@@ -22,6 +47,11 @@ static inline long posix_write(int fd, const void* buf, uint64_t len)
 
 static inline long posix_read(int fd, void* buf, uint64_t len)
 {
+#if RDNX_STDIN_INT80_READ_WORKAROUND
+    if (fd == 0) {
+        return posix_read_int80(fd, buf, len);
+    }
+#endif
     return rdnx_syscall6(POSIX_SYS_READ, fd, (long)(uintptr_t)buf, (long)len, 0, 0, 0);
 }
 

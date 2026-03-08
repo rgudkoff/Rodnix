@@ -65,7 +65,7 @@ int x86_64_syscall_fast_init(void)
     return 0;
 }
 
-uint64_t x86_64_syscall_fast_dispatch_frame(interrupt_frame_t* frame)
+uint64_t x86_64_syscall_dispatch_frame(interrupt_frame_t* frame, int fast_entry)
 {
     thread_t* cur;
     void* prev_arch;
@@ -75,7 +75,11 @@ uint64_t x86_64_syscall_fast_dispatch_frame(interrupt_frame_t* frame)
         return (uint64_t)-2;
     }
 
-    syscall_account_fast();
+    if (fast_entry) {
+        syscall_account_fast();
+    } else {
+        syscall_account_int80();
+    }
 
     cur = thread_get_current();
     prev_arch = NULL;
@@ -84,6 +88,7 @@ uint64_t x86_64_syscall_fast_dispatch_frame(interrupt_frame_t* frame)
         cur->arch_specific = frame;
     }
 
+    /* Keep one ABI mapping for both entries: nr=rax, a1..a3=rdi/rsi/rdx, a4..a6=r10/r8/r9. */
     ret = syscall_dispatch(frame->rax,
                            frame->rdi,
                            frame->rsi,
@@ -97,4 +102,9 @@ uint64_t x86_64_syscall_fast_dispatch_frame(interrupt_frame_t* frame)
     }
     frame->rax = ret;
     return ret;
+}
+
+uint64_t x86_64_syscall_fast_dispatch_frame(interrupt_frame_t* frame)
+{
+    return x86_64_syscall_dispatch_frame(frame, 1);
 }

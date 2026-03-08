@@ -23,6 +23,7 @@
 #include "config.h"
 #include "pic.h"
 #include "apic.h"
+#include "syscall_fast.h"
 #include <stddef.h>
 
 
@@ -174,24 +175,7 @@ static void safe_vga_hex(uint8_t row, uint8_t col, uint64_t value, uint8_t color
 
 static interrupt_frame_t* handle_syscall(interrupt_frame_t* regs)
 {
-    syscall_account_int80();
-    thread_t* cur = thread_get_current();
-    void* prev_arch = NULL;
-    if (cur) {
-        prev_arch = cur->arch_specific;
-        cur->arch_specific = regs;
-    }
-    uint64_t ret = syscall_dispatch(regs->rax,
-                                    regs->rdi,
-                                    regs->rsi,
-                                    regs->rdx,
-                                    regs->r10,
-                                    regs->r8,
-                                    regs->r9);
-    if (cur) {
-        cur->arch_specific = prev_arch;
-    }
-    regs->rax = ret;
+    (void)x86_64_syscall_dispatch_frame(regs, 0);
     return regs;
 }
 
