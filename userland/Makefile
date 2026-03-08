@@ -34,6 +34,7 @@ FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
 FABRICNETCHECK_SRCS = bin/fabricnetcheck.c
 SYSINFO_SRCS = bin/sysinfo.c
+TIMECHECK_SRCS = bin/timecheck.c
 CONTRACT_FD_SRCS = bin/contract_fd.c
 CONTRACT_FD_INHERIT_SRCS = bin/contract_fd_inherit.c
 CONTRACT_SPAWN_WAIT_SRCS = bin/contract_spawn_wait.c
@@ -56,6 +57,7 @@ FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $
 FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SYSINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CONTRACT_FD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CONTRACT_FD_INHERIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_INHERIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CONTRACT_SPAWN_WAIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_SPAWN_WAIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -74,6 +76,7 @@ FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
 FABRICNETCHECK_ELF = $(BUILD_DIR)/fabricnetcheck.elf
 SYSINFO_ELF = $(BUILD_DIR)/sysinfo.elf
+TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
 CONTRACT_FD_ELF = $(BUILD_DIR)/contract_fd.elf
 CONTRACT_FD_INHERIT_ELF = $(BUILD_DIR)/contract_fd_inherit.elf
 CONTRACT_SPAWN_WAIT_ELF = $(BUILD_DIR)/contract_spawn_wait.elf
@@ -91,6 +94,7 @@ FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
 FABRICNETCHECK_BIN = $(BIN_DIR)/fabricnetcheck
 SYSINFO_BIN = $(BIN_DIR)/sysinfo
+TIMECHECK_BIN = $(BIN_DIR)/timecheck
 CONTRACT_FD_BIN = $(BIN_DIR)/contract_fd
 CONTRACT_FD_INHERIT_BIN = $(BIN_DIR)/contract_fd_inherit
 CONTRACT_SPAWN_WAIT_BIN = $(BIN_DIR)/contract_spawn_wait
@@ -99,7 +103,7 @@ CONTRACT_EXEC_AFTER_BIN = $(BIN_DIR)/contract_exec_after
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(SYSINFO_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(SYSINFO_BIN) $(TIMECHECK_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -162,6 +166,10 @@ $(FABRICNETCHECK_ELF): $(FABRICNETCHECK_OBJS) link.ld
 $(SYSINFO_ELF): $(SYSINFO_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(SYSINFO_OBJS)
+
+$(TIMECHECK_ELF): $(TIMECHECK_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(TIMECHECK_OBJS)
 
 $(CONTRACT_FD_ELF): $(CONTRACT_FD_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -228,6 +236,10 @@ $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 	cp $< $@
 
 $(SYSINFO_BIN): $(SYSINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(TIMECHECK_BIN): $(TIMECHECK_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

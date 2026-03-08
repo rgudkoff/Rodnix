@@ -7,6 +7,7 @@
 #include "syscall.h"
 #include "posix_syscall.h"
 #include "unistd.h"
+#include "time.h"
 
 #define VFS_OPEN_READ 1
 #define FD_STDOUT 1
@@ -229,6 +230,49 @@ static void run_contract_mode_if_enabled(void)
             ct_log("CT-DBG", "PASS", "blocking syscall probe returned");
         } else {
             ct_log("CT-DBG", "FAIL", "blocking syscall probe failed");
+        }
+    }
+
+    {
+        struct timespec m0, m1, r0, r1;
+        int time_ok = 1;
+        if (clock_gettime(CLOCK_MONOTONIC, &m0) != 0 ||
+            clock_gettime(CLOCK_REALTIME, &r0) != 0) {
+            ct_log("CT-016", "FAIL", "clock_gettime initial failed");
+            ct_log("CT-017", "FAIL", "clock_gettime initial failed");
+            ok = 0;
+            time_ok = 0;
+        }
+        if (time_ok) {
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+            if (clock_gettime(CLOCK_MONOTONIC, &m1) != 0) {
+                ct_log("CT-016", "FAIL", "clock_gettime monotonic failed");
+                ok = 0;
+                time_ok = 0;
+            }
+            if (clock_gettime(CLOCK_REALTIME, &r1) != 0) {
+                ct_log("CT-017", "FAIL", "clock_gettime realtime failed");
+                ok = 0;
+                time_ok = 0;
+            }
+        }
+        if (time_ok) {
+            uint64_t mu0 = (uint64_t)m0.tv_sec * 1000000ULL + (uint64_t)m0.tv_nsec / 1000ULL;
+            uint64_t mu1 = (uint64_t)m1.tv_sec * 1000000ULL + (uint64_t)m1.tv_nsec / 1000ULL;
+            uint64_t ru0 = (uint64_t)r0.tv_sec * 1000000ULL + (uint64_t)r0.tv_nsec / 1000ULL;
+            uint64_t ru1 = (uint64_t)r1.tv_sec * 1000000ULL + (uint64_t)r1.tv_nsec / 1000ULL;
+            if (mu1 >= mu0) {
+                ct_log("CT-016", "PASS", "CLOCK_MONOTONIC is non-decreasing");
+            } else {
+                ct_log("CT-016", "FAIL", "CLOCK_MONOTONIC went backwards");
+                ok = 0;
+            }
+            if (ru1 >= ru0) {
+                ct_log("CT-017", "PASS", "CLOCK_REALTIME is non-decreasing");
+            } else {
+                ct_log("CT-017", "FAIL", "CLOCK_REALTIME went backwards");
+                ok = 0;
+            }
         }
     }
 
