@@ -33,3 +33,6 @@
 23 munmap
 24 brk
 25 fork
+26 hwlist
+27 fabricls
+28 fabricevents

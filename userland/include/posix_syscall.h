@@ -79,6 +79,34 @@ static inline long posix_netiflist(void* entries, uint64_t max_entries, uint32_t
                          0, 0, 0);
 }
 
+static inline long posix_hwlist(void* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_HWLIST,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_fabricls(void* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_FABRICLS,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_fabricevents(void* entries, uint64_t max_entries, uint32_t* out_read, uint32_t* out_dropped)
+{
+    return rdnx_syscall6(POSIX_SYS_FABRICEVENTS,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_read,
+                         (long)(uintptr_t)out_dropped,
+                         0, 0);
+}
+
 static inline long posix_mmap(void* addr, uint64_t len, int prot, int flags, int fd, uint64_t off)
 {
     return rdnx_syscall6(POSIX_SYS_MMAP,

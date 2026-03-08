@@ -1,6 +1,9 @@
 #include "posix_syscall.h"
 #include "../core/task.h"
 #include "../common/security.h"
+#include "../fabric/fabric.h"
+#include "../fabric/device/device.h"
+#include "../fabric/bus/pci.h"
 #include "../fabric/service/net_service.h"
 #include "../fs/vfs.h"
 #include "../vm/vm_map.h"
@@ -414,6 +417,169 @@ static uint64_t posix_netiflist(uint64_t a1,
         *user_count = total;
     }
     return (uint64_t)n;
+}
+
+typedef struct hwdev_info {
+    char name[32];
+    uint16_t vendor_id;
+    uint16_t device_id;
+    uint8_t class_code;
+    uint8_t subclass;
+    uint8_t prog_if;
+    uint8_t attached;
+    uint8_t is_pci;
+    uint8_t pci_bus;
+    uint8_t pci_device;
+    uint8_t pci_function;
+    uint8_t pci_revision;
+    uint8_t pci_header_type;
+    uint16_t pci_command;
+    uint16_t pci_status;
+    uint32_t bars[PCI_BAR_COUNT];
+} hwdev_info_t;
+
+static uint64_t posix_hwlist(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    hwdev_info_t* user_entries = (hwdev_info_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+
+    if (max_entries == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(hwdev_info_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint32_t total = fabric_device_count();
+    uint32_t n = (total < max_entries) ? total : max_entries;
+    for (uint32_t i = 0; i < n; i++) {
+        fabric_device_t* dev = fabric_device_get(i);
+        if (!dev) {
+            break;
+        }
+
+        hwdev_info_t info;
+        memset(&info, 0, sizeof(info));
+        if (dev->name) {
+            strncpy(info.name, dev->name, sizeof(info.name) - 1);
+        }
+        info.vendor_id = dev->vendor_id;
+        info.device_id = dev->device_id;
+        info.class_code = dev->class_code;
+        info.subclass = dev->subclass;
+        info.prog_if = dev->prog_if;
+        info.attached = dev->driver_state ? 1u : 0u;
+
+        if (dev->bus_private && dev->name && strcmp(dev->name, "pci-device") == 0) {
+            const pci_device_info_t* pci = (const pci_device_info_t*)dev->bus_private;
+            info.is_pci = 1u;
+            info.pci_bus = pci->bus;
+            info.pci_device = pci->device;
+            info.pci_function = pci->function;
+            info.pci_revision = pci->revision_id;
+            info.pci_header_type = pci->header_type;
+            info.pci_command = pci->command;
+            info.pci_status = pci->status;
+            for (uint32_t bar = 0; bar < PCI_BAR_COUNT; bar++) {
+                info.bars[bar] = pci->bars[bar];
+            }
+        }
+
+        user_entries[i] = info;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_fabricls(uint64_t a1,
+                               uint64_t a2,
+                               uint64_t a3,
+                               uint64_t a4,
+                               uint64_t a5,
+                               uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    fabric_node_info_t* user_entries = (fabric_node_info_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+
+    if (max_entries == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(fabric_node_info_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint32_t total = 0;
+    int n = fabric_node_list(user_entries, max_entries, &total);
+    if (n < 0) {
+        return (uint64_t)n;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_fabricevents(uint64_t a1,
+                                   uint64_t a2,
+                                   uint64_t a3,
+                                   uint64_t a4,
+                                   uint64_t a5,
+                                   uint64_t a6)
+{
+    (void)a5;
+    (void)a6;
+    fabric_event_t* user_entries = (fabric_event_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_read = (uint32_t*)(uintptr_t)a3;
+    uint32_t* user_dropped = (uint32_t*)(uintptr_t)a4;
+
+    if (max_entries == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(fabric_event_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_read && !unix_user_range_ok(user_read, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_dropped && !unix_user_range_ok(user_dropped, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint32_t read = 0;
+    uint32_t dropped = 0;
+    int rc = fabric_event_drain(user_entries, max_entries, &read, &dropped);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
+    }
+    if (user_read) {
+        *user_read = read;
+    }
+    if (user_dropped) {
+        *user_dropped = dropped;
+    }
+    return (uint64_t)read;
 }
 
 static uint64_t posix_mmap(uint64_t a1,

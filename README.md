@@ -24,7 +24,8 @@ RodNIX is under active development. The current kernel provides:
 - Interrupts, timers, and preemptive scheduling (priority queues)
 - VFS with RAMFS + initrd import (RDNX format)
 - IPC core with ports and minimal IDL runtime
-- Fabric framework for buses/devices/drivers/services
+- Fabric framework for buses/devices/drivers/services with node graph
+- Fabric event bus (device/driver/service lifecycle events)
 - Minimal POSIX syscall surface and per-task fd table
 - Shell and input pipeline through InputCore/Fabric
 
@@ -53,9 +54,13 @@ Detailed design notes:
 1. Device/bus/driver/service routing is implemented in kernel/fabric.
 2. Fabric is initialized in kernel/main.c before the shell starts.
 3. Fabric buses registered: virtual bus, PCI, and PS/2 (kernel/fabric/bus).
-4. The HID keyboard driver is a Fabric driver and publishes a keyboard service.
-5. Legacy device manager (kernel/common/device.*) was removed in favor of Fabric.
-6. Old arch-specific PS/2 keyboard driver was removed; input now flows through
+4. Fabric builds a node tree under /fabric (devices/services/subsystems).
+5. Driver lifecycle is ordered: device_added -> driver_attached -> service_published -> service_registered.
+6. The HID keyboard driver is a Fabric driver and publishes keyboard0 service.
+7. net.ifmgr acts as subsystem manager (/fabric/subsystems/net/ifmgr) and applies net interface policy.
+8. Userland observability tools: hwlist, fabricls, fabricevents, fabricnetcheck.
+9. Legacy device manager (kernel/common/device.*) was removed in favor of Fabric.
+10. Old arch-specific PS/2 keyboard driver was removed; input now flows through
    InputCore and the Fabric HID driver.
 
 ## Build Requirements
@@ -77,8 +82,16 @@ Toolchain:
 - Simple interactive shell
 - Line-based input with basic editing
 
-The keyboard input path is currently polling-based through InputCore. IRQ-based
-input is planned via Fabric.
+The keyboard input path is interrupt-driven via Fabric (with fallback paths
+where needed by platform).
+
+## Fabric Introspection Utilities
+
+Built userland utilities (rootfs/bin):
+- hwlist: raw discovered hardware list (PCI BDF/BAR and class info)
+- fabricls: current Fabric node topology (path, provider link, driver, state)
+- fabricevents: drain and print Fabric event queue
+- fabricnetcheck: validate network lifecycle ordering from events/snapshot
 
 ## Roadmap
 

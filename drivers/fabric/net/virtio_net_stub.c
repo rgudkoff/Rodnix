@@ -96,9 +96,9 @@ static int virtio_net_attach(fabric_device_t* dev)
     slot->iface.mac[4] = 0x00;
     slot->iface.mac[5] = (uint8_t)(0x10 + ifidx);
     slot->iface.mtu = NET_MAX_PACKET;
-    slot->iface.flags = FABRIC_NETIF_F_UP | FABRIC_NETIF_F_BROADCAST;
+    slot->iface.flags = FABRIC_NETIF_F_BROADCAST;
     slot->iface.ops = &ops;
-    slot->iface.context = slot;
+    slot->iface.context = dev;
 
     if (fabric_netif_register(&slot->iface) != RDNX_OK) {
         memset(slot, 0, sizeof(*slot));
@@ -110,6 +110,19 @@ static int virtio_net_attach(fabric_device_t* dev)
     return RDNX_OK;
 }
 
+static int virtio_net_publish(fabric_device_t* dev)
+{
+    if (!dev) {
+        return RDNX_E_INVALID;
+    }
+    for (uint32_t i = 0; i < VIRTIO_NET_IF_MAX; i++) {
+        if (g_slots[i].used && g_slots[i].dev == dev && g_slots[i].iface.name) {
+            return fabric_publish_netif_node(g_slots[i].iface.name, dev);
+        }
+    }
+    return RDNX_E_NOTFOUND;
+}
+
 static void virtio_net_detach(fabric_device_t* dev)
 {
     (void)dev;
@@ -119,6 +132,7 @@ static fabric_driver_t g_driver = {
     .name = "virtio-net-stub",
     .probe = virtio_net_probe,
     .attach = virtio_net_attach,
+    .publish = virtio_net_publish,
     .detach = virtio_net_detach,
     .suspend = NULL,
     .resume = NULL

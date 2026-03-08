@@ -109,9 +109,9 @@ static int e1000_net_attach(fabric_device_t* dev)
     slot->iface.mac[4] = 0x10;
     slot->iface.mac[5] = (uint8_t)(0x20u + ifidx);
     slot->iface.mtu = NET_MAX_PACKET;
-    slot->iface.flags = FABRIC_NETIF_F_UP | FABRIC_NETIF_F_BROADCAST;
+    slot->iface.flags = FABRIC_NETIF_F_BROADCAST;
     slot->iface.ops = &ops;
-    slot->iface.context = slot;
+    slot->iface.context = dev;
 
     if (fabric_netif_register(&slot->iface) != RDNX_OK) {
         memset(slot, 0, sizeof(*slot));
@@ -123,6 +123,19 @@ static int e1000_net_attach(fabric_device_t* dev)
     return RDNX_OK;
 }
 
+static int e1000_net_publish(fabric_device_t* dev)
+{
+    if (!dev) {
+        return RDNX_E_INVALID;
+    }
+    for (uint32_t i = 0; i < E1000_IF_MAX; i++) {
+        if (g_slots[i].used && g_slots[i].dev == dev && g_slots[i].iface.name) {
+            return fabric_publish_netif_node(g_slots[i].iface.name, dev);
+        }
+    }
+    return RDNX_E_NOTFOUND;
+}
+
 static void e1000_net_detach(fabric_device_t* dev)
 {
     (void)dev;
@@ -132,6 +145,7 @@ static fabric_driver_t g_driver = {
     .name = "e1000-net-stub",
     .probe = e1000_net_probe,
     .attach = e1000_net_attach,
+    .publish = e1000_net_publish,
     .detach = e1000_net_detach,
     .suspend = NULL,
     .resume = NULL
@@ -146,4 +160,3 @@ void e1000_net_stub_init(void)
         kputs("[E1000] driver register failed\n");
     }
 }
-

@@ -21,8 +21,43 @@ typedef struct {
 
 static spinlock_t g_net_lock;
 static int g_net_inited = 0;
+static int g_event_subscribed = 0;
 static fabric_netif_t* g_ifaces[FABRIC_NETIF_MAX];
 static uint32_t g_iface_count = 0;
+
+static void net_interface_manager_event(const fabric_event_t* event, void* arg)
+{
+    (void)arg;
+    if (!event) {
+        return;
+    }
+    if (event->type != FABRIC_EVENT_SERVICE_REGISTERED) {
+        return;
+    }
+    if (strcmp(event->detail, "net") != 0) {
+        return;
+    }
+    if (!event->subject[0]) {
+        return;
+    }
+
+    spinlock_lock(&g_net_lock);
+    for (uint32_t i = 0; i < g_iface_count; i++) {
+        fabric_netif_t* iface = g_ifaces[i];
+        if (!iface || !iface->name) {
+            continue;
+        }
+        if (strcmp(iface->name, event->subject) != 0) {
+            continue;
+        }
+        iface->flags |= FABRIC_NETIF_F_UP;
+        spinlock_unlock(&g_net_lock);
+        (void)fabric_node_set_state(event->node_path, FABRIC_STATE_ACTIVE);
+        fabric_log("[ifmgr] auto-init net interface: %s\n", event->subject);
+        return;
+    }
+    spinlock_unlock(&g_net_lock);
+}
 
 static int net_service_register_iface(fabric_netif_t* iface)
 {
@@ -75,9 +110,15 @@ int fabric_net_service_init(void)
         g_ifaces[i] = NULL;
     }
     g_iface_count = 0;
+    if (!g_event_subscribed) {
+        if (fabric_event_subscribe(net_interface_manager_event, NULL) == RDNX_OK) {
+            g_event_subscribed = 1;
+        }
+    }
     if (fabric_service_publish(&g_service) != 0) {
         return RDNX_E_GENERIC;
     }
+    (void)fabric_node_set_state("/fabric/subsystems/net/ifmgr", FABRIC_STATE_ACTIVE);
     g_net_inited = 1;
     fabric_log("[fabric-net] service ready: %s\n", g_service.name);
     return RDNX_OK;

@@ -237,7 +237,6 @@ static void keyboard_irq_handler(int vector, void *arg)
 static int hid_kbd_attach(fabric_device_t *dev)
 {
     (void)dev;
-    
     kputs("[HID-KBD] Attaching keyboard driver\n");
     
     /* Initialize lock-free queue */
@@ -349,7 +348,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     keyboard_service.hdr = RDNX_ABI_INIT(fabric_service_t);
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting service name...\n");
-    keyboard_service.name = "keyboard";
+    keyboard_service.name = "keyboard0";
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting service ops pointer...\n");
     keyboard_service.ops = &keyboard_ops;
@@ -359,15 +358,22 @@ static int hid_kbd_attach(fabric_device_t *dev)
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Keyboard service initialized\n");
     
-    /* Publish keyboard service */
+    kputs("[HID-KBD] hid_kbd_attach() returning 0\n");
+    return 0;
+}
+
+static int hid_kbd_publish(fabric_device_t* dev)
+{
+    if (!dev) {
+        return -1;
+    }
     kputs("[HID-KBD] Publishing keyboard service...\n");
     if (fabric_service_publish(&keyboard_service) != 0) {
         kputs("[HID-KBD] ERROR: Failed to publish keyboard service\n");
         return -1;
     }
+    (void)fabric_publish_input_node("keyboard0", dev);
     kputs("[HID-KBD] Keyboard service published successfully\n");
-    
-    kputs("[HID-KBD] hid_kbd_attach() returning 0\n");
     return 0;
 }
 
@@ -396,6 +402,7 @@ static fabric_driver_t hid_kbd_driver = {
     .name = "hid_kbd",
     .probe = hid_kbd_probe,
     .attach = hid_kbd_attach,
+    .publish = hid_kbd_publish,
     .detach = hid_kbd_detach,
     .suspend = NULL,
     .resume = NULL
