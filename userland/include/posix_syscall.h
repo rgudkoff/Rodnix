@@ -9,6 +9,7 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_sysnums.h"
+#include "scstat.h"
 
 #ifndef RDNX_STDIN_INT80_READ_WORKAROUND
 #define RDNX_STDIN_INT80_READ_WORKAROUND 0
@@ -189,6 +190,15 @@ static inline long posix_fork(void)
 static inline long posix_clock_gettime(int clock_id, void* tp)
 {
     return rdnx_syscall2(POSIX_SYS_CLOCK_GETTIME, (long)clock_id, (long)(uintptr_t)tp);
+}
+
+static inline long posix_scstat(rodnix_scstat_entry_t* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_SCSTAT,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

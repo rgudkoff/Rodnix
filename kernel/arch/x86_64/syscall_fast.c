@@ -75,11 +75,7 @@ uint64_t x86_64_syscall_dispatch_frame(interrupt_frame_t* frame, int fast_entry)
         return (uint64_t)-2;
     }
 
-    if (fast_entry) {
-        syscall_account_fast();
-    } else {
-        syscall_account_int80();
-    }
+    syscall_account_entry(frame->rax, fast_entry);
 
     cur = thread_get_current();
     prev_arch = NULL;

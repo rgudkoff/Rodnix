@@ -535,6 +535,14 @@ typedef struct rdnx_timespec {
     int64_t tv_nsec;
 } rdnx_timespec_t;
 
+typedef struct rodnix_scstat_entry {
+    uint32_t syscall_no;
+    uint32_t reserved0;
+    uint64_t int80_count;
+    uint64_t fast_count;
+    uint64_t total_count;
+} rodnix_scstat_entry_t;
+
 static uint64_t posix_hwlist(uint64_t a1,
                              uint64_t a2,
                              uint64_t a3,
@@ -764,6 +772,50 @@ static uint64_t posix_sysinfo(uint64_t a1,
     out->syscall_fast_count = syscall_get_fast_count();
 
     return (uint64_t)RDNX_OK;
+}
+
+static uint64_t posix_scstat(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    rodnix_scstat_entry_t* user_entries = (rodnix_scstat_entry_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+    uint32_t total = (uint32_t)(POSIX_SYS_LAST + 1u);
+    uint32_t n = (max_entries < total) ? max_entries : total;
+
+    if (max_entries == 0 || !user_entries) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(*user_entries))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t int80 = syscall_get_int80_count_for_num(i);
+        uint64_t fast = syscall_get_fast_count_for_num(i);
+        rodnix_scstat_entry_t e;
+        e.syscall_no = i;
+        e.reserved0 = 0;
+        e.int80_count = int80;
+        e.fast_count = fast;
+        e.total_count = int80 + fast;
+        user_entries[i] = e;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
 }
 
 static uint64_t posix_clock_gettime(uint64_t a1,

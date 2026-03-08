@@ -37,8 +37,9 @@ enum {
     POSIX_SYS_STAT = 31,
     POSIX_SYS_FSTAT = 32,
     POSIX_SYS_LSEEK = 33,
+    POSIX_SYS_SCSTAT = 34,
 };
 
-#define POSIX_SYS_LAST 33
+#define POSIX_SYS_LAST 34
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSNUMS_H */

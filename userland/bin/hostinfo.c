@@ -57,6 +57,12 @@ static void write_mem_short(uint64_t bytes)
 {
     const uint64_t KB = 1024ULL;
     const uint64_t MB = 1024ULL * 1024ULL;
+    const uint64_t GB = 1024ULL * 1024ULL * 1024ULL;
+    if (bytes >= GB) {
+        write_u64(bytes / GB);
+        (void)write_str(" GB");
+        return;
+    }
     if (bytes >= MB) {
         write_u64(bytes / MB);
         (void)write_str(" MB");
@@ -110,12 +116,34 @@ int main(void)
     write_u64((uint64_t)s.cpu_stepping);
     (void)write_str("\n");
 
-    (void)write_str("Mem: total=");
+    (void)write_str("Memory:\n");
+    (void)write_str("  total=");
     write_mem_short(s.mem_total_bytes);
     (void)write_str(" free=");
     write_mem_short(s.mem_free_bytes);
     (void)write_str(" used=");
     write_mem_short(s.mem_used_bytes);
+    (void)write_str("\n");
+    (void)write_str("  bytes total/free/used=");
+    write_u64(s.mem_total_bytes);
+    (void)write_str("/");
+    write_u64(s.mem_free_bytes);
+    (void)write_str("/");
+    write_u64(s.mem_used_bytes);
+    (void)write_str("\n");
+    (void)write_str("  pages total/free/used=");
+    write_u64(s.pmm_total_pages);
+    (void)write_str("/");
+    write_u64(s.pmm_free_pages);
+    (void)write_str("/");
+    write_u64(s.pmm_used_pages);
+    (void)write_str("\n");
+    (void)write_str("  oom pmm/vmm/heap=");
+    write_u64(s.oom_pmm);
+    (void)write_str("/");
+    write_u64(s.oom_vmm);
+    (void)write_str("/");
+    write_u64(s.oom_heap);
     (void)write_str("\n");
 
     (void)write_str("IRQ: apic=");
