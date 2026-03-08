@@ -54,13 +54,11 @@ Use one section per import:
 - Imported by: `codex`
 - License: `BSD-2-Clause/BSD-3-Clause (per-file SPDX in imported files)`
 - Upstream path(s):
-  - `bin/sh/*`
   - `include/{unistd.h,stdio.h,stdlib.h,string.h,signal.h,limits.h,time.h,termios.h,dirent.h,pwd.h,grp.h}`
   - `sys/sys/{cdefs.h,queue.h,tree.h}` (from local user-provided snapshot)
 - Local path(s):
-  - `third_party/bsd/freebsd-src/bin/sh/*`
-  - `third_party/bsd/freebsd-src/include/*`
-  - `third_party/bsd/freebsd-src/sys/sys/*`
+  - `third_party/bsd/include/*`
+  - `third_party/bsd/sys/sys/*`
 - Modifications:
   - `none (verbatim copy)`
 - Notes:

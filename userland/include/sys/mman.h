@@ -3,7 +3,7 @@
 
 /*
  * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
- * Source: third_party/bsd/freebsd-src/sys/sys/mman.h
+ * Source: third_party/bsd/sys/sys/mman.h
  */
 #define PROT_NONE   0x0000
 #define PROT_READ   0x0001
