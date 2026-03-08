@@ -3,4 +3,6 @@
 
 #include <sys/errno.h>
 
+extern int errno;
+
 #endif /* _RODNIX_USERLAND_ERRNO_H */

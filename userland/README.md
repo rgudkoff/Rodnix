@@ -38,6 +38,12 @@ POSIX syscall номера синхронизируются автоматиче
 - `sys/types.h`, `sys/fcntl.h`, `sys/wait.h`, `sys/stat.h`, `sys/errno.h`
 - `sys/signal.h`, `sys/mman.h`, `sys/dirent.h`, `sys/termios.h`, `sys/time.h`
 
+В `userland/libc` подключен `libc-lite` (минимальный runtime-слой):
+- `errno` storage;
+- базовые `string`/`ctype`/`stdlib`/`stdio` функции;
+- POSIX-обертки в `unistd.h` возвращают `-1` и выставляют `errno`
+  для отрицательных кодов ядра.
+
 Числовые значения ключевых `errno`/`fcntl`/`wait` констант выравниваются с
 vendor BSD baseline (`third_party/bsd/*/sys/sys/*`) и проверяются
 автоматически в `make -C userland` через:

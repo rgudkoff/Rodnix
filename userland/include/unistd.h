@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/mman.h>
+#include <errno.h>
 #include "posix_syscall.h"
 
 #ifdef __cplusplus
@@ -44,43 +45,83 @@ static inline int rdnx_open_flags_from_posix(int flags)
 
 static inline pid_t getpid(void)
 {
-    return (pid_t)posix_getpid();
+    long r = posix_getpid();
+    if (r < 0) {
+        errno = (int)(-r);
+        return (pid_t)-1;
+    }
+    return (pid_t)r;
 }
 
 static inline ssize_t read(int fd, void* buf, size_t len)
 {
-    return (ssize_t)posix_read(fd, buf, (uint64_t)len);
+    long r = posix_read(fd, buf, (uint64_t)len);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (ssize_t)r;
 }
 
 static inline ssize_t write(int fd, const void* buf, size_t len)
 {
-    return (ssize_t)posix_write(fd, buf, (uint64_t)len);
+    long r = posix_write(fd, buf, (uint64_t)len);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (ssize_t)r;
 }
 
 static inline int close(int fd)
 {
-    return (int)posix_close(fd);
+    long r = posix_close(fd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
 }
 
 static inline int fcntl(int fd, int cmd, int arg)
 {
-    return (int)posix_fcntl(fd, cmd, (long)arg);
+    long r = posix_fcntl(fd, cmd, (long)arg);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
 }
 
 static inline int open(const char* path, int flags)
 {
-    return (int)posix_open(path, rdnx_open_flags_from_posix(flags));
+    long r = posix_open(path, rdnx_open_flags_from_posix(flags));
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
 }
 
 static inline int execv(const char* path, char* const argv[])
 {
     (void)argv;
-    return (int)posix_exec(path);
+    long r = posix_exec(path);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
 }
 
 static inline pid_t spawnv(const char* path, char* const argv[])
 {
-    return (pid_t)posix_spawn(path, (const char* const*)argv);
+    long r = posix_spawn(path, (const char* const*)argv);
+    if (r < 0) {
+        errno = (int)(-r);
+        return (pid_t)-1;
+    }
+    return (pid_t)r;
 }
 
 static inline pid_t waitpid(pid_t pid, int* status, int options)
@@ -94,12 +135,21 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
             (void)rdnx_syscall0(0);
         }
     }
+    if (wr < 0) {
+        errno = (int)(-wr);
+        return (pid_t)-1;
+    }
     return (pid_t)wr;
 }
 
 static inline pid_t fork(void)
 {
-    return (pid_t)posix_fork();
+    long r = posix_fork();
+    if (r < 0) {
+        errno = (int)(-r);
+        return (pid_t)-1;
+    }
+    return (pid_t)r;
 }
 
 static inline void _exit(int status)
@@ -114,31 +164,43 @@ static inline void* mmap(void* addr, size_t len, int prot, int flags, int fd, of
 {
     long r = posix_mmap(addr, (uint64_t)len, prot, flags, fd, (uint64_t)off);
     if (r < 0) {
-        return (void*)0;
+        errno = (int)(-r);
+        return MAP_FAILED;
     }
     return (void*)(uintptr_t)r;
 }
 
 static inline int munmap(void* addr, size_t len)
 {
-    return (int)posix_munmap(addr, (uint64_t)len);
+    long r = posix_munmap(addr, (uint64_t)len);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
 }
 
 static inline int brk(void* addr)
 {
     long r = posix_brk(addr);
-    return (r < 0) ? -1 : 0;
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
 }
 
 static inline void* sbrk(intptr_t increment)
 {
     long cur = posix_brk((void*)0);
     if (cur < 0) {
-        return (void*)0;
+        errno = (int)(-cur);
+        return (void*)-1;
     }
     long next = posix_brk((void*)(uintptr_t)(cur + increment));
     if (next < 0) {
-        return (void*)0;
+        errno = (int)(-next);
+        return (void*)-1;
     }
     return (void*)(uintptr_t)cur;
 }

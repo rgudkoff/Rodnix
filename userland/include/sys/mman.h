@@ -20,4 +20,6 @@
 #define MS_ASYNC      0x0001
 #define MS_INVALIDATE 0x0002
 
+#define MAP_FAILED ((void*)-1)
+
 #endif /* _RODNIX_USERLAND_SYS_MMAN_H */
