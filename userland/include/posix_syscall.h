@@ -11,7 +11,7 @@
 #include "posix_sysnums.h"
 
 #ifndef RDNX_STDIN_INT80_READ_WORKAROUND
-#define RDNX_STDIN_INT80_READ_WORKAROUND 1
+#define RDNX_STDIN_INT80_READ_WORKAROUND 0
 #endif
 
 static inline long posix_read_int80(int fd, void* buf, uint64_t len)
