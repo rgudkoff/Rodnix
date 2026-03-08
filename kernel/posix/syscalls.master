@@ -37,3 +37,4 @@
 27 fabricls
 28 fabricevents
 29 sysinfo
+30 clock_gettime

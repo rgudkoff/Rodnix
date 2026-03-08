@@ -485,6 +485,11 @@ typedef struct rodnix_sysinfo {
     uint8_t reserved1;
 } rodnix_sysinfo_t;
 
+typedef struct rdnx_timespec {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+} rdnx_timespec_t;
+
 static uint64_t posix_hwlist(uint64_t a1,
                              uint64_t a2,
                              uint64_t a3,
@@ -711,6 +716,39 @@ static uint64_t posix_sysinfo(uint64_t a1,
     out->apic_available = apic_is_available() ? 1u : 0u;
     out->ioapic_available = ioapic_is_available() ? 1u : 0u;
 
+    return (uint64_t)RDNX_OK;
+}
+
+static uint64_t posix_clock_gettime(uint64_t a1,
+                                    uint64_t a2,
+                                    uint64_t a3,
+                                    uint64_t a4,
+                                    uint64_t a5,
+                                    uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    enum {
+        CLOCK_REALTIME = 0,
+        CLOCK_MONOTONIC = 4
+    };
+    int clock_id = (int)a1;
+    rdnx_timespec_t* out = (rdnx_timespec_t*)(uintptr_t)a2;
+    if (!unix_user_range_ok(out, sizeof(*out))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    uint64_t us = 0;
+    if (clock_id == CLOCK_MONOTONIC) {
+        us = console_get_uptime_us();
+    } else if (clock_id == CLOCK_REALTIME) {
+        us = console_get_realtime_us();
+    } else {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    out->tv_sec = (int64_t)(us / 1000000ULL);
+    out->tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
     return (uint64_t)RDNX_OK;
 }
 

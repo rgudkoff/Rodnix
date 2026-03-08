@@ -141,4 +141,9 @@ static inline long posix_fork(void)
     return rdnx_syscall0(POSIX_SYS_FORK);
 }
 
+static inline long posix_clock_gettime(int clock_id, void* tp)
+{
+    return rdnx_syscall2(POSIX_SYS_CLOCK_GETTIME, (long)clock_id, (long)(uintptr_t)tp);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

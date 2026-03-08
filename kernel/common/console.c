@@ -284,6 +284,17 @@ const char* console_get_uptime_source(void)
     return uptime_source_name;
 }
 
+uint64_t console_get_realtime_us(void)
+{
+    uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+    if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
+        uint64_t sec = rtc_unix_seconds(y, mo, d, h, mi, s);
+        uint64_t sub = console_get_uptime_us_internal() % 1000000ULL;
+        return sec * 1000000ULL + sub;
+    }
+    return console_get_uptime_us_internal();
+}
+
 static void console_write_dec_fixed(uint64_t value, int width)
 {
     char buf[32];
