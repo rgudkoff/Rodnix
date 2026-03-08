@@ -11,7 +11,6 @@
 #define SYS_NOP 0
 #define VFS_OPEN_READ 1
 #define RDNX_E_BUSY (-5)
-#define SH_WAITPID_MAX_POLLS 4000000
 
 #define FD_STDIN  0
 #define FD_STDOUT 1
@@ -395,12 +394,11 @@ static int cmd_run(int argc, char** argv, int verbose)
     }
     {
         long wr = RDNX_E_BUSY;
-        for (int i = 0; i < SH_WAITPID_MAX_POLLS; i++) {
+        while (wr == RDNX_E_BUSY) {
             wr = posix_waitpid(pid, &status);
-            if (wr == pid || wr != RDNX_E_BUSY) {
-                break;
+            if (wr == RDNX_E_BUSY) {
+                (void)rdnx_syscall0(SYS_NOP);
             }
-            (void)rdnx_syscall0(SYS_NOP);
         }
         if (wr != pid) {
             (void)write_str("run: waitpid failed\n");

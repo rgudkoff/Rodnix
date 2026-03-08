@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../heap.h"
 #include "../tracev2.h"
+#include "../../unix/unix_layer.h"
 #include "../../core/interrupts.h"
 #include "../../../include/error.h"
 #include "../../../include/debug.h"
@@ -145,6 +146,7 @@ void scheduler_reap_dead_threads(void)
                     task_destroy(owner);
                 } else {
                     scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");
+                    unix_proc_notify_waiters(owner->parent_task_id);
                 }
             } else {
                 scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_threads_remaining");

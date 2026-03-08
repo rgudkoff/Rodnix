@@ -79,8 +79,16 @@ static inline pid_t spawnv(const char* path, char* const argv[])
 
 static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
+    enum { RDNX_E_BUSY = -5 };
+    long wr = (long)RDNX_E_BUSY;
     (void)options;
-    return (pid_t)posix_waitpid((long)pid, status);
+    while (wr == (long)RDNX_E_BUSY) {
+        wr = posix_waitpid((long)pid, status);
+        if (wr == (long)RDNX_E_BUSY) {
+            (void)rdnx_syscall0(0);
+        }
+    }
+    return (pid_t)wr;
 }
 
 static inline void _exit(int status)

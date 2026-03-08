@@ -50,5 +50,6 @@ uint64_t unix_proc_exit(uint64_t status);
 uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr);
 /* CT-004/CT-005/CT-006 */
 uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr);
+void unix_proc_notify_waiters(uint64_t parent_task_id);
 
 #endif /* _RODNIX_UNIX_LAYER_H */

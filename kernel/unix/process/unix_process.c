@@ -3,6 +3,11 @@
 #include "../../../include/console.h"
 #include "../../../include/error.h"
 
+void unix_proc_notify_waiters(uint64_t parent_task_id)
+{
+    (void)parent_task_id;
+}
+
 uint64_t unix_proc_exit(uint64_t status)
 {
     task_t* task = task_get_current();
@@ -30,31 +35,32 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    task_t* child = task_find_by_id(pid);
-    if (!child) {
-        return (uint64_t)RDNX_E_NOTFOUND;
-    }
-    if (child->parent_task_id != self->task_id) {
-        return (uint64_t)RDNX_E_DENIED;
-    }
-
-    scheduler_reap_finished();
-    bool child_threads_gone = (child->thread_count == 0);
-    bool child_exited = child->exited ||
-                        (child->state == TASK_STATE_ZOMBIE) ||
-                        (child->state == TASK_STATE_DEAD);
-    if (child_threads_gone && child_exited) {
-        if (child->waited) {
+    for (;;) {
+        task_t* child = task_find_by_id(pid);
+        if (!child) {
             return (uint64_t)RDNX_E_NOTFOUND;
         }
-        child->waited = 1;
-        if (user_status) {
-            *user_status = child->exit_code;
+        if (child->parent_task_id != self->task_id) {
+            return (uint64_t)RDNX_E_DENIED;
         }
-        child->state = TASK_STATE_DEAD;
-        task_destroy(child);
-        return pid;
-    }
 
-    return (uint64_t)RDNX_E_BUSY;
+        scheduler_reap_finished();
+        bool child_threads_gone = (child->thread_count == 0);
+        bool child_exited = child->exited ||
+                            (child->state == TASK_STATE_ZOMBIE) ||
+                            (child->state == TASK_STATE_DEAD);
+        if (child_threads_gone && child_exited) {
+            if (child->waited) {
+                return (uint64_t)RDNX_E_NOTFOUND;
+            }
+            child->waited = 1;
+            if (user_status) {
+                *user_status = child->exit_code;
+            }
+            child->state = TASK_STATE_DEAD;
+            task_destroy(child);
+            return pid;
+        }
+        return (uint64_t)RDNX_E_BUSY;
+    }
 }
