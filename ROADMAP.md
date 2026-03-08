@@ -5,7 +5,7 @@ Last updated: 2026-03-08
 This roadmap is intentionally high level. Detailed execution plans live in:
 - `docs/ru/execution_plan_os_foundation.md`
 - `docs/ru/industrial_gap.md`
-- `docs/posix-plan.md`
+- `docs/archive/posix-plan.md` (historical)
 
 ## Current baseline (already done)
 - [x] x86_64 long mode and high-half kernel boot

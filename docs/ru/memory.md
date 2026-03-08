@@ -36,7 +36,7 @@
 
 ## Модель памяти
 
-Формальное описание владения, OOM и init‑секций см. в `memory_model.md`.
+Историческое формальное описание владения/OOM: `docs/ru/archive/memory_model.md`.
 
 ## Контракты
 
@@ -60,10 +60,10 @@
 Для целевого дизайна используем подходы из документации XNU `doc/vm`:
 [xnu/doc/vm](https://github.com/apple-oss-distributions/xnu/tree/main/doc/vm)
 
-Memory pressure policy (jetsam/freezer/warnings) вынесена отдельно:
-`memorystatus.md`.
+Исторические заметки по memory pressure policy:
+`docs/ru/archive/memorystatus.md`.
 
 ## Где смотреть в коде
 
 - `kernel/common` и `kernel/arch/x86_64`.
-- Текущий план — в `docs/PLAN.md`.
+- Актуальный план — `execution_plan_os_foundation.md`.

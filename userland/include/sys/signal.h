@@ -2,7 +2,7 @@
 #define _RODNIX_USERLAND_SYS_SIGNAL_H
 
 /*
- * Minimal signal constants aligned to imported FreeBSD headers.
+ * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
  * Source: third_party/bsd/freebsd-src/include/signal.h
  */
 #define SIG2STR_MAX 32

@@ -137,7 +137,7 @@ Sprint B:
 
 ## Связанные документы
 
-- `docs/posix-plan.md`
-- `docs/ru/development_plan.md`
+- `docs/ru/p0_focus_plan.md`
 - `docs/ru/industrial_gap.md`
-- `docs/ru/implementation_diffs.md`
+- `docs/ru/unix_process_model.md`
+- `docs/archive/posix-plan.md` (архив, только как история решений)

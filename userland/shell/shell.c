@@ -10,6 +10,8 @@
 
 #define SYS_NOP 0
 #define VFS_OPEN_READ 1
+#define RDNX_E_BUSY (-5)
+#define SH_WAITPID_MAX_POLLS 4000000
 
 #define FD_STDIN  0
 #define FD_STDOUT 1
@@ -17,7 +19,8 @@
 #define SH_LINE_MAX 128
 #define SH_ARG_MAX  16
 #define SH_ANSI_CLEAR  "\x1b[2J"
-#define SH_ANSI_BOTTOM "\x1b[25;1H"
+/* Move cursor to last visible row (console clamps oversized row values). */
+#define SH_ANSI_BOTTOM "\x1b[999;1H"
 #define SH_PATH_MAX 256
 
 typedef struct {
@@ -333,6 +336,29 @@ static void cmd_ttytest(void)
     (void)write_str("\n");
 }
 
+static int cmd_ls_builtin(const char* path)
+{
+    struct dirent ents[32];
+    long n = posix_readdir(path, ents, sizeof(ents));
+    if (n < 0) {
+        (void)write_str("ls: readdir failed\n");
+        return -1;
+    }
+
+    int count = (int)(n / (long)sizeof(struct dirent));
+    for (int i = 0; i < count; i++) {
+        if (ents[i].d_name[0] == '\0') {
+            continue;
+        }
+        (void)write_str(ents[i].d_name);
+        if (ents[i].d_type == DT_DIR) {
+            (void)write_str("/");
+        }
+        (void)write_str("\n");
+    }
+    return 0;
+}
+
 static int cmd_run(int argc, char** argv, int verbose)
 {
     int status = 0;
@@ -367,10 +393,19 @@ static int cmd_run(int argc, char** argv, int verbose)
         write_u64((uint64_t)pid);
         (void)write_str("\n");
     }
-    long wr = posix_waitpid(pid, &status);
-    if (wr < 0) {
-        (void)write_str("run: waitpid failed\n");
-        return -1;
+    {
+        long wr = RDNX_E_BUSY;
+        for (int i = 0; i < SH_WAITPID_MAX_POLLS; i++) {
+            wr = posix_waitpid(pid, &status);
+            if (wr == pid || wr != RDNX_E_BUSY) {
+                break;
+            }
+            (void)rdnx_syscall0(SYS_NOP);
+        }
+        if (wr != pid) {
+            (void)write_str("run: waitpid failed\n");
+            return -1;
+        }
     }
     if (verbose) {
         (void)write_str("run: exit=");
@@ -436,6 +471,18 @@ static int cmd_autorun(int argc, char** argv)
         path_buf[p++] = argv[0][i];
     }
     path_buf[p] = '\0';
+
+    /*
+     * Fast-fail unknown command without spawning a process:
+     * keeps interactive UX clean (no scheduler/loader debug noise on typos).
+     */
+    {
+        long fd = posix_open(path_buf, VFS_OPEN_READ);
+        if (fd < 0) {
+            return -1;
+        }
+        (void)posix_close((int)fd);
+    }
 
     argv[0] = path_buf;
     return cmd_run(argc, argv, 0);
@@ -509,18 +556,12 @@ int main(void)
         } else if (str_eq(argv[0], "uname")) {
             cmd_uname();
         } else if (str_eq(argv[0], "ls")) {
-            char path_buf[SH_PATH_MAX];
-            char* av[3];
-            av[0] = "/bin/ls";
             if (argc >= 2 && argv[1]) {
+                char path_buf[SH_PATH_MAX];
                 resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
-                av[1] = path_buf;
-                av[2] = 0;
-                (void)cmd_run(2, av, 0);
+                (void)cmd_ls_builtin(path_buf);
             } else {
-                av[1] = shell_cwd;
-                av[2] = 0;
-                (void)cmd_run(2, av, 0);
+                (void)cmd_ls_builtin(shell_cwd);
             }
         } else if (str_eq(argv[0], "cat")) {
             char path_buf[SH_PATH_MAX];

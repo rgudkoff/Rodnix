@@ -31,6 +31,14 @@
 - Неизвестный номер возвращает `RDNX_E_UNSUPPORTED`.
 - Временная модель: `open` возвращает fd из per‑task таблицы (простая фиксированная таблица).
 
+### Семантика `SYS_NOP`
+
+`SYS_NOP` в RodNIX v1 трактуется как **cooperative yield point** для userland
+polling-циклов: вызов может уступить квант планировщику (`scheduler_yield`),
+давая прогресс другим runnable-потокам (child/reaper/wakeup-path).
+
+Это контрактное поведение, а не "строго пустой" syscall.
+
 ### UNAME
 
 - Syscall: `POSIX_SYS_UNAME`.

@@ -99,7 +99,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check check-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls
+.PHONY: all clean run iso debug check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -233,6 +233,18 @@ check-deps:
 check-abi:
 	@python3 scripts/check_bsd_abi_headers.py
 
+sync-bsd-abi:
+	@python3 scripts/sync_bsd_abi_headers.py
+
+check-contract:
+	@bash scripts/ci/contract_qemu.sh
+
+check-contract-10:
+	@for i in $$(seq 1 10); do \
+		echo "[contract] run $$i/10"; \
+		bash scripts/ci/contract_qemu.sh || exit 1; \
+	done
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -258,6 +270,9 @@ help:
 	@echo "  debug       - Run with debugger support"
 	@echo "  check       - Verify Multiboot2 header"
 	@echo "  check-abi   - Verify userland BSD ABI constants"
+	@echo "  check-contract - Run contract CI smoke in QEMU"
+	@echo "  check-contract-10 - Run contract smoke 10 times"
+	@echo "  sync-bsd-abi - Sync userland ABI headers from FreeBSD vendor snapshot"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
 	@echo ""

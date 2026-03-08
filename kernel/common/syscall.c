@@ -1,5 +1,6 @@
 #include "syscall.h"
 #include "../posix/posix_syscall.h"
+#include "scheduler.h"
 #include "../../include/error.h"
 #include "../../include/console.h"
 #include <stddef.h>
@@ -20,6 +21,7 @@ static uint64_t sys_nop(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
+    scheduler_yield();
     return RDNX_OK;
 }
 

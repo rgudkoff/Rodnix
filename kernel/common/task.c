@@ -36,6 +36,16 @@ RB_PROTOTYPE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
 RB_GENERATE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
 static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
 
+static inline irql_t task_registry_lock(void)
+{
+    return set_irql(IRQL_HIGH);
+}
+
+static inline void task_registry_unlock(irql_t old)
+{
+    (void)set_irql(old);
+}
+
 #define STACK_CACHE_SIZE 32
 static void* stack_cache[STACK_CACHE_SIZE] = {0};
 static uint32_t stack_cache_count = 0;
@@ -186,6 +196,7 @@ task_t* task_create(void)
         return NULL;
     }
 
+    irql_t old = task_registry_lock();
     task->task_id = next_task_id++;
     task->parent_task_id = 0;
     task->address_space = NULL;
@@ -209,6 +220,7 @@ task_t* task_create(void)
     task->next_all = all_tasks_head;
     all_tasks_head = task;
     (void)RB_INSERT(task_id_index, &all_tasks_by_id, task);
+    task_registry_unlock(old);
     task->arch_specific = NULL;
     return task;
 }
@@ -218,6 +230,7 @@ void task_destroy(task_t* task)
     if (!task) {
         return;
     }
+    irql_t old = task_registry_lock();
     if (all_tasks_head == task) {
         all_tasks_head = task->next_all;
     } else {
@@ -229,6 +242,7 @@ void task_destroy(task_t* task)
         }
     }
     (void)RB_REMOVE(task_id_index, &all_tasks_by_id, task);
+    task_registry_unlock(old);
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         vfs_file_t* file = (vfs_file_t*)task->fd_table[i];
         if (file) {
@@ -247,7 +261,10 @@ task_t* task_find_by_id(uint64_t task_id)
     }
     task_t key = {0};
     key.task_id = task_id;
-    return RB_FIND(task_id_index, &all_tasks_by_id, &key);
+    irql_t old = task_registry_lock();
+    task_t* found = RB_FIND(task_id_index, &all_tasks_by_id, &key);
+    task_registry_unlock(old);
+    return found;
 }
 
 void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid)

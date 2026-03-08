@@ -134,7 +134,82 @@ static void run_smoke(void)
             }
         }
     }
+
     (void)write_str("[USER] init: POSIX smoke test done\n");
+}
+
+static int file_exists(const char* path)
+{
+    long fd = posix_open(path, VFS_OPEN_READ);
+    if (fd < 0) {
+        return 0;
+    }
+    (void)posix_close((int)fd);
+    return 1;
+}
+
+static void ct_log(const char* id, const char* verdict, const char* msg)
+{
+    (void)write_str("[CT] ");
+    (void)write_str(id);
+    (void)write_str(" ");
+    (void)write_str(verdict);
+    (void)write_str(" ");
+    (void)write_str(msg);
+    (void)write_str("\n");
+}
+
+static void run_contract_mode_if_enabled(void)
+{
+    if (!file_exists("/etc/contract.auto")) {
+        return;
+    }
+
+    int ok = 1;
+    (void)write_str("[CT] MODE enabled\n");
+
+    {
+        char b = 0;
+        long fd = posix_open("/etc/hostname", VFS_OPEN_READ);
+        if (fd < 0) {
+            ct_log("CT-007", "FAIL", "open failed");
+            ok = 0;
+        } else if (posix_close((int)fd) < 0) {
+            ct_log("CT-007", "FAIL", "close failed");
+            ok = 0;
+        } else if (posix_read((int)fd, &b, 1) < 0) {
+            ct_log("CT-007", "PASS", "close invalidates fd");
+        } else {
+            ct_log("CT-007", "FAIL", "read after close succeeded");
+            ok = 0;
+        }
+    }
+
+    {
+        char b = 0;
+        if (posix_read(-1, &b, 1) < 0) {
+            ct_log("CT-008", "PASS", "read on invalid fd fails");
+        } else {
+            ct_log("CT-008", "FAIL", "read on invalid fd succeeded");
+            ok = 0;
+        }
+    }
+
+    {
+        long pid = posix_spawn("/bin/true", 0);
+        if (pid > 0) {
+            ct_log("CT-001", "PASS", "spawn creates child pid");
+        } else {
+            ct_log("CT-001", "FAIL", "spawn failed");
+            ok = 0;
+        }
+    }
+
+    if (ok) {
+        (void)write_str("[CT] ALL PASS\n");
+    } else {
+        (void)write_str("[CT] ALL FAIL\n");
+    }
 }
 
 int main(void)
@@ -144,6 +219,7 @@ int main(void)
     (void)write_str("\n");
     print_hostname();
     run_smoke();
+    run_contract_mode_if_enabled();
 
     (void)write_str("[USER] init: exec /bin/sh\n");
     long ret = posix_exec("/bin/sh");

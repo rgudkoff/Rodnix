@@ -2,13 +2,13 @@
 #define _RODNIX_USERLAND_SYS_MMAN_H
 
 /*
- * Minimal mmap/protection flags aligned to FreeBSD numeric values.
+ * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
  * Source: third_party/bsd/freebsd-src/sys/sys/mman.h
  */
-#define PROT_NONE   0x00
-#define PROT_READ   0x01
-#define PROT_WRITE  0x02
-#define PROT_EXEC   0x04
+#define PROT_NONE   0x0000
+#define PROT_READ   0x0001
+#define PROT_WRITE  0x0002
+#define PROT_EXEC   0x0004
 
 #define MAP_SHARED   0x0001
 #define MAP_PRIVATE  0x0002

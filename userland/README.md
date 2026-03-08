@@ -43,6 +43,13 @@ FreeBSD-каноном (`third_party/bsd/freebsd-src/sys/sys/*`) и провер
 автоматически в `make -C userland` через:
 - `scripts/check_bsd_abi_headers.py`
 
+Синхронизация ABI-заголовков с FreeBSD выполняется отдельной командой:
+- `make sync-bsd-abi` (из корня репозитория), либо
+- `make -C userland sync-bsd-abi`
+
+После синхронизации рекомендуется запускать:
+- `make check-abi`
+
 Модель команд (принята как в FreeBSD):
 - команды, меняющие состояние shell-процесса (например, `cd`) должны быть builtin;
 - файловые/системные утилиты (`ls`, `cat`, `echo`, и т.п.) развиваются как

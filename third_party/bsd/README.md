@@ -29,3 +29,20 @@ Current snapshot includes:
 - Build `userland` compatibility headers from vetted BSD constants/types.
 - Introduce minimal libc/syscall shim to run external userland programs.
 - Keep `third_party/bsd/freebsd-src` as immutable reference baseline.
+
+## ABI Sync Workflow
+
+For POSIX ABI constants used by Rodnix userland (`errno/fcntl/wait/signal/stat/mman`):
+
+1. Sync generated headers from FreeBSD snapshot:
+   - `make sync-bsd-abi`
+2. Validate numeric compatibility:
+   - `make check-abi`
+
+This workflow updates:
+- `userland/include/sys/errno.h`
+- `userland/include/sys/fcntl.h`
+- `userland/include/sys/wait.h`
+- `userland/include/sys/signal.h`
+- `userland/include/sys/stat.h`
+- `userland/include/sys/mman.h`

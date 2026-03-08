@@ -20,6 +20,11 @@ KERNEL_C_SRCS += \
 	kernel/common/tracev2.c \
 	kernel/common/tty_console.c \
 	kernel/common/waitq.c \
+	kernel/unix/uaccess/unix_uaccess.c \
+	kernel/unix/fd/unix_fd.c \
+	kernel/unix/fs/unix_fs.c \
+	kernel/unix/exec/unix_exec.c \
+	kernel/unix/process/unix_process.c \
 	kernel/posix/posix_syscall.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \

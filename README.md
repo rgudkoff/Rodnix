@@ -43,6 +43,7 @@ High-level layout (simplified):
 - docs: design and migration documents
 
 Detailed design notes:
+- docs/README.md
 - ARCHITECTURE.md
 - 64BIT_MIGRATION.md
  - docs/ru/industrial_readiness.md (RU, criteria for industrial readiness)

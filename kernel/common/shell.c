@@ -42,7 +42,7 @@
 #define SHELL_MAX_ARGS         16
 #define SHELL_PROMPT           "  rodnix> "
 #define SHELL_ANSI_CLEAR       "\x1b[2J"
-#define SHELL_ANSI_BOTTOM      "\x1b[25;1H"
+#define SHELL_ANSI_BOTTOM      "\x1b[999;1H"
 
 typedef struct {
     char* path;

@@ -51,5 +51,5 @@ Linux-подобных монолитов.
 ## Источники истины
 
 - Фактическое состояние подсистем — в коде.
-- Архитектурные решения — в `architecture.md` и `fabric.md`.
-- План работ — в `development_plan.md` и `docs/PLAN.md`.
+- Архитектурные решения — в `architecture.md`.
+- План работ — в `execution_plan_os_foundation.md` и `p0_focus_plan.md`.
