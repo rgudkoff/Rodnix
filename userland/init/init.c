@@ -161,6 +161,32 @@ static void ct_log(const char* id, const char* verdict, const char* msg)
     (void)write_str("\n");
 }
 
+static void run_ifconfig_smoke_if_enabled(void)
+{
+    if (!file_exists("/etc/smoke.ifconfig.auto")) {
+        return;
+    }
+
+    int status = -1;
+    const char* av[2];
+    av[0] = "/bin/ifconfig";
+    av[1] = 0;
+
+    (void)write_str("[SMK] IFCONFIG START\n");
+    long pid = posix_spawn("/bin/ifconfig", av);
+    if (pid <= 0) {
+        (void)write_str("[SMK] IFCONFIG FAIL spawn\n");
+        return;
+    }
+
+    long wr = waitpid((pid_t)pid, &status, 0);
+    if (wr == pid && status == 0) {
+        (void)write_str("[SMK] IFCONFIG PASS\n");
+    } else {
+        (void)write_str("[SMK] IFCONFIG FAIL wait/status\n");
+    }
+}
+
 static void run_contract_mode_if_enabled(void)
 {
     if (!file_exists("/etc/contract.auto")) {
@@ -246,6 +272,111 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        /* CT-014/CT-015: fd inheritance + close-on-exec in spawn+exec flow. */
+        int status = -1;
+        long fd = posix_open("/etc/hostname", VFS_OPEN_READ);
+        if (fd < 0) {
+            ct_log("CT-014", "FAIL", "open prerequisite failed");
+            ct_log("CT-015", "FAIL", "open prerequisite failed");
+            ok = 0;
+        } else if (fd != 3) {
+            ct_log("CT-014", "FAIL", "expected inherited probe fd=3");
+            ct_log("CT-015", "FAIL", "expected inherited probe fd=3");
+            ok = 0;
+            (void)posix_close((int)fd);
+        } else {
+            if (fcntl((int)fd, F_GETFD, 0) != 0) {
+                ct_log("CT-014", "FAIL", "new fd unexpectedly has CLOEXEC");
+                ok = 0;
+            }
+            long pid = posix_spawn("/bin/contract_fd_inherit", 0);
+            if (pid <= 0) {
+                ct_log("CT-014", "FAIL", "inherit spawn failed");
+                ct_log("CT-015", "FAIL", "inherit spawn prerequisite failed");
+                ok = 0;
+            } else {
+                long wr = waitpid((pid_t)pid, &status, 0);
+                if (wr == pid && status == 0) {
+                    ct_log("CT-014", "PASS", "spawn inherits open fd");
+                } else {
+                    ct_log("CT-014", "FAIL", "child could not use inherited fd");
+                    (void)write_str("[CT] CT-014 DBG status=");
+                    write_u64((uint64_t)(uint32_t)status);
+                    (void)write_str("\n");
+                    ok = 0;
+                }
+            }
+
+            if (fcntl((int)fd, F_SETFD, FD_CLOEXEC) < 0) {
+                ct_log("CT-015", "FAIL", "F_SETFD failed");
+                ok = 0;
+            } else if ((fcntl((int)fd, F_GETFD, 0) & FD_CLOEXEC) == 0) {
+                ct_log("CT-015", "FAIL", "F_GETFD missing CLOEXEC flag");
+                ok = 0;
+            } else {
+                long pid2 = posix_spawn("/bin/contract_fd_inherit", 0);
+                if (pid2 <= 0) {
+                    ct_log("CT-015", "FAIL", "cloexec spawn failed");
+                    ok = 0;
+                } else {
+                    long wr2 = waitpid((pid_t)pid2, &status, 0);
+                    if (wr2 == pid2 && status == 2) {
+                        ct_log("CT-015", "PASS", "CLOEXEC closes fd in spawned image");
+                    } else {
+                        ct_log("CT-015", "FAIL", "fd leaked across exec with CLOEXEC");
+                        (void)write_str("[CT] CT-015 DBG status=");
+                        write_u64((uint64_t)(uint32_t)status);
+                        (void)write_str("\n");
+                        ok = 0;
+                    }
+                }
+            }
+
+            (void)posix_close((int)fd);
+        }
+    }
+
+    {
+        /*
+         * CT-003/CT-011:
+         * Spawn probe image that exec()'s into /bin/contract_exec_after.
+         * Child exit status encodes:
+         *   - low 16 bits: post-exec PID
+         *   - bit 16: image-specific state reset marker
+         */
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_exec_probe", 0);
+        if (pid <= 0) {
+            ct_log("CT-003", "FAIL", "exec probe spawn failed");
+            ct_log("CT-011", "FAIL", "exec probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr != pid) {
+                ct_log("CT-003", "FAIL", "exec probe waitpid failed");
+                ct_log("CT-011", "FAIL", "exec probe waitpid failed");
+                ok = 0;
+            } else {
+                uint32_t st = (uint32_t)status;
+                uint32_t observed_pid = st & 0xFFFFu;
+                uint32_t image_reset = st & 0x10000u;
+                if (observed_pid == (((uint32_t)pid) & 0xFFFFu)) {
+                    ct_log("CT-003", "PASS", "exec preserves pid across image switch");
+                } else {
+                    ct_log("CT-003", "FAIL", "exec pid mismatch");
+                    ok = 0;
+                }
+                if (image_reset != 0u) {
+                    ct_log("CT-011", "PASS", "exec resets image-specific state");
+                } else {
+                    ct_log("CT-011", "FAIL", "exec image-specific state leaked");
+                    ok = 0;
+                }
+            }
+        }
+    }
+
+    {
         /* Race case: child may exit before parent enters waitpid. */
         int status = -1;
         long pid = posix_spawn("/bin/true", 0);
@@ -291,6 +422,7 @@ int main(void)
     (void)write_str("\n");
     print_hostname();
     run_smoke();
+    run_ifconfig_smoke_if_enabled();
     run_contract_mode_if_enabled();
 
     (void)write_str("[USER] init: exec /bin/sh\n");

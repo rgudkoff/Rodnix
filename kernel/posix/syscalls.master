@@ -27,3 +27,8 @@
 17 spawn
 18 waitpid
 19 readdir
+20 fcntl
+21 netiflist
+22 mmap
+23 munmap
+24 brk

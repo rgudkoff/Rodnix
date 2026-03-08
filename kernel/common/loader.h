@@ -5,6 +5,13 @@
 #include <stdint.h>
 
 #define LOADER_USER_STACK_PAGES 4
+#define LOADER_MAX_SEGMENTS 16
+
+typedef struct {
+    uint64_t start;
+    uint64_t end;
+    uint32_t prot;
+} loader_segment_t;
 
 typedef struct {
     uint64_t pml4_phys;
@@ -12,6 +19,9 @@ typedef struct {
     uint64_t user_stack;
     uint64_t stack_bottom;
     uint64_t stack_phys[LOADER_USER_STACK_PAGES];
+    uint32_t seg_count;
+    loader_segment_t segs[LOADER_MAX_SEGMENTS];
+    uint64_t brk_base;
 } loader_image_t;
 
 int loader_init(void);

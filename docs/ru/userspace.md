@@ -43,6 +43,10 @@
   На текущем этапе это виртуальные VFS-узлы (до выделения отдельного `devfs`).
 - `ttytest` используется для ручной проверки line discipline (`Ctrl-U`,
   `Ctrl-D`, backspace, canonical newline).
+- Добавлена утилита `/bin/ifconfig` (userspace), работающая через syscall
+  `netiflist` и Fabric net-service.
+- Для CI есть авто-сценарий `/etc/smoke.ifconfig.auto`:
+  `init` запускает `/bin/ifconfig`, ждёт завершения и печатает `[SMK]` маркеры.
 - Таблица POSIX syscall-ов теперь ведётся в стиле XNU:
   - master-файл: `kernel/posix/syscalls.master`;
   - генерация: `scripts/mkposixsyscalls.py`;

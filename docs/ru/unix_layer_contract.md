@@ -11,6 +11,8 @@
   `spawn/exec/exit/wait` поведение на уровне Unix-модели процесса.
 - File descriptor semantics:
   таблица FD, правила `open/close/read/write`, Unix-ошибки.
+  Нормативно: `FD_CLOEXEC` трактуется как флаг descriptor entry процесса;
+  `spawn` копирует FD-таблицу; `exec` применяет `CLOEXEC` до входа в новый image.
 - Path-based syscall semantics:
   поведение `readdir/open` как Unix API-контракт.
 - User-facing copyin/copyout policy для Unix syscall-слоя

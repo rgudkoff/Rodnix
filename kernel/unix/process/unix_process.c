@@ -1,4 +1,5 @@
 #include "../unix_layer.h"
+#include "../../common/bootlog.h"
 #include "../../common/scheduler.h"
 #include "../../common/waitq.h"
 #include "../../core/interrupts.h"
@@ -45,8 +46,10 @@ uint64_t unix_proc_exit(uint64_t status)
         unix_proc_notify_waiters(task->parent_task_id);
     }
     thread_t* cur = thread_get_current();
-    kprintf("[EXIT] thread %llu exiting\n",
-            (unsigned long long)(cur ? cur->thread_id : 0));
+    if (bootlog_is_verbose()) {
+        kprintf("[EXIT] thread %llu exiting\n",
+                (unsigned long long)(cur ? cur->thread_id : 0));
+    }
     scheduler_exit_current();
     return 0;
 }

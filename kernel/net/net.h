@@ -14,5 +14,6 @@ typedef struct net_packet {
 int net_init(void);
 int net_loopback_send(const net_packet_t* pkt);
 int net_loopback_recv(net_packet_t* out);
+int net_loopback_frame_tx(const void* frame, uint32_t len);
 
 #endif /* _RODNIX_NET_H */

@@ -53,6 +53,10 @@ static void unix_spawn_thread(void* arg)
         scheduler_exit_current();
         return;
     }
+    task_t* self = task_get_current();
+    if (self) {
+        unix_apply_cloexec(self);
+    }
     int ret = loader_execve(path_buf, argc_local, argv_local);
     if (sa) {
         for (int i = 0; i < argc_local; i++) {
@@ -80,6 +84,10 @@ uint64_t unix_fs_exec(uint64_t user_path_ptr)
     int rc = unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
+    }
+    task_t* self = task_get_current();
+    if (self) {
+        unix_apply_cloexec(self);
     }
     int ret = loader_exec(path_buf);
     return (uint64_t)ret;
@@ -118,7 +126,15 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
 
-    if (unix_bind_stdio_to_console(child) != RDNX_OK) {
+    if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_GENERIC;
+    }
+    if (!child->fd_table[0] && !child->fd_table[1] && !child->fd_table[2]) {
+        (void)unix_bind_stdio_to_console(child);
+    }
+
+    if (!child->fd_table[0] || !child->fd_table[1] || !child->fd_table[2]) {
         task_destroy(child);
         return (uint64_t)RDNX_E_GENERIC;
     }

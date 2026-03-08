@@ -3,6 +3,12 @@
 #include "../../common/heap.h"
 #include "../../../include/error.h"
 
+enum {
+    UNIX_F_GETFD = 1,
+    UNIX_F_SETFD = 2,
+    UNIX_FD_CLOEXEC = 1
+};
+
 static int unix_bind_fd_to_console(task_t* task, int fd, int open_flags)
 {
     if (!task || fd < 0 || fd >= TASK_MAX_FD) {
@@ -40,6 +46,59 @@ int unix_bind_stdio_to_console(task_t* task)
         return ret;
     }
     return unix_bind_fd_to_console(task, 2, VFS_OPEN_WRITE);
+}
+
+int unix_clone_fds_for_spawn(const task_t* parent, task_t* child)
+{
+    if (!parent || !child) {
+        return RDNX_E_INVALID;
+    }
+    for (int fd = 0; fd < TASK_MAX_FD; fd++) {
+        vfs_file_t* src = (vfs_file_t*)parent->fd_table[fd];
+        if (!src) {
+            child->fd_table[fd] = NULL;
+            child->fd_flags[fd] = 0;
+            continue;
+        }
+
+        vfs_file_t* copy = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+        if (!copy) {
+            for (int i = 0; i < TASK_MAX_FD; i++) {
+                vfs_file_t* old = (vfs_file_t*)child->fd_table[i];
+                if (old) {
+                    vfs_close(old);
+                    kfree(old);
+                    child->fd_table[i] = NULL;
+                    child->fd_flags[i] = 0;
+                }
+            }
+            return RDNX_E_NOMEM;
+        }
+
+        *copy = *src;
+        child->fd_table[fd] = copy;
+        child->fd_flags[fd] = parent->fd_flags[fd];
+    }
+    return RDNX_OK;
+}
+
+void unix_apply_cloexec(task_t* task)
+{
+    if (!task) {
+        return;
+    }
+    for (int fd = 0; fd < TASK_MAX_FD; fd++) {
+        if ((task->fd_flags[fd] & UNIX_FD_CLOEXEC) == 0) {
+            continue;
+        }
+        vfs_file_t* file = (vfs_file_t*)task->fd_table[fd];
+        if (file) {
+            vfs_close(file);
+            kfree(file);
+        }
+        task->fd_table[fd] = NULL;
+        task->fd_flags[fd] = 0;
+    }
 }
 
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
@@ -127,4 +186,23 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
     }
     int ret = vfs_write(file, buf, n);
     return (ret < 0) ? (uint64_t)RDNX_E_GENERIC : (uint64_t)ret;
+}
+
+uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
+{
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || !task->fd_table[fdi]) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    switch ((int)cmd) {
+        case UNIX_F_GETFD:
+            return (uint64_t)(task->fd_flags[fdi] & UNIX_FD_CLOEXEC);
+        case UNIX_F_SETFD:
+            task->fd_flags[fdi] = ((uint8_t)arg) & UNIX_FD_CLOEXEC;
+            return (uint64_t)RDNX_OK;
+        default:
+            return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
 }

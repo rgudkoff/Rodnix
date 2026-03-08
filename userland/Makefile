@@ -28,7 +28,9 @@ ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
 CAT_SRCS = bin/cat.c
 TRUE_SRCS = bin/true.c
+IFCONFIG_SRCS = bin/ifconfig.c
 CONTRACT_FD_SRCS = bin/contract_fd.c
+CONTRACT_FD_INHERIT_SRCS = bin/contract_fd_inherit.c
 CONTRACT_SPAWN_WAIT_SRCS = bin/contract_spawn_wait.c
 CONTRACT_EXEC_PROBE_SRCS = bin/contract_exec_probe.c
 CONTRACT_EXEC_AFTER_SRCS = bin/contract_exec_after.c
@@ -40,7 +42,9 @@ ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ)
 LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ)
 CAT_OBJS = $(addprefix $(BUILD_DIR)/, $(CAT_SRCS:.c=.o)) $(CRT0_OBJ)
 TRUE_OBJS = $(addprefix $(BUILD_DIR)/, $(TRUE_SRCS:.c=.o)) $(CRT0_OBJ)
+IFCONFIG_OBJS = $(addprefix $(BUILD_DIR)/, $(IFCONFIG_SRCS:.c=.o)) $(CRT0_OBJ)
 CONTRACT_FD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_SRCS:.c=.o)) $(CRT0_OBJ)
+CONTRACT_FD_INHERIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_INHERIT_SRCS:.c=.o)) $(CRT0_OBJ)
 CONTRACT_SPAWN_WAIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_SPAWN_WAIT_SRCS:.c=.o)) $(CRT0_OBJ)
 CONTRACT_EXEC_PROBE_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_PROBE_SRCS:.c=.o)) $(CRT0_OBJ)
 CONTRACT_EXEC_AFTER_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_AFTER_SRCS:.c=.o)) $(CRT0_OBJ)
@@ -51,7 +55,9 @@ ECHO_ELF = $(BUILD_DIR)/echo.elf
 LS_ELF = $(BUILD_DIR)/ls.elf
 CAT_ELF = $(BUILD_DIR)/cat.elf
 TRUE_ELF = $(BUILD_DIR)/true.elf
+IFCONFIG_ELF = $(BUILD_DIR)/ifconfig.elf
 CONTRACT_FD_ELF = $(BUILD_DIR)/contract_fd.elf
+CONTRACT_FD_INHERIT_ELF = $(BUILD_DIR)/contract_fd_inherit.elf
 CONTRACT_SPAWN_WAIT_ELF = $(BUILD_DIR)/contract_spawn_wait.elf
 CONTRACT_EXEC_PROBE_ELF = $(BUILD_DIR)/contract_exec_probe.elf
 CONTRACT_EXEC_AFTER_ELF = $(BUILD_DIR)/contract_exec_after.elf
@@ -61,14 +67,16 @@ ECHO_BIN = $(BIN_DIR)/echo
 LS_BIN = $(BIN_DIR)/ls
 CAT_BIN = $(BIN_DIR)/cat
 TRUE_BIN = $(BIN_DIR)/true
+IFCONFIG_BIN = $(BIN_DIR)/ifconfig
 CONTRACT_FD_BIN = $(BIN_DIR)/contract_fd
+CONTRACT_FD_INHERIT_BIN = $(BIN_DIR)/contract_fd_inherit
 CONTRACT_SPAWN_WAIT_BIN = $(BIN_DIR)/contract_spawn_wait
 CONTRACT_EXEC_PROBE_BIN = $(BIN_DIR)/contract_exec_probe
 CONTRACT_EXEC_AFTER_BIN = $(BIN_DIR)/contract_exec_after
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -108,9 +116,17 @@ $(TRUE_ELF): $(TRUE_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(TRUE_OBJS)
 
+$(IFCONFIG_ELF): $(IFCONFIG_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(IFCONFIG_OBJS)
+
 $(CONTRACT_FD_ELF): $(CONTRACT_FD_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_FD_OBJS)
+
+$(CONTRACT_FD_INHERIT_ELF): $(CONTRACT_FD_INHERIT_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_FD_INHERIT_OBJS)
 
 $(CONTRACT_SPAWN_WAIT_ELF): $(CONTRACT_SPAWN_WAIT_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -148,7 +164,15 @@ $(TRUE_BIN): $(TRUE_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
+$(IFCONFIG_BIN): $(IFCONFIG_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
 $(CONTRACT_FD_BIN): $(CONTRACT_FD_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CONTRACT_FD_INHERIT_BIN): $(CONTRACT_FD_INHERIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

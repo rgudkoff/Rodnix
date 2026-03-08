@@ -11,10 +11,13 @@
 
 #include "../../../include/console.h"
 #include "../../../include/debug.h"
+#include "../../../include/error.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
 #include "../../common/syscall.h"
 #include "../../common/tracev2.h"
+#include "../../core/task.h"
+#include "../../vm/vm_fault.h"
 #include "interrupt_frame.h"
 #include "types.h"
 #include "config.h"
@@ -283,6 +286,14 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     
     /* Handle exception (0-31) */
     if (vector < 32) {
+        if (vector == 14) {
+            uint64_t cr2 = 0;
+            __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            task_t* task = task_get_current();
+            if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
+                return regs;
+            }
+        }
         tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {

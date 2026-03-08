@@ -11,7 +11,9 @@
 #include "../arch/x86_64/config.h"
 #include "../fs/vfs.h"
 #include "../core/task.h"
+#include "../vm/vm_map.h"
 #include "heap.h"
+#include "bootlog.h"
 #include "../../include/console.h"
 #include "../../include/error.h"
 #include "../../include/common.h"
@@ -81,7 +83,8 @@ static int loader_read_file(const char* path, uint8_t** out_buf, size_t* out_siz
 static int loader_map_segment(uint64_t pml4_phys,
                               const uint8_t* image,
                               size_t image_size,
-                              const elf64_phdr_t* ph)
+                              const elf64_phdr_t* ph,
+                              loader_image_t* out_img)
 {
     if (!ph || !image) {
         return RDNX_E_INVALID;
@@ -136,6 +139,15 @@ static int loader_map_segment(uint64_t pml4_phys,
                 memcpy(dst, image + ph->p_offset + seg_off, copy);
             }
         }
+    }
+
+    if (out_img && out_img->seg_count < LOADER_MAX_SEGMENTS) {
+        loader_segment_t* seg = &out_img->segs[out_img->seg_count++];
+        seg->start = page_start;
+        seg->end = page_end;
+        seg->prot = VM_PROT_READ |
+                    ((ph->p_flags & PF_W) ? VM_PROT_WRITE : 0u) |
+                    ((ph->p_flags & PF_X) ? VM_PROT_EXEC : 0u);
     }
 
     return RDNX_OK;
@@ -281,6 +293,8 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         return RDNX_E_NOMEM;
     }
 
+    out->seg_count = 0;
+    out->brk_base = 0;
     const elf64_phdr_t* ph = (const elf64_phdr_t*)(image + eh->e_phoff);
     for (uint16_t i = 0; i < eh->e_phnum; i++) {
         if (ph[i].p_type != PT_LOAD) {
@@ -289,9 +303,13 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         if (ph[i].p_vaddr >= X86_64_KERNEL_VIRT_BASE) {
             return RDNX_E_INVALID;
         }
-        int ret = loader_map_segment(pml4_phys, image, size, &ph[i]);
+        int ret = loader_map_segment(pml4_phys, image, size, &ph[i], out);
         if (ret != RDNX_OK) {
             return ret;
+        }
+        uint64_t seg_end = align_up(ph[i].p_vaddr + ph[i].p_memsz, USER_PAGE_SIZE);
+        if (seg_end > out->brk_base) {
+            out->brk_base = seg_end;
         }
     }
 
@@ -324,12 +342,16 @@ int loader_load_image(const void* image, size_t size)
 
 int loader_enter_user_stub(void)
 {
-    kputs("[LOADER] enter_user_stub\n");
+    if (bootlog_is_verbose()) {
+        kputs("[LOADER] enter_user_stub\n");
+    }
     void* entry = NULL;
     void* user_stack = NULL;
     uint64_t rsp0 = 0;
     if (usermode_prepare_stub(&entry, &user_stack, &rsp0) != 0) {
-        kputs("[LOADER] prepare_stub failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[LOADER] prepare_stub failed\n");
+        }
         return RDNX_E_GENERIC;
     }
     thread_t* cur = thread_get_current();
@@ -337,7 +359,9 @@ int loader_enter_user_stub(void)
         rsp0 = (uint64_t)(uintptr_t)cur->stack + cur->stack_size - 16;
     }
     if (!rsp0) {
-        kputs("[LOADER] rsp0 missing\n");
+        if (bootlog_is_verbose()) {
+            kputs("[LOADER] rsp0 missing\n");
+        }
         return RDNX_E_INVALID;
     }
     usermode_enter(entry, user_stack, rsp0, 0, 0);
@@ -358,7 +382,9 @@ int loader_execve(const char* path, int argc, const char* const argv[])
     size_t size = 0;
     int ret = loader_read_file(path, &buf, &size);
     if (ret != RDNX_OK) {
-        kputs("[LOADER] file not found\n");
+        if (bootlog_is_verbose()) {
+            kputs("[LOADER] file not found\n");
+        }
         return ret;
     }
 
@@ -366,7 +392,9 @@ int loader_execve(const char* path, int argc, const char* const argv[])
     ret = loader_load_elf(buf, size, &img);
     kfree(buf);
     if (ret != RDNX_OK) {
-        kputs("[LOADER] ELF load failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[LOADER] ELF load failed\n");
+        }
         return ret;
     }
 
@@ -388,8 +416,26 @@ int loader_execve(const char* path, int argc, const char* const argv[])
     usermode_set_pml4(img.pml4_phys);
     if (cur && cur->task) {
         cur->task->address_space = (void*)(uintptr_t)img.pml4_phys;
+        if (vm_task_prepare_exec(cur->task, img.pml4_phys) == RDNX_OK) {
+            for (uint32_t i = 0; i < img.seg_count; i++) {
+                const loader_segment_t* s = &img.segs[i];
+                (void)vm_task_map_fixed(cur->task,
+                                        s->start,
+                                        s->end - s->start,
+                                        s->prot,
+                                        VM_MAP_F_PRIVATE);
+            }
+            (void)vm_task_map_fixed(cur->task,
+                                    img.stack_bottom,
+                                    (uint64_t)LOADER_USER_STACK_PAGES * USER_PAGE_SIZE,
+                                    VM_PROT_READ | VM_PROT_WRITE,
+                                    VM_MAP_F_STACK | VM_MAP_F_PRIVATE);
+            (void)vm_task_set_brk_base(cur->task, img.brk_base);
+        }
     }
-    kputs("[LOADER] entering userland\n");
+    if (bootlog_is_verbose()) {
+        kputs("[LOADER] entering userland\n");
+    }
     usermode_enter((void*)(uintptr_t)img.entry,
                    (void*)(uintptr_t)img.user_stack,
                    rsp0,

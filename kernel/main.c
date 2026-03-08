@@ -341,6 +341,8 @@ void kmain(uint32_t magic, void* mbi)
     extern void pci_bus_init(void);
     extern void ps2_bus_init(void);
     extern void hid_kbd_init(void);
+    extern void virtio_net_stub_init(void);
+    extern void e1000_net_stub_init(void);
     
     fabric_init();
     kputs("[INIT-9.1] Fabric initialized\n");
@@ -361,7 +363,15 @@ void kmain(uint32_t magic, void* mbi)
     hid_kbd_init();  /* HID keyboard driver */
     kputs("[INIT-9.5] HID keyboard driver initialized\n");
     __asm__ volatile ("" ::: "memory");
-    
+
+    virtio_net_stub_init(); /* Network driver stub via Fabric */
+    kputs("[INIT-9.5a] Virtio-net stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
+    e1000_net_stub_init(); /* e1000 PCI backend via Fabric */
+    kputs("[INIT-9.5b] e1000-net stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
     kputs("[INIT-9-OK] Fabric initialization complete\n");
     bootlog_mark("fabric", "done");
     __asm__ volatile ("" ::: "memory");

@@ -11,7 +11,14 @@
 
 - Парсинг карты памяти Multiboot2 при загрузке.
 - Физический менеджер памяти на битовой карте (ранняя версия).
-- Задел для страничной адресации.
+- Базовый `pmap`/paging для x86_64 (`create_user_pml4`, map/unmap/switch CR3).
+- Каркас VM-слоя в стиле FreeBSD/XNU:
+  - `vm_map` (таблица регионов процесса),
+  - `vm_object` (жизненный цикл backing object),
+  - `vm_pager` (zero-fill страница для demand path),
+  - `vm_fault_handle` (user page fault recheck/map path).
+- Минимальные POSIX точки входа:
+  - `mmap/munmap/brk` (анонимная память, lazy allocation на page fault).
 
 ## Что планируется (кратко)
 

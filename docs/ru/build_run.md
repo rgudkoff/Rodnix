@@ -30,6 +30,12 @@ make iso
 make run
 ```
 
+Запуск с диагностикой boot/scheduler/usermode:
+
+```bash
+make run debug
+```
+
 Если QEMU пишет `No bootable device`, проверьте, что ISO содержит BIOS boot image:
 
 ```bash
@@ -41,7 +47,7 @@ xorriso -indev rodnix.iso -report_el_torito plain
 ## Отладка (GDB)
 
 ```bash
-make debug
+make gdb
 qemu-system-x86_64 -m 64M -kernel build/rodnix.kernel -s -S &
 gdb build/rodnix.kernel
 ```
@@ -65,3 +71,9 @@ rodnix> run /bin/init
 ```
 
 Ожидается вывод из userland с `POSIX smoke test start/done` и возврат к `rodnix>`.
+
+Сетевой smoke (путь `init -> spawn /bin/ifconfig -> wait -> sh>`):
+
+```bash
+make check-ifconfig-smoke
+```

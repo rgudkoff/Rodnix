@@ -23,8 +23,8 @@
 
 Нет:
 - Политика OOM и поведение при исчерпании памяти (формализовано, но не реализовано полноценно).
-- Явное разделение уровней VM (`vm_map`, `vm_object`, `pmap`) в коде.
-- Формализованный и наблюдаемый page fault path.
+- Полная реализация уровней VM (`vm_map`, `vm_object`, `pager`) до production-семантики.
+- Полноценный page fault path (file-backed fault/COW/write-fault split/signal semantics).
 - Базовая модель page states (active/inactive/wired/COW/pager-backed).
 - Pager/backing-store контракт для анонимной и файловой памяти.
 

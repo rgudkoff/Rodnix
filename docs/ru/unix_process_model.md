@@ -83,6 +83,13 @@ FD semantics:
 1. `read/write` работают только для валидного открытого `fd`.
 2. `close(fd)` инвалидирует номер `fd` для последующих операций.
 3. Правила наследования `fd` при `spawn/exec` не могут меняться неявно.
+4. `FD_CLOEXEC` — свойство **дескриптора в таблице процесса**, а не
+   underlying file object.
+5. `spawn` копирует descriptor table в дочерний процесс (семантика copy), а не
+   разделяет один и тот же массив дескрипторов между parent/child.
+6. `exec` применяет `FD_CLOEXEC` перед входом в новый user image.
+7. `fcntl(F_SETFD)` после `spawn` влияет только на descriptor table текущего
+   процесса и не ретроактивно на sibling/parent descriptor tables.
 
 Path semantics:
 

@@ -26,6 +26,7 @@
 - Реализованы базовые `SETUID/SETEUID/SETGID/SETEGID` (только для root).
 - Добавлены `OPEN/CLOSE/READ/WRITE` поверх VFS (in‑kernel, без userland).
 - Добавлен `POSIX_SYS_EXIT` (wake joiner + завершение user thread).
+- Добавлены `MMAP/MUNMAP/BRK` (минимальный VM v1: anonymous private regions, lazy allocation на page fault).
 - Диспетчер сначала обслуживает `SYS_NOP` (legacy), затем POSIX namespace, чтобы избежать конфликтов номеров.
 - Добавлена базовая валидация user pointers/ranges для `OPEN/READ/WRITE/UNAME`.
 - Неизвестный номер возвращает `RDNX_E_UNSUPPORTED`.
@@ -82,6 +83,12 @@ polling-циклов: вызов может уступить квант план
 - `16` — `EXEC` — experimental
 - `17` — `SPAWN` — experimental
 - `18` — `WAITPID` — experimental
+- `19` — `READDIR` — experimental
+- `20` — `FCNTL` — experimental
+- `21` — `NETIFLIST` — experimental
+- `22` — `MMAP` — experimental
+- `23` — `MUNMAP` — experimental
+- `24` — `BRK` — experimental
 
 Свободные номера помечаются как `RESERVED` и не переиспользуются.
 

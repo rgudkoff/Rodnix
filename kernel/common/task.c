@@ -4,6 +4,7 @@
  */
 
 #include "../core/task.h"
+#include "../vm/vm_map.h"
 #include "heap.h"
 #include "../core/cpu.h"
 #include "../arch/x86_64/interrupt_frame.h"
@@ -200,6 +201,11 @@ task_t* task_create(void)
     task->task_id = next_task_id++;
     task->parent_task_id = 0;
     task->address_space = NULL;
+    task->vm_map = NULL;
+    task->vm_brk_base = 0;
+    task->vm_brk_end = 0;
+    task->vm_mmap_base = 0;
+    task->vm_mmap_hint = 0;
     task->state = TASK_STATE_NEW;
     task->uid = 0;
     task->gid = 0;
@@ -207,6 +213,7 @@ task_t* task_create(void)
     task->egid = 0;
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
+        task->fd_flags[i] = 0;
     }
     task->exit_code = 0;
     task->exited = 0;
@@ -250,7 +257,9 @@ void task_destroy(task_t* task)
             kfree(file);
             task->fd_table[i] = NULL;
         }
+        task->fd_flags[i] = 0;
     }
+    vm_task_destroy(task);
     kfree(task);
 }
 
@@ -301,6 +310,7 @@ int task_fd_alloc(task_t* task, void* handle)
     for (int i = 0; i < TASK_MAX_FD; i++) {
         if (!task->fd_table[i]) {
             task->fd_table[i] = handle;
+            task->fd_flags[i] = 0;
             return i;
         }
     }
@@ -324,6 +334,7 @@ int task_fd_close(task_t* task, int fd)
         return RDNX_E_INVALID;
     }
     task->fd_table[fd] = NULL;
+    task->fd_flags[fd] = 0;
     return RDNX_OK;
 }
 

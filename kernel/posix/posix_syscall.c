@@ -1,6 +1,8 @@
 #include "posix_syscall.h"
 #include "../core/task.h"
 #include "../common/security.h"
+#include "../fabric/service/net_service.h"
+#include "../vm/vm_map.h"
 #include "../unix/unix_layer.h"
 #include "../../include/error.h"
 #include "../../include/version.h"
@@ -238,6 +240,19 @@ static uint64_t posix_close(uint64_t a1,
     return unix_fs_close(a1);
 }
 
+static uint64_t posix_fcntl(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_fcntl(a1, a2, a3);
+}
+
 static uint64_t posix_read(uint64_t a1,
                            uint64_t a2,
                            uint64_t a3,
@@ -359,6 +374,137 @@ static uint64_t posix_readdir(uint64_t a1,
     (void)a5;
     (void)a6;
     return unix_fs_readdir(a1, a2, a3);
+}
+
+static uint64_t posix_netiflist(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    fabric_netif_info_t* user_entries = (fabric_netif_info_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+
+    if (max_entries == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(fabric_netif_info_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint32_t total = fabric_netif_count();
+    uint32_t n = (total < max_entries) ? total : max_entries;
+    for (uint32_t i = 0; i < n; i++) {
+        fabric_netif_info_t info;
+        if (fabric_netif_get_info(i, &info) != RDNX_OK) {
+            break;
+        }
+        user_entries[i] = info;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_mmap(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a5;
+    (void)a6;
+    enum {
+        PROT_READ = 0x1,
+        PROT_WRITE = 0x2,
+        PROT_EXEC = 0x4,
+        MAP_PRIVATE = 0x0002,
+        MAP_FIXED = 0x0010,
+        MAP_ANON = 0x1000
+    };
+
+    task_t* task = task_get_current();
+    if (!task || a2 == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint32_t prot = VM_PROT_NONE;
+    if (a3 & PROT_READ) {
+        prot |= VM_PROT_READ;
+    }
+    if (a3 & PROT_WRITE) {
+        prot |= VM_PROT_WRITE;
+    }
+    if (a3 & PROT_EXEC) {
+        prot |= VM_PROT_EXEC;
+    }
+    if (prot == VM_PROT_NONE) {
+        prot = VM_PROT_READ;
+    }
+
+    uint32_t flags = 0;
+    if (a4 & MAP_PRIVATE) {
+        flags |= VM_MAP_F_PRIVATE;
+    }
+    if (a4 & MAP_FIXED) {
+        flags |= VM_MAP_F_FIXED;
+    }
+    if (a4 & MAP_ANON) {
+        flags |= VM_MAP_F_ANON;
+    }
+    if ((flags & VM_MAP_F_ANON) == 0) {
+        return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+
+    long ret = vm_task_mmap(task, a1, a2, prot, flags);
+    return (uint64_t)ret;
+}
+
+static uint64_t posix_munmap(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vm_task_munmap(task, a1, a2);
+}
+
+static uint64_t posix_brk(uint64_t a1,
+                          uint64_t a2,
+                          uint64_t a3,
+                          uint64_t a4,
+                          uint64_t a5,
+                          uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vm_task_brk(task, a1);
 }
 
 void posix_syscall_init(void)

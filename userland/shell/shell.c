@@ -489,6 +489,7 @@ static void cmd_help(void)
     (void)write_str("  cd [path]     - change shell working directory\n");
     (void)write_str("  motd          - print /etc/motd\n");
     (void)write_str("  uname         - show system information\n");
+    (void)write_str("  ifconfig      - show network interfaces\n");
     (void)write_str("  ls [path]     - external /bin/ls\n");
     (void)write_str("  cat <path>    - external /bin/cat\n");
     (void)write_str("  smoke         - run basic POSIX smoke check\n");
