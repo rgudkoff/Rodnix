@@ -5,6 +5,7 @@
  * Spec traceability:
  * - CT-001 -> docs/ru/unix_process_model.md (spawn creates new child PID)
  * - CT-005 -> docs/ru/unix_process_model.md (exit/wait lifecycle semantics)
+ * - CT-006 -> docs/ru/unix_process_model.md (single reap; second wait fails)
  *
  * Note:
  * - CT-005/CT-006 are now AUTO in CI contract mode.
@@ -50,6 +51,16 @@ int main(void)
             (void)write_str("[CT] CT-005 PASS waitpid reaps child exit status\n");
         } else {
             (void)write_str("[CT] CT-005 FAIL waitpid failed or bad status\n");
+            ok = 0;
+        }
+    }
+
+    {
+        long wr2 = waitpid((pid_t)pid, &status, 0);
+        if (wr2 < 0) {
+            (void)write_str("[CT] CT-006 PASS second waitpid fails after reap\n");
+        } else {
+            (void)write_str("[CT] CT-006 FAIL second waitpid unexpectedly succeeded\n");
             ok = 0;
         }
     }

@@ -251,14 +251,28 @@ static void run_contract_mode_if_enabled(void)
         long pid = posix_spawn("/bin/true", 0);
         if (pid <= 0) {
             ct_log("CT-005", "FAIL", "race spawn failed");
+            ct_log("CT-006", "FAIL", "race spawn prerequisite failed");
             ok = 0;
         } else {
+            /* Give child a chance to complete before first waitpid recheck. */
+            for (int i = 0; i < 8; i++) {
+                (void)rdnx_syscall0(0);
+            }
             long wr = waitpid((pid_t)pid, &status, 0);
             if (wr == pid && status == 0) {
                 ct_log("CT-005", "PASS", "race fast-exit child reaped");
             } else {
                 ct_log("CT-005", "FAIL", "race waitpid failed");
                 ok = 0;
+            }
+            {
+                long wr2 = waitpid((pid_t)pid, &status, 0);
+                if (wr2 < 0) {
+                    ct_log("CT-006", "PASS", "race second waitpid fails after reap");
+                } else {
+                    ct_log("CT-006", "FAIL", "race second waitpid unexpectedly succeeded");
+                    ok = 0;
+                }
             }
         }
     }

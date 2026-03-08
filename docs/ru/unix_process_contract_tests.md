@@ -32,7 +32,7 @@
 | CT-003 | EXEC | `exec` сохраняет PID | contract mode в `userland/init/init.c` + `contract_exec_probe/after` | PLANNED |
 | CT-004 | LIFECYCLE | `waitpid` только для дочернего процесса | ожидание не-дочернего `pid` возвращает `RDNX_E_DENIED` | PLANNED |
 | CT-005 | LIFECYCLE | `exit` переводит в lifecycle ожидания (`ZOMBIE`/collect) | contract mode в `userland/init/init.c` | AUTO |
-| CT-006 | LIFECYCLE | `waitpid` собирает статус и завершает lifecycle | contract mode: второй `waitpid` по тому же PID -> ошибка | AUTO |
+| CT-006 | LIFECYCLE | `waitpid` собирает статус и завершает lifecycle | contract mode: второй `waitpid` по тому же PID -> ошибка (включая fast-exit race) | AUTO |
 | CT-007 | FD/CORE | `close(fd)` инвалидирует fd | contract mode в `userland/init/init.c` | AUTO |
 | CT-008 | FD/CORE | `read/write` только для валидного fd | contract mode в `userland/init/init.c` | AUTO |
 | CT-009 | CORE | pathname `readdir` возвращает корректные записи | `readdir("/")` возвращает ненулевой набор `dirent` | AUTO |
