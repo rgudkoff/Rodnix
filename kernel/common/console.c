@@ -243,21 +243,31 @@ static uint64_t console_get_uptime_us_internal(void)
         }
     }
 
-    uint64_t best = apic_us;
-    const char* best_name = "apic";
-    if (pit_us > best) {
-        best = pit_us;
-        best_name = "pit";
+    uint64_t mono_best = apic_us;
+    const char* mono_name = "apic";
+    if (pit_us > mono_best) {
+        mono_best = pit_us;
+        mono_name = "pit";
     }
-    if (sched_us > best) {
-        best = sched_us;
-        best_name = "scheduler";
+    if (sched_us > mono_best) {
+        mono_best = sched_us;
+        mono_name = "scheduler";
     }
-    if (tsc_us > best) {
-        best = tsc_us;
-        best_name = "tsc";
+    if (tsc_us > mono_best) {
+        mono_best = tsc_us;
+        mono_name = "tsc";
     }
-    if (rtc_us > best) {
+
+    uint64_t best = mono_best;
+    const char* best_name = mono_name;
+    if (rtc_uptime_base_set) {
+        /*
+         * RTC has 1-second granularity; keep it as primary source, but use
+         * monotonic timer value as sub-second refinement near second edges.
+         */
+        if (mono_best >= rtc_us && (mono_best - rtc_us) < 2000000ULL) {
+            rtc_us = mono_best;
+        }
         best = rtc_us;
         best_name = "bios-rtc";
     }
