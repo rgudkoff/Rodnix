@@ -748,6 +748,7 @@ static void cmd_help(void)
         "  uname         - show system information\n"
         "  hostinfo      - compact host/system report\n"
         "  scstat [-a]   - syscall stats by number (int80/fast)\n"
+        "  forktest      - validate fork + COW semantics\n"
         "  syscalltest   - compare fast syscall vs int80\n"
         "  ttyreadtest   - blocking stdin read probe\n"
         "  ifconfig      - show network interfaces\n"

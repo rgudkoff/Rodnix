@@ -233,6 +233,8 @@ static uint64_t* paging_get_pdpt_for(uint64_t* pml4, uint64_t pml4_entry)
     return (uint64_t*)(pdpt_phys + X86_64_KERNEL_VIRT_BASE);
 }
 
+static void paging_flush_tlb(void* virt);
+
 static uint64_t* paging_get_pd_for(uint64_t pdpt_entry)
 {
     if (!(pdpt_entry & PTE_PRESENT)) {
@@ -310,6 +312,9 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
 
     uint64_t entry = phys | (flags & (PTE_PRESENT | PTE_RW | PTE_USER | PTE_NX));
     pt[pt_idx] = entry;
+    if (current_pml4_phys == pml4_phys) {
+        paging_flush_tlb((void*)virt);
+    }
     return 0;
 }
 

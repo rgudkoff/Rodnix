@@ -10,13 +10,10 @@
  * Unix compatibility layer:
  * kernel mechanisms -> unix semantics -> posix syscall ABI adapter.
  *
- * Process model (current, explicit):
+ * Process model (current):
  * - unix_proc_spawn(): create child process + immediately load program image.
- *   This is a spawn-as-primitive model (no fork() yet).
+ * - unix_proc_fork(): clone process with COW VM map.
  * - unix_fs_exec(): replace current process image in-place (pid is preserved).
- *
- * Planned evolution:
- * - fork()+exec() can be introduced later without breaking POSIX ABI entrypoints.
  */
 #define UNIX_PATH_MAX 256
 #define UNIX_ARG_MAX 16
