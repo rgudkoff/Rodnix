@@ -1,5 +1,7 @@
 #include "posix_syscall.h"
 #include "../core/task.h"
+#include "../core/cpu.h"
+#include "../core/memory.h"
 #include "../common/security.h"
 #include "../fabric/fabric.h"
 #include "../fabric/device/device.h"
@@ -12,6 +14,7 @@
 #include "../../include/version.h"
 #include "../../include/utsname.h"
 #include "../../include/common.h"
+#include "../../include/console.h"
 #include "../arch/x86_64/config.h"
 #include <stddef.h>
 
@@ -438,6 +441,50 @@ typedef struct hwdev_info {
     uint32_t bars[PCI_BAR_COUNT];
 } hwdev_info_t;
 
+typedef struct rodnix_sysinfo {
+    char sysname[32];
+    char release[32];
+    char version[64];
+    char machine[32];
+
+    uint64_t uptime_us;
+    char uptime_source[16];
+
+    uint32_t cpu_id;
+    uint32_t apic_id;
+    uint32_t cpu_family;
+    uint32_t cpu_model_id;
+    uint32_t cpu_stepping;
+    uint32_t cpu_features;
+    uint32_t cpu_features_ecx;
+    uint32_t cpu_ext_features_ebx;
+    uint32_t cpu_ext_features_ecx;
+    uint32_t cpu_cores;
+    uint32_t cpu_threads;
+    char cpu_vendor[16];
+    char cpu_model[64];
+
+    uint64_t mem_total_bytes;
+    uint64_t mem_free_bytes;
+    uint64_t mem_used_bytes;
+    uint64_t pmm_total_pages;
+    uint64_t pmm_free_pages;
+    uint64_t pmm_used_pages;
+    uint64_t oom_pmm;
+    uint64_t oom_vmm;
+    uint64_t oom_heap;
+
+    uint32_t fabric_buses;
+    uint32_t fabric_drivers;
+    uint32_t fabric_devices;
+    uint32_t fabric_services;
+
+    uint8_t apic_available;
+    uint8_t ioapic_available;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} rodnix_sysinfo_t;
+
 static uint64_t posix_hwlist(uint64_t a1,
                              uint64_t a2,
                              uint64_t a3,
@@ -580,6 +627,91 @@ static uint64_t posix_fabricevents(uint64_t a1,
         *user_dropped = dropped;
     }
     return (uint64_t)read;
+}
+
+static uint64_t posix_sysinfo(uint64_t a1,
+                              uint64_t a2,
+                              uint64_t a3,
+                              uint64_t a4,
+                              uint64_t a5,
+                              uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    rodnix_sysinfo_t* out = (rodnix_sysinfo_t*)(uintptr_t)a1;
+    if (!unix_user_range_ok(out, sizeof(*out))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    strncpy(out->sysname, RODNIX_SYSNAME, sizeof(out->sysname) - 1);
+    strncpy(out->release, RODNIX_RELEASE, sizeof(out->release) - 1);
+    strncpy(out->version, RODNIX_VERSION, sizeof(out->version) - 1);
+    strncpy(out->machine, X86_64_MACHINE, sizeof(out->machine) - 1);
+    out->uptime_us = console_get_uptime_us();
+    {
+        const char* src = console_get_uptime_source();
+        if (src) {
+            strncpy(out->uptime_source, src, sizeof(out->uptime_source) - 1);
+        }
+    }
+
+    cpu_info_t cinfo;
+    if (cpu_get_info(&cinfo) == 0) {
+        out->cpu_id = cinfo.cpu_id;
+        out->apic_id = cinfo.apic_id;
+        out->cpu_family = cinfo.family;
+        out->cpu_model_id = cinfo.model_id;
+        out->cpu_stepping = cinfo.stepping;
+        out->cpu_features = cinfo.features;
+        out->cpu_features_ecx = cinfo.features_ecx;
+        out->cpu_ext_features_ebx = cinfo.ext_features_ebx;
+        out->cpu_ext_features_ecx = cinfo.ext_features_ecx;
+        out->cpu_cores = cinfo.cores;
+        out->cpu_threads = cinfo.threads;
+        if (cinfo.vendor) {
+            strncpy(out->cpu_vendor, cinfo.vendor, sizeof(out->cpu_vendor) - 1);
+        }
+        if (cinfo.model) {
+            strncpy(out->cpu_model, cinfo.model, sizeof(out->cpu_model) - 1);
+        }
+    }
+
+    memory_info_t minfo;
+    if (memory_get_info(&minfo) == RDNX_OK) {
+        out->mem_total_bytes = minfo.total_physical;
+        out->mem_free_bytes = minfo.free_physical;
+        out->mem_used_bytes = minfo.used_physical;
+        out->oom_pmm = minfo.oom_pmm;
+        out->oom_vmm = minfo.oom_vmm;
+        out->oom_heap = minfo.oom_heap;
+    }
+
+    extern uint64_t pmm_get_total_pages(void);
+    extern uint64_t pmm_get_free_pages(void);
+    extern uint64_t pmm_get_used_pages(void);
+    out->pmm_total_pages = pmm_get_total_pages();
+    out->pmm_free_pages = pmm_get_free_pages();
+    out->pmm_used_pages = pmm_get_used_pages();
+
+    fabric_stats_t fstats;
+    if (fabric_get_stats(&fstats) == RDNX_OK) {
+        out->fabric_buses = fstats.buses;
+        out->fabric_drivers = fstats.drivers;
+        out->fabric_devices = fstats.devices;
+        out->fabric_services = fstats.services;
+    }
+
+    extern bool apic_is_available(void);
+    extern bool ioapic_is_available(void);
+    out->apic_available = apic_is_available() ? 1u : 0u;
+    out->ioapic_available = ioapic_is_available() ? 1u : 0u;
+
+    return (uint64_t)RDNX_OK;
 }
 
 static uint64_t posix_mmap(uint64_t a1,

@@ -251,6 +251,7 @@ static void fabric_node_bootstrap_locked(void)
     (void)fabric_node_add_locked("/fabric/subsystems/net", "net", "subsystem", "net", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/subsystems/input", "input", "subsystem", "input", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/subsystems/display", "display", "subsystem", "display", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
+    (void)fabric_node_add_locked("/fabric/subsystems/storage", "storage", "subsystem", "storage", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
 }
 
 static const char* fabric_device_label(const fabric_device_t* dev)
@@ -887,6 +888,12 @@ int fabric_service_publish(fabric_service_t *service)
         node_type = "manager";
         node_class = "net";
         node_flags = 0x2u; /* internal */
+    } else if (strcmp(service->name, "storage.blkmgr") == 0) {
+        f_strcpy(path, sizeof(path), "/fabric/subsystems/storage/blkmgr");
+        parent_idx = fabric_node_find_path_locked("/fabric/subsystems/storage");
+        node_type = "manager";
+        node_class = "storage";
+        node_flags = 0x2u; /* internal */
     } else {
         f_strcpy(path, sizeof(path), "/fabric/services/");
         f_append(path, sizeof(path), service->name);
@@ -951,14 +958,17 @@ fabric_service_t* fabric_service_lookup(const char *name)
     return NULL;
 }
 
-int fabric_publish_netif_node(const char* ifname, fabric_device_t* provider_dev)
+int fabric_publish_service_node(const char* service_name, const char* kind, fabric_device_t* provider_dev)
 {
-    if (!ifname || !provider_dev) {
+    if (!service_name || !kind) {
         return RDNX_E_INVALID;
+    }
+    if (provider_dev && !provider_dev->driver_state) {
+        return RDNX_E_DENIED;
     }
     char path[FABRIC_NODE_PATH_MAX];
     f_strcpy(path, sizeof(path), "/fabric/services/");
-    f_append(path, sizeof(path), ifname);
+    f_append(path, sizeof(path), service_name);
 
     char provider_path[FABRIC_NODE_PATH_MAX];
     provider_path[0] = '\0';
@@ -971,9 +981,9 @@ int fabric_publish_netif_node(const char* ifname, fabric_device_t* provider_dev)
         f_strcpy(provider_path, sizeof(provider_path), node_registry[provider_idx].path);
     }
     int32_t node_idx = fabric_node_add_locked(path,
-                                              ifname,
+                                              service_name,
                                               "service",
-                                              "net",
+                                              kind,
                                               parent_idx,
                                               provider_dev,
                                               existed ? FABRIC_STATE_REGISTERED : FABRIC_STATE_PUBLISHED,
@@ -984,65 +994,28 @@ int fabric_publish_netif_node(const char* ifname, fabric_device_t* provider_dev)
         if (!existed) {
             fabric_event_emit(FABRIC_EVENT_SERVICE_PUBLISHED,
                              path,
-                             ifname,
-                             "net",
+                             service_name,
+                             kind,
                              0);
         }
         (void)fabric_node_set_state(path, FABRIC_STATE_REGISTERED);
         fabric_event_emit(FABRIC_EVENT_SERVICE_REGISTERED,
                          path,
-                         ifname,
-                         "net",
+                         service_name,
+                         kind,
                          0);
     }
     return (node_idx >= 0) ? RDNX_OK : RDNX_E_BUSY;
 }
 
+int fabric_publish_netif_node(const char* ifname, fabric_device_t* provider_dev)
+{
+    return fabric_publish_service_node(ifname, "net", provider_dev);
+}
+
 int fabric_publish_input_node(const char* input_name, fabric_device_t* provider_dev)
 {
-    if (!input_name || !provider_dev) {
-        return RDNX_E_INVALID;
-    }
-    char path[FABRIC_NODE_PATH_MAX];
-    f_strcpy(path, sizeof(path), "/fabric/services/");
-    f_append(path, sizeof(path), input_name);
-
-    char provider_path[FABRIC_NODE_PATH_MAX];
-    provider_path[0] = '\0';
-
-    spinlock_lock(&fabric_lock);
-    bool existed = (fabric_node_find_path_locked(path) >= 0);
-    int32_t parent_idx = fabric_node_find_path_locked("/fabric/services");
-    int32_t provider_idx = fabric_node_find_provider_locked(provider_dev);
-    if (provider_idx >= 0) {
-        f_strcpy(provider_path, sizeof(provider_path), node_registry[provider_idx].path);
-    }
-    int32_t node_idx = fabric_node_add_locked(path,
-                                              input_name,
-                                              "service",
-                                              "input",
-                                              parent_idx,
-                                              provider_dev,
-                                              existed ? FABRIC_STATE_REGISTERED : FABRIC_STATE_PUBLISHED,
-                                              0,
-                                              provider_path);
-    spinlock_unlock(&fabric_lock);
-    if (node_idx >= 0) {
-        if (!existed) {
-            fabric_event_emit(FABRIC_EVENT_SERVICE_PUBLISHED,
-                             path,
-                             input_name,
-                             "input",
-                             0);
-        }
-        (void)fabric_node_set_state(path, FABRIC_STATE_REGISTERED);
-        fabric_event_emit(FABRIC_EVENT_SERVICE_REGISTERED,
-                         path,
-                         input_name,
-                         "input",
-                         0);
-    }
-    return (node_idx >= 0) ? RDNX_OK : RDNX_E_BUSY;
+    return fabric_publish_service_node(input_name, "input", provider_dev);
 }
 
 /* Request IRQ */

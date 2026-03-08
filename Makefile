@@ -92,7 +92,7 @@ QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
 #
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
-QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
+QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
                    -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S
 

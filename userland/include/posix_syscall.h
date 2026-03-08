@@ -107,6 +107,11 @@ static inline long posix_fabricevents(void* entries, uint64_t max_entries, uint3
                          0, 0);
 }
 
+static inline long posix_sysinfo(void* out_info)
+{
+    return rdnx_syscall1(POSIX_SYS_SYSINFO, (long)(uintptr_t)out_info);
+}
+
 static inline long posix_mmap(void* addr, uint64_t len, int prot, int flags, int fd, uint64_t off)
 {
     return rdnx_syscall6(POSIX_SYS_MMAP,

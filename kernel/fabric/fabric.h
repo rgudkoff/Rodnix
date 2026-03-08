@@ -64,6 +64,7 @@ uint32_t fabric_node_count(void);
 int fabric_node_get_info(uint32_t index, fabric_node_info_t* out);
 int fabric_node_list(fabric_node_info_t* out, uint32_t max_entries, uint32_t* out_total);
 int fabric_node_set_state(const char* path, uint32_t state);
+int fabric_publish_service_node(const char* service_name, const char* kind, fabric_device_t* provider_dev);
 int fabric_publish_netif_node(const char* ifname, fabric_device_t* provider_dev);
 int fabric_publish_input_node(const char* input_name, fabric_device_t* provider_dev);
 

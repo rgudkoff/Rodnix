@@ -54,6 +54,8 @@ KERNEL_C_SRCS += \
 	kernel/fabric/fabric.c \
 	kernel/fabric/spin.c \
 	kernel/fabric/service/net_service.c \
+	kernel/fabric/service/block_service.c \
+	kernel/fabric/service/platform_services.c \
 	kernel/fabric/bus/virt.c \
 	kernel/fabric/bus/pci.c \
 	kernel/fabric/bus/ps2.c \

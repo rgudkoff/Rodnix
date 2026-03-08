@@ -79,6 +79,31 @@ static struct timer_callback* timer_callbacks = NULL;
 static volatile uint32_t timer_ticks = 0;     /* System tick counter (volatile for interrupt handler) */
 static uint32_t timer_frequency = PIT_DEFAULT_FREQUENCY; /* Current frequency */
 static volatile bool timer_handler_active = false; /* Protection against recursive calls */
+static uint16_t pit_reload_value = (uint16_t)(PIT_BASE_FREQUENCY / PIT_DEFAULT_FREQUENCY);
+static uint16_t pit_last_counter = 0;
+static uint64_t pit_elapsed_base_ticks = 0;
+static bool pit_uptime_ready = false;
+
+static inline void pit_outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t pit_inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static uint16_t pit_read_counter0(void)
+{
+    /* Latch channel 0 counter, then read low/high bytes. */
+    pit_outb(PIT_COMMAND, PIT_CMD_CHANNEL0);
+    uint8_t lo = pit_inb(PIT_CHANNEL0_DATA);
+    uint8_t hi = pit_inb(PIT_CHANNEL0_DATA);
+    return (uint16_t)(((uint16_t)hi << 8) | lo);
+}
 
 /* ============================================================================
  * Internal Helper Functions
@@ -108,13 +133,15 @@ static int pit_set_frequency(uint32_t frequency)
     }
     
     /* Send command byte: Channel 0, both bytes, mode 3 */
-    __asm__ volatile ("outb %%al, %1" : : "a"(PIT_CMD_CHANNEL0 | PIT_CMD_ACCESS_BOTH | PIT_CMD_MODE3), "Nd"(PIT_COMMAND));
+    pit_outb(PIT_COMMAND, PIT_CMD_CHANNEL0 | PIT_CMD_ACCESS_BOTH | PIT_CMD_MODE3);
     
     /* Send divisor (low byte, then high byte) */
-    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)(divisor & 0xFF)), "Nd"(PIT_CHANNEL0_DATA));
-    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)((divisor >> 8) & 0xFF)), "Nd"(PIT_CHANNEL0_DATA));
+    pit_outb(PIT_CHANNEL0_DATA, (uint8_t)(divisor & 0xFF));
+    pit_outb(PIT_CHANNEL0_DATA, (uint8_t)((divisor >> 8) & 0xFF));
     
     timer_frequency = frequency;
+    pit_reload_value = divisor;
+    pit_uptime_ready = false;
     
     return 0;
 }
@@ -211,6 +238,32 @@ int pit_set_frequency_public(uint32_t frequency)
 uint32_t pit_get_ticks(void)
 {
     return timer_ticks;
+}
+
+uint64_t pit_get_uptime_us(void)
+{
+    if (pit_reload_value == 0) {
+        return 0;
+    }
+
+    uint16_t cur = pit_read_counter0();
+    if (!pit_uptime_ready) {
+        pit_last_counter = cur;
+        pit_elapsed_base_ticks = 0;
+        pit_uptime_ready = true;
+        return 0;
+    }
+
+    uint16_t last = pit_last_counter;
+    uint32_t delta = 0;
+    if (last >= cur) {
+        delta = (uint32_t)(last - cur);
+    } else {
+        delta = (uint32_t)last + (uint32_t)(pit_reload_value - cur);
+    }
+    pit_last_counter = cur;
+    pit_elapsed_base_ticks += (uint64_t)delta;
+    return (pit_elapsed_base_ticks * 1000000ULL) / (uint64_t)PIT_BASE_FREQUENCY;
 }
 
 /**
