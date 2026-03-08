@@ -7,8 +7,8 @@
  * - CT-005 -> docs/ru/unix_process_model.md (exit/wait lifecycle semantics)
  *
  * Note:
- * - CT-005 is currently PLANNED in CI gating and this binary is kept for
- *   manual/additive runs until waitpid lifecycle criteria are satisfied.
+ * - CT-005/CT-006 are now AUTO in CI contract mode.
+ * - This binary remains useful for manual/additive local checks.
  */
 
 #include <stdint.h>

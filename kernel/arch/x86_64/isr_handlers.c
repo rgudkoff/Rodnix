@@ -171,22 +171,6 @@ static void safe_vga_hex(uint8_t row, uint8_t col, uint64_t value, uint8_t color
 
 static interrupt_frame_t* handle_syscall(interrupt_frame_t* regs)
 {
-    static int syscall_ctx_dbg = 0;
-    if (syscall_ctx_dbg < 16) {
-        thread_t* th = scheduler_get_current_thread();
-        uint64_t cr3 = 0;
-        __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-        kprintf("[SYSC-CTX] in tid=%llu tf=%p krsp=%p rip=%p ursp=%p cr3=%p kst=%p+%llu\n",
-                (unsigned long long)(th ? th->thread_id : 0),
-                (void*)regs,
-                __builtin_frame_address(0),
-                (void*)(uintptr_t)regs->rip,
-                (void*)(uintptr_t)regs->rsp,
-                (void*)(uintptr_t)cr3,
-                th ? th->stack : NULL,
-                (unsigned long long)(th ? th->stack_size : 0));
-        syscall_ctx_dbg++;
-    }
     uint64_t ret = syscall_dispatch(regs->rax,
                                     regs->rdi,
                                     regs->rsi,
@@ -195,16 +179,6 @@ static interrupt_frame_t* handle_syscall(interrupt_frame_t* regs)
                                     regs->r8,
                                     regs->r9);
     regs->rax = ret;
-    if (syscall_ctx_dbg < 16) {
-        thread_t* th = scheduler_get_current_thread();
-        kprintf("[SYSC-CTX] out tid=%llu tf=%p rax=%lld rip=%p ursp=%p\n",
-                (unsigned long long)(th ? th->thread_id : 0),
-                (void*)regs,
-                (long long)regs->rax,
-                (void*)(uintptr_t)regs->rip,
-                (void*)(uintptr_t)regs->rsp);
-        syscall_ctx_dbg++;
-    }
     return regs;
 }
 
@@ -260,12 +234,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     uint32_t vector = regs->int_no;
 
     if (vector == SYSCALL_VECTOR) {
-        static int logged = 0;
-        if (!logged) {
-            extern void kputs(const char* str);
-            kputs("[ISR] syscall vector 0x80\n");
-            logged = 1;
-        }
         return handle_syscall(regs);
     }
     

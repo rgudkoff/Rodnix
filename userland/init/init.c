@@ -208,6 +208,7 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int status = -1;
+        volatile uint64_t as_canary = 0x1122334455667788ULL;
         long pid = posix_spawn("/bin/true", 0);
         if (pid > 0) {
             ct_log("CT-001", "PASS", "spawn creates child pid");
@@ -219,6 +220,12 @@ static void run_contract_mode_if_enabled(void)
                     ct_log("CT-005", "FAIL", "waitpid failed or bad status");
                     ok = 0;
                 }
+            }
+            if (as_canary == 0x1122334455667788ULL) {
+                ct_log("CT-013", "PASS", "parent stack survives child address-space switches");
+            } else {
+                ct_log("CT-013", "FAIL", "parent stack corrupted after child run/wait");
+                ok = 0;
             }
             {
                 long wr2 = waitpid((pid_t)pid, &status, 0);
@@ -233,6 +240,7 @@ static void run_contract_mode_if_enabled(void)
             ct_log("CT-001", "FAIL", "spawn failed");
             ct_log("CT-005", "FAIL", "spawn prerequisite failed");
             ct_log("CT-006", "FAIL", "spawn prerequisite failed");
+            ct_log("CT-013", "FAIL", "spawn prerequisite failed");
             ok = 0;
         }
     }
