@@ -1,149 +1,66 @@
 # RodNIX
 
-RodNIX is a modern operating system kernel designed for industrial-grade
-stability, determinism, and long-term maintainability. The project focuses on
-clear subsystem boundaries, security-oriented design, and a modular architecture
-that can evolve without cascading regressions.
+RodNIX is an experimental x86_64 operating system kernel.
+The project focuses on clean subsystem boundaries, predictable boot/runtime
+behavior, and practical observability while the system is still small.
 
-## Product Goals
+## What Works Today
 
-- Industrial-grade determinism and fail-fast behavior
-- Clear ownership of memory, scheduling, and subsystem boundaries
-- Secure-by-default interfaces and explicit contracts
-- Modular services and drivers with versioned APIs
-- Predictable boot and initialization phases
-- Observability as a first-class requirement (logs, traces, metrics)
+- Boot on QEMU with Multiboot2 and higher-half kernel mapping
+- Physical memory manager and basic VM path (`mmap/munmap/brk`, COW groundwork)
+- Interrupts, timers, and preemptive scheduler
+- VFS with RAMFS and initrd import
+- Fabric device model (`device -> driver -> service`) with event stream
+- Basic userland launch path (`/bin/init`, `/bin/sh`) and minimal POSIX syscalls
+- Hardware/system introspection utilities in userland
 
-## Current State
+## Repository Layout
 
-RodNIX is under active development. The current kernel provides:
+- `boot/` - early boot code
+- `kernel/` - core kernel code
+- `drivers/` - hardware and Fabric drivers
+- `userland/` - userspace binaries and headers
+- `scripts/` - CI/smoke helpers
+- `docs/` - active and archived documentation
 
-- Deterministic boot and higher-half mapping with early physmap
-- Structured subsystem initialization and fail-fast diagnostics
-- Physical memory management and paging groundwork
-- Interrupts, timers, and preemptive scheduling (priority queues)
-- VFS with RAMFS + initrd import (RDNX format)
-- IPC core with ports and minimal IDL runtime
-- Fabric framework for buses/devices/drivers/services with node graph
-- Fabric event bus (device/driver/service lifecycle events)
-- Minimal POSIX syscall surface and per-task fd table
-- Shell and input pipeline through InputCore/Fabric
+## Build and Run
 
-## Architecture Overview
+Minimum toolchain:
+- `x86_64-elf-gcc`, `binutils`, `nasm`
+- `qemu-system-x86_64`
+- `xorriso`, `mtools`, `grub-mkrescue`
 
-High-level layout (simplified):
-- boot: early boot code (Multiboot2, 32-bit entry)
-- kernel/core: architecture-independent interfaces
-- kernel/common: shared kernel subsystems
-- kernel/arch: architecture-specific implementations
-- kernel/fabric: bus/device/driver/service framework
-- kernel/input: InputCore (scancode to ASCII, buffering)
-- kernel/interrupts: shared interrupt pieces
-- drivers: Fabric drivers (e.g., HID keyboard)
-- include: public kernel headers
-- docs: design and migration documents
+Typical flow:
 
-Detailed design notes:
-- docs/README.md
-- ARCHITECTURE.md
-- 64BIT_MIGRATION.md
- - docs/ru/industrial_readiness.md (RU, criteria for industrial readiness)
+```bash
+make clean
+make
+make iso
+make run
+```
 
-## Transition To Fabric (Facts Only)
+More setup details: `INSTALL.md` and `docs/ru/build_run.md`.
 
-1. Device/bus/driver/service routing is implemented in kernel/fabric.
-2. Fabric is initialized in kernel/main.c before the shell starts.
-3. Fabric buses registered: virtual bus, PCI, and PS/2 (kernel/fabric/bus).
-4. Fabric builds a node tree under /fabric (devices/services/subsystems).
-5. Driver lifecycle is ordered: device_added -> driver_attached -> service_published -> service_registered.
-6. The HID keyboard driver is a Fabric driver and publishes keyboard0 service.
-7. net.ifmgr acts as subsystem manager (/fabric/subsystems/net/ifmgr) and applies net interface policy.
-8. Userland observability tools: hwlist, fabricls, fabricevents, fabricnetcheck.
-9. Legacy device manager (kernel/common/device.*) was removed in favor of Fabric.
-10. Old arch-specific PS/2 keyboard driver was removed; input now flows through
-   InputCore and the Fabric HID driver.
+## Useful In-System Commands
 
-## Build Requirements
+- `sysinfo` - CPU, memory, uptime, interrupts, Fabric counters
+- `hwlist` - discovered hardware list
+- `fabricls` - Fabric topology snapshot
+- `fabricevents` - Fabric event queue dump
+- `fabricnetcheck` - net service lifecycle checks
 
-Toolchain:
-- x86_64-elf-gcc (or i686 cross-compiler for early stages)
-- nasm
-- ld (binutils)
-- qemu-system-x86_64
-- xorriso
-- mtools
-- grub-mkrescue (i686-elf-grub-mkrescue on macOS/Homebrew)
+## Documentation
 
-## Keyboard and Shell
-
-- PS/2 keyboard input with internal buffering
-- Scancode-to-ASCII translation
-- Modifier handling (Shift, Caps Lock)
-- Simple interactive shell
-- Line-based input with basic editing
-
-The keyboard input path is interrupt-driven via Fabric (with fallback paths
-where needed by platform).
-
-## Fabric Introspection Utilities
-
-Built userland utilities (rootfs/bin):
-- hwlist: raw discovered hardware list (PCI BDF/BAR and class info)
-- fabricls: current Fabric node topology (path, provider link, driver, state)
-- fabricevents: drain and print Fabric event queue
-- fabricnetcheck: validate network lifecycle ordering from events/snapshot
-
-## Roadmap
-
-Near-term:
-- Formalize error model and crash-dump format
-- Expand observability (structured logs, tracepoints)
-- Stabilize driver/service boundaries (versioned interfaces)
-- Toolchain reproducibility and CI
-
-Mid-term:
-- Userspace boundary and stable syscall ABI
-- Drivers and services isolation
-- Network stack maturation (loopback → UDP → TCP)
-
-Long-term:
-- SMP and multi-core scheduling
-- Capability-based security model
-- Multi-architecture support
-
-## Security Notice
-
-RodNIX is security-oriented but still in active development.
-Run in controlled environments and expect rapid iteration.
-Report security issues via SECURITY.md.
-
-## Industrial Readiness
-
-RodNIX tracks industrial readiness criteria and gap analysis:
-
-- docs/ru/industrial_readiness.md
-- docs/ru/industrial_gap.md
+- `docs/README.md` - docs index
+- `docs/en/README.md` - English mirror index
+- `docs/ru/README.md` - active documentation set
+- `ARCHITECTURE.md` - architecture notes
+- `ROADMAP.md` - roadmap overview
 
 ## Contributing
 
-Contributions are welcome.
-
-Guidelines:
-- Keep changes focused and well-documented
-- Prefer clarity over cleverness
-- Avoid unnecessary abstractions
-- Discuss large changes before implementation
-
-Final design decisions remain with the project maintainer.
-
-## Guardrails
-
-Run scripts/check_parallel_subsystems.sh to prevent reintroducing legacy
-parallel subsystems (device manager, arch keyboard driver, interrupt stub).
+See `CONTRIBUTING.md` for commit/PR style, validation baseline, and review rules.
 
 ## License
 
-See LICENSE for open-source terms.
-
-Commercial or enterprise usage may require a separate agreement.
-See ENTERPRISE_LICENSE.md for details.
+See `LICENSE` and `ENTERPRISE_LICENSE.md`.
