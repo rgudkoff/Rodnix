@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_syscall.h"
+#include "posix_sysnums.h"
 #include "unistd.h"
 #include "dirent.h"
 #include "sysinfo.h"
@@ -176,6 +177,22 @@ static int parse_line(char* line, char** argv, int max_args)
 }
 
 static char shell_cwd[SH_PATH_MAX] = "/";
+static long shell_read_stdin_byte(unsigned char* ch)
+{
+    long n;
+    /* Temporary workaround:
+     * interactive stdin read uses int 0x80 because fast syscall path for
+     * blocking TTY read is currently unstable (hang / no proper wakeup).
+     * Do not switch to fast path until kernel-side tty read contract is fixed.
+     */
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(n)
+        : "a"(POSIX_SYS_READ), "D"(FD_STDIN), "S"((long)(uintptr_t)ch), "d"(1L)
+        : "memory"
+    );
+    return n;
+}
 
 static int path_is_abs(const char* p)
 {
@@ -281,7 +298,7 @@ static int read_line(char* out, int out_len)
     }
 
     for (;;) {
-        long n = posix_read(FD_STDIN, &ch, 1);
+        long n = shell_read_stdin_byte(&ch);
         if (n < 0) {
             return -1;
         }
@@ -731,6 +748,7 @@ static void cmd_help(void)
         "  uname         - show system information\n"
         "  hostinfo      - compact host/system report\n"
         "  syscalltest   - compare fast syscall vs int80\n"
+        "  ttyreadtest   - blocking stdin read probe\n"
         "  ifconfig      - show network interfaces\n"
         "  ls [path]     - external /bin/ls\n"
         "  cat <path>    - external /bin/cat\n"
@@ -802,6 +820,13 @@ int main(void)
             av[1] = 0;
             if (cmd_run(1, av, 0) < 0) {
                 (void)write_str("syscalltest: failed\n");
+            }
+        } else if (str_eq(argv[0], "ttyreadtest")) {
+            char* av[2];
+            av[0] = "/bin/ttyreadtest";
+            av[1] = 0;
+            if (cmd_run(1, av, 0) < 0) {
+                (void)write_str("ttyreadtest: failed\n");
             }
         } else if (str_eq(argv[0], "timecheck")) {
             char* av[2];
