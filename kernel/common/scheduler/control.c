@@ -108,20 +108,35 @@ void scheduler_wake(thread_t* thread)
         return;
     }
     if (thread->state == THREAD_STATE_BLOCKED) {
+        if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
+            uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
+            if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
+                int boost = (int)(sleep_ticks / BOOST_THRESHOLD_TICKS);
+                if (boost > BOOST_MAX) {
+                    boost = BOOST_MAX;
+                }
+                int base = thread->base_priority;
+                int dyn = thread->dyn_priority + boost;
+                thread->dyn_priority = clamp_dyn_priority(dyn, base);
+            }
+        }
         if (stats.blocked_tasks > 0) {
             stats.blocked_tasks--;
         }
         scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_blocked");
         ready_enqueue(thread);
+        resched_pending = true;
         return;
     }
     if (thread->state != THREAD_STATE_READY) {
         scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_other");
         ready_enqueue(thread);
+        resched_pending = true;
         return;
     }
     if (!ready_thread_is_queued(thread) && thread != current_thread) {
         ready_enqueue(thread);
+        resched_pending = true;
     }
 }
 

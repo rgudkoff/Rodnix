@@ -1,6 +1,36 @@
 #include "internal.h"
 #include "../tracev2.h"
+#include "../../arch/x86_64/paging.h"
 #include "../../../include/debug.h"
+
+static uint64_t scheduler_kernel_pml4 = 0;
+
+static inline uint64_t scheduler_read_cr3(void)
+{
+    uint64_t cr3 = 0;
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+    return cr3;
+}
+
+static void scheduler_switch_address_space(thread_t* next)
+{
+    if (!scheduler_kernel_pml4) {
+        scheduler_kernel_pml4 = scheduler_read_cr3();
+    }
+    if (!next) {
+        return;
+    }
+
+    uint64_t target_pml4 = scheduler_kernel_pml4;
+    if (next->task && next->task->address_space) {
+        target_pml4 = (uint64_t)(uintptr_t)next->task->address_space;
+    }
+
+    uint64_t current_pml4 = scheduler_read_cr3();
+    if (target_pml4 && current_pml4 != target_pml4) {
+        paging_switch_pml4(target_pml4);
+    }
+}
 
 interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 {
@@ -37,6 +67,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         if (first->task) {
             task_set_current(first->task);
         }
+        scheduler_switch_address_space(first);
         scheduler_update_tss(first);
         stats.running_tasks = 1;
         stats.total_switches++;
@@ -74,6 +105,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     if (next->task) {
         task_set_current(next->task);
     }
+    scheduler_switch_address_space(next);
     scheduler_update_tss(next);
     stats.running_tasks = 1;
     stats.total_switches++;

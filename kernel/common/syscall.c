@@ -49,6 +49,27 @@ static uint64_t sys_write(uint64_t a1,
     }
     return (uint64_t)len;
 }
+
+static uint64_t sys_test_sleep(uint64_t a1,
+                               uint64_t a2,
+                               uint64_t a3,
+                               uint64_t a4,
+                               uint64_t a5,
+                               uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    uint64_t ms = a1;
+    if (ms == 0) {
+        ms = 1;
+    }
+    scheduler_sleep(ms);
+    return RDNX_OK;
+}
+
 void syscall_init(void)
 {
     for (uint32_t i = 0; i < SYSCALL_MAX; i++) {
@@ -56,6 +77,7 @@ void syscall_init(void)
     }
 
     syscall_register(SYS_NOP, sys_nop);
+    syscall_register(SYS_TEST_SLEEP, sys_test_sleep);
     syscall_register(SYS_WRITE, sys_write);
     posix_syscall_init();
 }

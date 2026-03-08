@@ -66,6 +66,8 @@ static void unix_spawn_thread(void* arg)
     if (task) {
         task->exit_code = (ret == RDNX_OK) ? 0 : 127;
         task->exited = 1;
+        task->state = TASK_STATE_ZOMBIE;
+        unix_proc_notify_waiters(task->parent_task_id);
     }
     scheduler_exit_current();
 }

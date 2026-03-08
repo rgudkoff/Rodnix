@@ -6,11 +6,11 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_syscall.h"
+#include "unistd.h"
 #include "dirent.h"
 
 #define SYS_NOP 0
 #define VFS_OPEN_READ 1
-#define RDNX_E_BUSY (-5)
 
 #define FD_STDIN  0
 #define FD_STDOUT 1
@@ -393,13 +393,7 @@ static int cmd_run(int argc, char** argv, int verbose)
         (void)write_str("\n");
     }
     {
-        long wr = RDNX_E_BUSY;
-        while (wr == RDNX_E_BUSY) {
-            wr = posix_waitpid(pid, &status);
-            if (wr == RDNX_E_BUSY) {
-                (void)rdnx_syscall0(SYS_NOP);
-            }
-        }
+        long wr = waitpid((pid_t)pid, &status, 0);
         if (wr != pid) {
             (void)write_str("run: waitpid failed\n");
             return -1;

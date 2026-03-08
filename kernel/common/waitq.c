@@ -6,6 +6,7 @@
 #include "waitq.h"
 #include "scheduler.h"
 #include "../../include/error.h"
+#include "../../include/console.h"
 #include <stddef.h>
 
 TAILQ_HEAD(waitq_timeout_head, thread);
@@ -197,10 +198,38 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks)
         waitq_arm_timeout(self, deadline_ticks);
     }
 
+    static int waitq_dbg = 0;
+    if (waitq_dbg < 12) {
+        kprintf("[WAITQ] enter q=%p tid=%llu self=%p\n",
+                (void*)q,
+                (unsigned long long)self->thread_id,
+                (void*)self);
+        waitq_dbg++;
+    }
+
     while (waitq_contains(q, self)) {
+        if (waitq_dbg < 12) {
+            kprintf("[WAITQ] sleep q=%p tid=%llu owner=%p\n",
+                    (void*)q,
+                    (unsigned long long)self->thread_id,
+                    (void*)self->waitq_owner);
+            waitq_dbg++;
+        }
         scheduler_block();
         /* Trigger immediate dispatch to avoid spinning in current context. */
-        __asm__ volatile ("int $32");
+        __asm__ volatile ("int $32"
+                          :
+                          :
+                          : "rax", "rcx", "rdx", "rsi", "rdi",
+                            "r8", "r9", "r10", "r11", "cc", "memory");
+    }
+
+    if (waitq_dbg < 12) {
+        kprintf("[WAITQ] wake q=%p tid=%llu owner=%p\n",
+                (void*)q,
+                (unsigned long long)self->thread_id,
+                (void*)self->waitq_owner);
+        waitq_dbg++;
     }
 
     int ret = self->wait_timed_out ? RDNX_E_TIMEOUT : RDNX_OK;

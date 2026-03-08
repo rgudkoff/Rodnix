@@ -145,8 +145,13 @@ void scheduler_reap_dead_threads(void)
                     scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
                     task_destroy(owner);
                 } else {
-                    scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");
-                    unix_proc_notify_waiters(owner->parent_task_id);
+                    if (owner->waited) {
+                        scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_waited_destroy");
+                        task_destroy(owner);
+                    } else {
+                        scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");
+                        unix_proc_notify_waiters(owner->parent_task_id);
+                    }
                 }
             } else {
                 scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_threads_remaining");

@@ -13,10 +13,9 @@
 
 #include <stdint.h>
 #include "posix_syscall.h"
-#include "syscall.h"
+#include "unistd.h"
 
 #define FD_STDOUT 1
-#define RDNX_E_BUSY (-5)
 
 static long write_buf(const char* s, uint64_t len)
 {
@@ -46,13 +45,7 @@ int main(void)
     }
 
     {
-        long wr = RDNX_E_BUSY;
-        while (wr == RDNX_E_BUSY) {
-            wr = posix_waitpid(pid, &status);
-            if (wr == RDNX_E_BUSY) {
-                (void)rdnx_syscall0(0);
-            }
-        }
+        long wr = waitpid((pid_t)pid, &status, 0);
         if (wr == pid && status == 0) {
             (void)write_str("[CT] CT-005 PASS waitpid reaps child exit status\n");
         } else {

@@ -6,9 +6,11 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_syscall.h"
+#include "unistd.h"
 
 #define VFS_OPEN_READ 1
 #define FD_STDOUT 1
+#define SYS_TEST_SLEEP 62
 
 static long write_buf(const char* s, uint64_t len)
 {
@@ -196,12 +198,60 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        long ts = rdnx_syscall1(SYS_TEST_SLEEP, 1);
+        if (ts >= 0) {
+            ct_log("CT-DBG", "PASS", "blocking syscall probe returned");
+        } else {
+            ct_log("CT-DBG", "FAIL", "blocking syscall probe failed");
+        }
+    }
+
+    {
+        int status = -1;
         long pid = posix_spawn("/bin/true", 0);
         if (pid > 0) {
             ct_log("CT-001", "PASS", "spawn creates child pid");
+            {
+                long wr = waitpid((pid_t)pid, &status, 0);
+                if (wr == pid && status == 0) {
+                    ct_log("CT-005", "PASS", "waitpid reaps child exit status");
+                } else {
+                    ct_log("CT-005", "FAIL", "waitpid failed or bad status");
+                    ok = 0;
+                }
+            }
+            {
+                long wr2 = waitpid((pid_t)pid, &status, 0);
+                if (wr2 < 0) {
+                    ct_log("CT-006", "PASS", "second waitpid fails after reap");
+                } else {
+                    ct_log("CT-006", "FAIL", "second waitpid unexpectedly succeeded");
+                    ok = 0;
+                }
+            }
         } else {
             ct_log("CT-001", "FAIL", "spawn failed");
+            ct_log("CT-005", "FAIL", "spawn prerequisite failed");
+            ct_log("CT-006", "FAIL", "spawn prerequisite failed");
             ok = 0;
+        }
+    }
+
+    {
+        /* Race case: child may exit before parent enters waitpid. */
+        int status = -1;
+        long pid = posix_spawn("/bin/true", 0);
+        if (pid <= 0) {
+            ct_log("CT-005", "FAIL", "race spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-005", "PASS", "race fast-exit child reaped");
+            } else {
+                ct_log("CT-005", "FAIL", "race waitpid failed");
+                ok = 0;
+            }
         }
     }
 

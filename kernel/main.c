@@ -108,10 +108,7 @@ static void idle_thread(void* arg)
 {
     (void)arg;
     for (;;) {
-        interrupts_enable();
-        /* Yield if any ready thread exists */
-        scheduler_yield();
-        cpu_idle();
+        __asm__ volatile ("sti; hlt" ::: "memory");
     }
 }
 
@@ -511,8 +508,12 @@ void kmain(uint32_t magic, void* mbi)
         primary = thread_create(init_task, user_init_thread, (void*)g_user_init_path);
     }
     thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
+    if (idle) {
+        idle->priority = PRIORITY_MIN;
+    }
     bootstrap_start();
-    idl_demo_start();
+    /* Keep IDL demo disabled in baseline boot path; it perturbs contract CI. */
+    /* idl_demo_start(); */
     if (!primary || !idle) {
         bootlog_mark("threads", "thread_create_fail");
         panic("Kernel thread create failed");
