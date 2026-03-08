@@ -133,11 +133,15 @@ void scheduler_reap_dead_threads(void)
         if (owner && owner != task_get_current()) {
             if (owner->thread_count == 0) {
                 /*
-                 * POSIX wait semantics: keep child zombie until parent reaps it.
-                 * Kernel/orphan tasks are reclaimed immediately.
+                 * Lifecycle ownership rule:
+                 * - Reaper always reclaims dead threads.
+                 * - User task object is reclaimed by waitpid() only.
+                 * - Kernel/orphan tasks (parent_task_id == 0) are reclaimed here.
+                 *
+                 * This avoids waitpid/reaper double-destroy races on task_t.
                  */
-                if (owner->parent_task_id == 0 || owner->waited) {
-                    scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
+                if (owner->parent_task_id == 0) {
+                    scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread_kernel");
                     task_destroy(owner);
                 } else {
                     scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");

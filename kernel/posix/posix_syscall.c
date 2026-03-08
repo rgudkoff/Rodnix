@@ -712,15 +712,16 @@ static uint64_t posix_waitpid(uint64_t a1,
     }
 
     uint64_t pid = a1;
-    task_t* child = task_find_by_id(pid);
-    if (!child) {
-        return (uint64_t)RDNX_E_NOTFOUND;
-    }
-    if (child->parent_task_id != self->task_id) {
-        return (uint64_t)RDNX_E_DENIED;
-    }
 
     for (;;) {
+        task_t* child = task_find_by_id(pid);
+        if (!child) {
+            return (uint64_t)RDNX_E_NOTFOUND;
+        }
+        if (child->parent_task_id != self->task_id) {
+            return (uint64_t)RDNX_E_DENIED;
+        }
+
         bool exited = child->exited ||
                       (child->thread_count == 0) ||
                       (child->state == TASK_STATE_ZOMBIE) ||
@@ -739,7 +740,8 @@ static uint64_t posix_waitpid(uint64_t a1,
 
         thread_t* child_thread = child->main_thread;
         if (!child_thread) {
-            return (uint64_t)RDNX_E_INVALID;
+            scheduler_yield();
+            continue;
         }
         if (child_thread->joiner && child_thread->joiner != self_thread) {
             return (uint64_t)RDNX_E_BUSY;
