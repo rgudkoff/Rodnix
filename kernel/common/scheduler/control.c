@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../tracev2.h"
+#include "../bootlog.h"
 #include "../../../include/debug.h"
 
 static void scheduler_exit_wake_joiner(thread_t* exiting)
@@ -47,7 +48,7 @@ void scheduler_block(void)
     }
 
     static int log_count = 0;
-    if (log_count < 6) {
+    if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block tid=%llu state=%d\n",
                 (unsigned long long)current_thread->thread_id,
                 (int)current_thread->state);
@@ -63,7 +64,7 @@ void scheduler_block(void)
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
                  current_thread->thread_id, current_thread->state);
     current_thread->last_sleep_tick = sched_ticks;
-    if (log_count < 6) {
+    if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block set tid=%llu state=%d\n",
                 (unsigned long long)current_thread->thread_id,
                 (int)current_thread->state);

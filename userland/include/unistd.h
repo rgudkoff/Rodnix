@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 #include <sys/fcntl.h>
+#include <sys/mman.h>
 #include "posix_syscall.h"
 
 #ifdef __cplusplus
@@ -61,6 +62,11 @@ static inline int close(int fd)
     return (int)posix_close(fd);
 }
 
+static inline int fcntl(int fd, int cmd, int arg)
+{
+    return (int)posix_fcntl(fd, cmd, (long)arg);
+}
+
 static inline int open(const char* path, int flags)
 {
     return (int)posix_open(path, rdnx_open_flags_from_posix(flags));
@@ -91,12 +97,50 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
     return (pid_t)wr;
 }
 
+static inline pid_t fork(void)
+{
+    return (pid_t)posix_fork();
+}
+
 static inline void _exit(int status)
 {
     (void)posix_exit(status);
     for (;;) {
         __asm__ volatile ("pause");
     }
+}
+
+static inline void* mmap(void* addr, size_t len, int prot, int flags, int fd, off_t off)
+{
+    long r = posix_mmap(addr, (uint64_t)len, prot, flags, fd, (uint64_t)off);
+    if (r < 0) {
+        return (void*)0;
+    }
+    return (void*)(uintptr_t)r;
+}
+
+static inline int munmap(void* addr, size_t len)
+{
+    return (int)posix_munmap(addr, (uint64_t)len);
+}
+
+static inline int brk(void* addr)
+{
+    long r = posix_brk(addr);
+    return (r < 0) ? -1 : 0;
+}
+
+static inline void* sbrk(intptr_t increment)
+{
+    long cur = posix_brk((void*)0);
+    if (cur < 0) {
+        return (void*)0;
+    }
+    long next = posix_brk((void*)(uintptr_t)(cur + increment));
+    if (next < 0) {
+        return (void*)0;
+    }
+    return (void*)(uintptr_t)cur;
 }
 
 #ifdef __cplusplus

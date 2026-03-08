@@ -5,6 +5,7 @@
 
 #include "vfs.h"
 #include "initrd.h"
+#include "ext2.h"
 #include "../common/tty_console.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
@@ -30,6 +31,10 @@ static vfs_cache_entry_t vfs_cache[VFS_CACHE_SIZE];
 
 static const void* vfs_initrd_data = NULL;
 static size_t vfs_initrd_size = 0;
+
+#define VFS_MAX_FS_DRIVERS 8
+static const vfs_fs_driver_t* vfs_fs_drivers[VFS_MAX_FS_DRIVERS];
+static uint32_t vfs_fs_driver_count = 0;
 
 static vfs_mount_t* vfs_find_mount_at(const vfs_node_t* node)
 {
@@ -266,6 +271,38 @@ static int vfs_grow_file(vfs_node_t* node, size_t needed)
     return 0;
 }
 
+static const vfs_fs_driver_t* vfs_find_fs_driver(const char* fs_name)
+{
+    if (!fs_name || fs_name[0] == '\0') {
+        return NULL;
+    }
+    for (uint32_t i = 0; i < vfs_fs_driver_count; i++) {
+        const vfs_fs_driver_t* d = vfs_fs_drivers[i];
+        if (d && d->name && strcmp(d->name, fs_name) == 0) {
+            return d;
+        }
+    }
+    return NULL;
+}
+
+static int vfs_ramfs_mount(const char* source, vfs_node_t** out_root)
+{
+    (void)source;
+    if (!out_root) {
+        return RDNX_E_INVALID;
+    }
+    *out_root = vfs_alloc_node("/", VFS_NODE_DIR);
+    if (!*out_root) {
+        return RDNX_E_NOMEM;
+    }
+    return RDNX_OK;
+}
+
+static const vfs_fs_driver_t vfs_ramfs_driver = {
+    .name = "ramfs",
+    .mount = vfs_ramfs_mount,
+};
+
 static vfs_node_t* vfs_create_node(vfs_node_t* parent, const char* name, vfs_node_type_t type)
 {
     vfs_node_t* node = vfs_alloc_node(name, type);
@@ -282,17 +319,23 @@ static vfs_node_t* vfs_create_node(vfs_node_t* parent, const char* name, vfs_nod
 
 static int vfs_mount_root_ramfs(void)
 {
+    const vfs_fs_driver_t* ramfs = vfs_find_fs_driver("ramfs");
+    if (!ramfs || !ramfs->mount) {
+        return -1;
+    }
+
     vfs_mount_t* mnt = (vfs_mount_t*)kmalloc(sizeof(vfs_mount_t));
     if (!mnt) {
         return -1;
     }
     memset(mnt, 0, sizeof(*mnt));
     mnt->fs_name = "ramfs";
-    mnt->root = vfs_alloc_node("/", VFS_NODE_DIR);
-    if (!mnt->root) {
+    vfs_node_t* root = NULL;
+    if (ramfs->mount(NULL, &root) != RDNX_OK || !root) {
         kfree(mnt);
         return -1;
     }
+    mnt->root = root;
     mnt->mountpoint = NULL;
     mnt->next = vfs_mounts;
     vfs_mounts = mnt;
@@ -371,34 +414,61 @@ int vfs_mount_initrd_root(void)
 }
 int vfs_mount_ramfs(const char* path)
 {
-    if (!vfs_ready || !path) {
-        return -1;
+    return vfs_mount("ramfs", NULL, path);
+}
+
+int vfs_register_fs(const vfs_fs_driver_t* driver)
+{
+    if (!driver || !driver->name || !driver->mount) {
+        return RDNX_E_INVALID;
+    }
+    if (vfs_find_fs_driver(driver->name)) {
+        return RDNX_OK;
+    }
+    if (vfs_fs_driver_count >= VFS_MAX_FS_DRIVERS) {
+        return RDNX_E_NOMEM;
+    }
+    vfs_fs_drivers[vfs_fs_driver_count++] = driver;
+    return RDNX_OK;
+}
+
+int vfs_mount(const char* fs_name, const char* source, const char* target)
+{
+    if (!vfs_ready || !fs_name || !target) {
+        return RDNX_E_INVALID;
     }
 
-    vfs_node_t* mountpoint = vfs_lookup(path);
+    const vfs_fs_driver_t* driver = vfs_find_fs_driver(fs_name);
+    if (!driver || !driver->mount) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    vfs_node_t* mountpoint = vfs_lookup(target);
     if (!mountpoint || mountpoint->type != VFS_NODE_DIR) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     if (vfs_find_mount_at(mountpoint)) {
-        return -1;
+        return RDNX_E_BUSY;
+    }
+
+    vfs_node_t* root = NULL;
+    int mrc = driver->mount(source, &root);
+    if (mrc != RDNX_OK || !root || root->type != VFS_NODE_DIR) {
+        return (mrc == RDNX_OK) ? RDNX_E_GENERIC : mrc;
     }
 
     vfs_mount_t* mnt = (vfs_mount_t*)kmalloc(sizeof(vfs_mount_t));
     if (!mnt) {
-        return -1;
+        return RDNX_E_NOMEM;
     }
     memset(mnt, 0, sizeof(*mnt));
-    mnt->fs_name = "ramfs";
-    mnt->root = vfs_alloc_node("/", VFS_NODE_DIR);
-    if (!mnt->root) {
-        kfree(mnt);
-        return -1;
-    }
+    mnt->fs_name = driver->name;
+    mnt->root = root;
     mnt->mountpoint = mountpoint;
     mnt->next = vfs_mounts;
     vfs_mounts = mnt;
     vfs_cache_reset();
-    return 0;
+    return RDNX_OK;
 }
 
 static int vfs_import_initrd(void)
@@ -487,6 +557,8 @@ int vfs_init(void)
         return RDNX_OK;
     }
     TRACE_EVENT("vfs_init");
+    (void)vfs_register_fs(&vfs_ramfs_driver);
+    (void)ext2_fs_init();
     if (vfs_mount_root_ramfs() != 0) {
         return RDNX_E_GENERIC;
     }
@@ -656,4 +728,35 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
         inode->size = end;
     }
     return (int)size;
+}
+
+vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type)
+{
+    return vfs_alloc_node(name, type);
+}
+
+int vfs_fs_add_child(vfs_node_t* parent, vfs_node_t* child)
+{
+    if (!parent || !child) {
+        return RDNX_E_INVALID;
+    }
+    return (vfs_add_child(parent, child) == 0) ? RDNX_OK : RDNX_E_INVALID;
+}
+
+int vfs_fs_set_file_data(vfs_node_t* node, const void* data, size_t size)
+{
+    if (!node || node->type != VFS_NODE_FILE || !node->inode) {
+        return RDNX_E_INVALID;
+    }
+    if (size > 0 && !data) {
+        return RDNX_E_INVALID;
+    }
+    if (vfs_grow_file(node, size) != 0) {
+        return RDNX_E_NOMEM;
+    }
+    if (size > 0) {
+        memcpy(node->inode->data, data, size);
+    }
+    node->inode->size = size;
+    return RDNX_OK;
 }

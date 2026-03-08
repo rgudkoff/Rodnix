@@ -9,6 +9,7 @@
 #include "gdt.h"
 #include "types.h"
 #include "config.h"
+#include "../../common/bootlog.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
 #include <stdint.h>
@@ -36,33 +37,45 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     }
 
     extern void kputs(const char* str);
-    kputs("[USERMODE] prepare_stub\n");
+    if (bootlog_is_verbose()) {
+        kputs("[USERMODE] prepare_stub\n");
+    }
 
     user_pml4_phys = paging_create_user_pml4();
     if (!user_pml4_phys) {
-        kputs("[USERMODE] create_pml4 failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[USERMODE] create_pml4 failed\n");
+        }
         return RDNX_E_NOMEM;
     }
 
     uint64_t code_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     uint64_t stack_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     if (!code_phys || !stack_phys) {
-        kputs("[USERMODE] alloc pages failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[USERMODE] alloc pages failed\n");
+        }
         return RDNX_E_NOMEM;
     }
 
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
-        kputs("[USERMODE] map code failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[USERMODE] map code failed\n");
+        }
         return RDNX_E_GENERIC;
     }
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
-        kputs("[USERMODE] map stack failed\n");
+        if (bootlog_is_verbose()) {
+            kputs("[USERMODE] map stack failed\n");
+        }
         return RDNX_E_GENERIC;
     }
 
     memcpy(X86_64_PHYS_TO_VIRT(code_phys), user_stub_code, sizeof(user_stub_code));
     memset(X86_64_PHYS_TO_VIRT(stack_phys), 0, X86_64_PAGE_SIZE);
-    kputs("[USERMODE] stub mapped\n");
+    if (bootlog_is_verbose()) {
+        kputs("[USERMODE] stub mapped\n");
+    }
 
     *entry = (void*)(uintptr_t)USER_CODE_VA;
     *user_stack = (void*)(uintptr_t)(USER_STACK_VA + X86_64_PAGE_SIZE - 16);
@@ -74,12 +87,16 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0,
 {
     tss_set_rsp0(rsp0);
     extern void kputs(const char* str);
-    kputs("[USERMODE] switching CR3\n");
+    if (bootlog_is_verbose()) {
+        kputs("[USERMODE] switching CR3\n");
+    }
     if (user_pml4_phys) {
         paging_switch_pml4(user_pml4_phys);
     }
-    kputs("[USERMODE] switched CR3\n");
-    kputs("[USERMODE] about to iretq\n");
+    if (bootlog_is_verbose()) {
+        kputs("[USERMODE] switched CR3\n");
+        kputs("[USERMODE] about to iretq\n");
+    }
 
     uint64_t user_cs = GDT_USER_CS | 0x3;
     uint64_t user_ds = GDT_USER_DS | 0x3;

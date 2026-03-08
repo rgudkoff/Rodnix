@@ -113,7 +113,6 @@ int memory_init(void)
     /* For PMM, we need to allocate a bitmap. For now, use a fixed location
      * in low memory that's already identity-mapped.
      */
-    #define PMM_BITMAP_PHYS_ADDR  0x200000 /* 2MB (above kernel start, identity-mapped) */
     #define PMM_MEMORY_START      0x100000 /* 1MB (after boot code) */
     #define PMM_MEMORY_FALLBACK_END 0x4000000 /* 64MB (fallback) */
     #define PMM_BITMAP_MAX_SIZE    0x100000  /* 1MB bitmap cap */
@@ -138,8 +137,22 @@ int memory_init(void)
         }
     }
     
-    /* Bitmap is in low memory; use higher-half direct map */
-    void* bitmap_virt = X86_64_PHYS_TO_VIRT(PMM_BITMAP_PHYS_ADDR);
+    /*
+     * Place PMM bitmap after kernel + initrd in low memory to avoid overlap
+     * as kernel image grows.
+     */
+    extern char kernel_end;
+    uint64_t kernel_end_phys = (uint64_t)X86_64_VIRT_TO_PHYS(&kernel_end);
+    uint64_t bitmap_phys = (kernel_end_phys + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    if (bi && bi->initrd_start && bi->initrd_size) {
+        uint64_t initrd_end = bi->initrd_start + bi->initrd_size;
+        if (initrd_end > bitmap_phys) {
+            bitmap_phys = (initrd_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+        }
+    }
+
+    /* Use higher-half direct mapping for bitmap access. */
+    void* bitmap_virt = X86_64_PHYS_TO_VIRT(bitmap_phys);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-5] Call pmm_init\n");
@@ -149,7 +162,7 @@ int memory_init(void)
     /* Initialize PMM */
     if (bi && bi->mmap_addr && bi->mmap_size && bi->mmap_entry_size) {
         if (pmm_init_from_mmap(PMM_MEMORY_START, mem_end, bitmap_virt,
-                               PMM_BITMAP_PHYS_ADDR, bi->mmap_addr,
+                               bitmap_phys, bi->mmap_addr,
                                bi->mmap_size, bi->mmap_entry_size) != 0) {
             kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
             tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 2, 0);
@@ -166,9 +179,7 @@ int memory_init(void)
 
     /* Reserve kernel image before early page-table allocations */
     extern void pmm_reserve_range(uint64_t start, uint64_t end);
-    extern char kernel_end;
     uint64_t kernel_start = 0x100000ULL;
-    uint64_t kernel_end_phys = (uint64_t)X86_64_VIRT_TO_PHYS(&kernel_end);
     pmm_reserve_range(kernel_start, kernel_end_phys);
 
     if (bi && bi->initrd_start && bi->initrd_size) {

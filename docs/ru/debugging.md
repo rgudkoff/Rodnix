@@ -27,4 +27,4 @@ gdb build/rodnix.kernel
 
 ## Где смотреть
 
-- `docs/BUILD.md` для подробного набора команд.
+- `build_run.md` для команд сборки и запуска.

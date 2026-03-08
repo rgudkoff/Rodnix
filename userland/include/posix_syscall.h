@@ -35,6 +35,11 @@ static inline long posix_close(int fd)
     return rdnx_syscall1(POSIX_SYS_CLOSE, fd);
 }
 
+static inline long posix_fcntl(int fd, int cmd, long arg)
+{
+    return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
+}
+
 static inline long posix_uname(void* u)
 {
     return rdnx_syscall1(POSIX_SYS_UNAME, (long)(uintptr_t)u);
@@ -63,6 +68,77 @@ static inline long posix_waitpid(long pid, int* status)
 static inline long posix_readdir(const char* path, void* entries, uint64_t len)
 {
     return rdnx_syscall6(POSIX_SYS_READDIR, (long)(uintptr_t)path, (long)(uintptr_t)entries, (long)len, 0, 0, 0);
+}
+
+static inline long posix_netiflist(void* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_NETIFLIST,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_hwlist(void* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_HWLIST,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_fabricls(void* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_FABRICLS,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_fabricevents(void* entries, uint64_t max_entries, uint32_t* out_read, uint32_t* out_dropped)
+{
+    return rdnx_syscall6(POSIX_SYS_FABRICEVENTS,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_read,
+                         (long)(uintptr_t)out_dropped,
+                         0, 0);
+}
+
+static inline long posix_sysinfo(void* out_info)
+{
+    return rdnx_syscall1(POSIX_SYS_SYSINFO, (long)(uintptr_t)out_info);
+}
+
+static inline long posix_mmap(void* addr, uint64_t len, int prot, int flags, int fd, uint64_t off)
+{
+    return rdnx_syscall6(POSIX_SYS_MMAP,
+                         (long)(uintptr_t)addr,
+                         (long)len,
+                         (long)prot,
+                         (long)flags,
+                         (long)fd,
+                         (long)off);
+}
+
+static inline long posix_munmap(void* addr, uint64_t len)
+{
+    return rdnx_syscall6(POSIX_SYS_MUNMAP,
+                         (long)(uintptr_t)addr,
+                         (long)len,
+                         0, 0, 0, 0);
+}
+
+static inline long posix_brk(void* new_break)
+{
+    return rdnx_syscall1(POSIX_SYS_BRK, (long)(uintptr_t)new_break);
+}
+
+static inline long posix_fork(void)
+{
+    return rdnx_syscall0(POSIX_SYS_FORK);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

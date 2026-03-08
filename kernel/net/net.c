@@ -1,7 +1,10 @@
 #include "net.h"
+#include "../fabric/service/net_service.h"
 #include "../fabric/spin.h"
 #include "../common/heap.h"
 #include "../../include/console.h"
+#include "../../include/common.h"
+#include "../../include/error.h"
 
 typedef struct net_node {
     net_packet_t pkt;
@@ -16,6 +19,51 @@ typedef struct net_queue {
 } net_queue_t;
 
 static net_queue_t* loopback_queue = NULL;
+static int net_service_registered = 0;
+static fabric_netif_t loopback_iface = {0};
+
+static int net_loopback_tx_cb(fabric_netif_t* iface, const void* frame, uint32_t len)
+{
+    (void)iface;
+    return net_loopback_frame_tx(frame, len);
+}
+
+static void net_register_loopback_iface_once(void)
+{
+    if (net_service_registered) {
+        return;
+    }
+    if (fabric_net_service_init() != RDNX_OK) {
+        kputs("[NET] Fabric net service init failed\n");
+        return;
+    }
+
+    static fabric_netif_ops_t loopback_ops = {
+        .hdr = RDNX_ABI_INIT(fabric_netif_ops_t),
+        .tx = net_loopback_tx_cb
+    };
+
+    loopback_iface.hdr = RDNX_ABI_INIT(fabric_netif_t);
+    loopback_iface.name = "lo0";
+    loopback_iface.mac[0] = 0x02;
+    loopback_iface.mac[1] = 0x00;
+    loopback_iface.mac[2] = 0x00;
+    loopback_iface.mac[3] = 0x00;
+    loopback_iface.mac[4] = 0x00;
+    loopback_iface.mac[5] = 0x01;
+    loopback_iface.mtu = NET_MAX_PACKET;
+    loopback_iface.flags = FABRIC_NETIF_F_UP | FABRIC_NETIF_F_LOOPBACK;
+    loopback_iface.ops = &loopback_ops;
+    loopback_iface.context = NULL;
+
+    if (fabric_netif_register(&loopback_iface) != RDNX_OK) {
+        kputs("[NET] Fabric net iface register failed: lo0\n");
+        return;
+    }
+
+    net_service_registered = 1;
+    kputs("[NET] Fabric net interface ready: lo0\n");
+}
 
 static net_queue_t* net_queue_create(void)
 {
@@ -92,6 +140,7 @@ int net_init(void)
             return -1;
         }
     }
+    net_register_loopback_iface_once();
     kputs("[NET] Loopback ready\n");
     return 0;
 }
@@ -102,6 +151,20 @@ int net_loopback_send(const net_packet_t* pkt)
         return -1;
     }
     return net_queue_push(loopback_queue, pkt);
+}
+
+int net_loopback_frame_tx(const void* frame, uint32_t len)
+{
+    if (!frame || len == 0 || len > NET_MAX_PACKET) {
+        return RDNX_E_INVALID;
+    }
+    net_packet_t pkt = {0};
+    pkt.len = len;
+    memcpy(pkt.data, frame, len);
+    if (net_loopback_send(&pkt) != 0) {
+        return RDNX_E_GENERIC;
+    }
+    return RDNX_OK;
 }
 
 int net_loopback_recv(net_packet_t* out)

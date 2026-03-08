@@ -87,11 +87,13 @@ QEMU_ACCEL ?=
 # - По умолчанию используем mon:stdio для интерактивного ввода/вывода в терминале.
 # - Для старого поведения с логом в файл: QEMU_SERIAL="file:boot.log".
 QEMU_SERIAL ?= mon:stdio
+# QEMU NIC for first real Fabric backend (e1000).
+QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
 #
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
-QEMU_FLAGS       = -m 512M -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
-                   -machine pc -cpu qemu64,+apic,+x2apic
+QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
+                   -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S
 
 IDL_OUT ?= build/idl
@@ -99,7 +101,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10
+.PHONY: all clean run _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -144,6 +146,12 @@ iso: $(KERNEL_BIN) initrd
 		mkdir -p $(ISO_DIR)/boot/grub; \
 		if [ -f boot/grub/grub.cfg ]; then \
 			cp boot/grub/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
+			if [ -n "$(KERNEL_CMDLINE)" ]; then \
+				sed -E "s|^[[:space:]]*multiboot2[[:space:]]+/boot/rodnix\\.kernel.*$$|    multiboot2 /boot/rodnix.kernel $(KERNEL_CMDLINE)|" \
+					$(ISO_DIR)/boot/grub/grub.cfg > $(ISO_DIR)/boot/grub/grub.cfg.tmp; \
+				mv $(ISO_DIR)/boot/grub/grub.cfg.tmp $(ISO_DIR)/boot/grub/grub.cfg; \
+				echo "[*] GRUB cmdline: $(KERNEL_CMDLINE)"; \
+			fi; \
 		elif [ -f grub.cfg ]; then \
 			cp grub.cfg $(ISO_DIR)/boot/grub/grub.cfg; \
 		else \
@@ -188,7 +196,14 @@ iso: $(KERNEL_BIN) initrd
 	fi
 
 # ===== Run / Debug =====
-run: iso
+run:
+	@if [ -n "$(filter debug,$(MAKECMDGOALS))" ]; then \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+	else \
+		$(MAKE) --no-print-directory _run_impl; \
+	fi
+
+_run_impl: iso
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
 		echo "[*] Running QEMU $(QEMU_ACCEL), serial=$(QEMU_SERIAL), tee -> boot.log"; \
 		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
@@ -197,7 +212,14 @@ run: iso
 		echo "[!] qemu-system-x86_64 not found. macOS: brew install qemu"; exit 1; \
 	fi
 
-debug: iso
+debug:
+	@if [ -n "$(filter run,$(MAKECMDGOALS))" ]; then \
+		echo "[*] debug flag enabled for run (verbose boot logs)"; \
+	else \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+	fi
+
+gdb: iso
 	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
 	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
 	sleep 1
@@ -245,6 +267,9 @@ check-contract-10:
 		bash scripts/ci/contract_qemu.sh || exit 1; \
 	done
 
+check-ifconfig-smoke:
+	@bash scripts/ci/smoke_ifconfig_qemu.sh
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -267,11 +292,13 @@ help:
 	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
 	@echo "  run         - Run kernel in QEMU"
-	@echo "  debug       - Run with debugger support"
+	@echo "  debug       - Run with verbose kernel diagnostics"
+	@echo "  gdb         - Run paused for debugger (:1234)"
 	@echo "  check       - Verify Multiboot2 header"
 	@echo "  check-abi   - Verify userland BSD ABI constants"
 	@echo "  check-contract - Run contract CI smoke in QEMU"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
+	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
 	@echo "  sync-bsd-abi - Sync userland ABI headers from FreeBSD vendor snapshot"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"

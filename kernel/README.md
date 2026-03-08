@@ -6,6 +6,8 @@ The kernel directory contains the core operating system kernel.
 
 - core: architecture-independent abstractions
 - common: common kernel components
+- kern (planned): process/task/scheduler/syscall/ipc/security domain
+- vm (planned): memory management policy/helpers (arch-independent)
 - arch: architecture-dependent implementations
   - x86_64: x86_64 (CISC)
   - arm64: ARM64 (RISC)
@@ -18,6 +20,12 @@ The kernel directory contains the core operating system kernel.
 1. Architectural abstraction: arch-specific details are isolated in arch/
 2. Unified interface: core provides interfaces for all architectures
 3. Modularity: components are separated and replaceable
+4. Domain-first layout: avoid placing new process/vm logic into common/
+
+## Refactor plan
+
+See `docs/ru/archive/kernel_layout_refactor.md`
+for the file layout migration plan.
 
 ## Components
 

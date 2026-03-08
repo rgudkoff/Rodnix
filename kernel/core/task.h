@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+struct interrupt_frame;
+
 /* ============================================================================
  * Состояние задачи
  * ============================================================================ */
@@ -73,12 +75,18 @@ typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
     uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
     void* address_space;       /* Адресное пространство (vm_map) */
+    void* vm_map;              /* VM map (unix-style user virtual memory map) */
+    uint64_t vm_brk_base;      /* Base of brk() region (end of data/bss image) */
+    uint64_t vm_brk_end;       /* Current program break */
+    uint64_t vm_mmap_base;     /* Base for mmap() allocations */
+    uint64_t vm_mmap_hint;     /* Next mmap() search hint */
     task_state_t state;        /* Состояние задачи */
     uint32_t uid;              /* Реальный UID */
     uint32_t gid;              /* Реальный GID */
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
+    uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
     int32_t exit_code;         /* Код завершения процесса */
     uint8_t exited;            /* Процесс завершен через posix_exit */
     uint8_t waited;            /* Статус уже забран waitpid */
@@ -256,6 +264,7 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
  * @return Указатель на поток или NULL при ошибке
  */
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg);
+thread_t* thread_create_user_clone(task_t* task, const struct interrupt_frame* frame);
 
 /**
  * Удаление потока

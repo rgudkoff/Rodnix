@@ -17,6 +17,7 @@ uint32_t pit_get_frequency(void);
 
 /* Timer information */
 uint32_t pit_get_ticks(void);
+uint64_t pit_get_uptime_us(void);
 
 /* Callback registration */
 int pit_register_callback(void (*handler)(void* arg), void* arg);
@@ -30,4 +31,3 @@ void pit_enable(void);
 void pit_disable(void);
 
 #endif /* _RODNIX_ARCH_X86_64_PIT_H */
-

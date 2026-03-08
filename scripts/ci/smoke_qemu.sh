@@ -18,7 +18,7 @@ if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
 fi
 
 set +e
-"$QEMU_BIN" -m 512M -boot d -cdrom rodnix.iso -serial file:"$LOG_FILE" -no-reboot -no-shutdown &
+"$QEMU_BIN" -m 1G -boot d -cdrom rodnix.iso -serial file:"$LOG_FILE" -no-reboot -no-shutdown &
 QEMU_PID=$!
 set -e
 

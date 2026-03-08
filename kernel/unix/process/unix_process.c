@@ -1,7 +1,11 @@
 #include "../unix_layer.h"
+#include "../../common/bootlog.h"
 #include "../../common/scheduler.h"
 #include "../../common/waitq.h"
 #include "../../core/interrupts.h"
+#include "../../arch/x86_64/interrupt_frame.h"
+#include "../../arch/x86_64/paging.h"
+#include "../../vm/vm_map.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
 
@@ -45,8 +49,10 @@ uint64_t unix_proc_exit(uint64_t status)
         unix_proc_notify_waiters(task->parent_task_id);
     }
     thread_t* cur = thread_get_current();
-    kprintf("[EXIT] thread %llu exiting\n",
-            (unsigned long long)(cur ? cur->thread_id : 0));
+    if (bootlog_is_verbose()) {
+        kprintf("[EXIT] thread %llu exiting\n",
+                (unsigned long long)(cur ? cur->thread_id : 0));
+    }
     scheduler_exit_current();
     return 0;
 }
@@ -120,4 +126,52 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
 
         (void)waitq_wait(&unix_child_waitq, 0);
     }
+}
+
+uint64_t unix_proc_fork(void)
+{
+    task_t* parent = task_get_current();
+    thread_t* self_thread = thread_get_current();
+    if (!parent || !self_thread || !parent->address_space) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    interrupt_frame_t* frame = (interrupt_frame_t*)self_thread->arch_specific;
+    if (!frame) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    task_t* child = task_create();
+    if (!child) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    child->state = TASK_STATE_READY;
+    child->parent_task_id = parent->task_id;
+    task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+
+    if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_GENERIC;
+    }
+
+    uint64_t child_pml4 = paging_create_user_pml4();
+    if (!child_pml4) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    child->address_space = (void*)(uintptr_t)child_pml4;
+    if (vm_task_fork_clone(parent, child, child_pml4) != RDNX_OK) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_GENERIC;
+    }
+
+    thread_t* child_thread = thread_create_user_clone(child, frame);
+    if (!child_thread) {
+        task_destroy(child);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    child_thread->priority = self_thread->priority;
+    child_thread->base_priority = self_thread->base_priority;
+    child_thread->dyn_priority = self_thread->dyn_priority;
+    scheduler_add_thread(child_thread);
+    return (uint64_t)child->task_id;
 }

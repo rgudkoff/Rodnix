@@ -20,9 +20,16 @@
 typedef struct {
     uint32_t cpu_id;           /* ID процессора */
     uint32_t apic_id;          /* APIC ID (x86) или аналогичный */
+    uint32_t family;           /* Display family */
+    uint32_t model_id;         /* Display model */
+    uint32_t stepping;         /* CPU stepping */
     const char* vendor;        /* Производитель (Intel, AMD, ARM, etc.) */
     const char* model;         /* Модель процессора */
-    uint32_t features;         /* Архитектурные особенности */
+    uint32_t features;         /* Legacy alias (EDX from CPUID leaf 1) */
+    uint32_t features_edx;     /* CPUID.1:EDX */
+    uint32_t features_ecx;     /* CPUID.1:ECX */
+    uint32_t ext_features_ebx; /* CPUID.7.0:EBX */
+    uint32_t ext_features_ecx; /* CPUID.7.0:ECX */
     uint32_t cores;            /* Количество ядер */
     uint32_t threads;          /* Количество потоков */
 } cpu_info_t;
@@ -197,4 +204,3 @@ uint64_t cpu_get_frequency(void);
 uint64_t cpu_get_time(void);
 
 #endif /* _RODNIX_CORE_CPU_H */
-

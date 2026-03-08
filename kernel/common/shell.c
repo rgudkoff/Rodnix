@@ -111,7 +111,9 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  uptime    - Show system uptime\n");
     kputs("  run       - Run userland program\n");
     kputs("  timer     - Show timer information\n");
+    kputs("  timecheck - Check timer/scheduler drift\n");
     kputs("  echo      - Echo arguments\n");
+    kputs("  mount     - Mount filesystem (mount -t <fs> [src] <target>)\n");
     kputs("  sched     - Show scheduler statistics\n");
     kputs("  exit      - Exit shell (reboot)\n");
     kputs("\n");
@@ -375,7 +377,9 @@ static int shell_cmd_cpu(int argc, char** argv)
     kprintf("  apic_id:  %u\n", info.apic_id);
     kprintf("  vendor:   %s\n", info.vendor ? info.vendor : "unknown");
     kprintf("  model:    %s\n", info.model ? info.model : "unknown");
-    kprintf("  features: %x\n", info.features);
+    kprintf("  fam/mod/st: %u/%u/%u\n", info.family, info.model_id, info.stepping);
+    kprintf("  feat edx/ecx: %x/%x\n", info.features_edx, info.features_ecx);
+    kprintf("  feat7 ebx/ecx: %x/%x\n", info.ext_features_ebx, info.ext_features_ecx);
     kprintf("  cores:    %u\n", info.cores);
     kprintf("  threads:  %u\n", info.threads);
     kputs("\n");
@@ -533,27 +537,89 @@ static int shell_cmd_timer(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
-    
+
+    extern bool apic_is_available(void);
+    extern uint32_t apic_timer_get_ticks(void);
+    extern uint32_t apic_timer_get_frequency(void);
     extern uint32_t pit_get_ticks(void);
     extern uint32_t pit_get_frequency(void);
-    
+
+    const char* source = "pit";
     uint32_t ticks = pit_get_ticks();
     uint32_t freq = pit_get_frequency();
-    /* Prevent division by zero */
+    if (apic_is_available()) {
+        uint32_t af = apic_timer_get_frequency();
+        if (af > 0) {
+            source = "apic";
+            ticks = apic_timer_get_ticks();
+            freq = af;
+        }
+    }
     if (freq == 0) {
         freq = 1;
     }
-    
     uint32_t seconds = ticks / freq;
     uint32_t ms = (ticks % freq) * 1000 / freq;
-    
+
     kprintf("Timer Information:\n");
+    kprintf("  Source:    %s\n", source);
     kprintf("  Frequency: %u Hz\n", freq);
     kprintf("  Ticks:     %u\n", ticks);
     kprintf("  Uptime:    %u.%03u seconds\n", seconds, ms);
     kputs("\n");
     
     return 0;
+}
+
+static int shell_cmd_timecheck(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    extern bool apic_is_available(void);
+    extern uint32_t apic_timer_get_frequency(void);
+    extern uint32_t pit_get_frequency(void);
+    extern uint64_t scheduler_get_ticks(void);
+
+    uint32_t hz = 0;
+    const char* source = "pit";
+    if (apic_is_available()) {
+        uint32_t ahz = apic_timer_get_frequency();
+        if (ahz > 0) {
+            hz = ahz;
+            source = "apic";
+        }
+    }
+    if (hz == 0) {
+        hz = pit_get_frequency();
+    }
+    if (hz == 0) {
+        hz = 100;
+    }
+
+    uint64_t uptime_us = console_get_uptime_us();
+    uint64_t sched_ticks = scheduler_get_ticks();
+    uint64_t sched_us = (sched_ticks * 1000000ULL) / (uint64_t)hz;
+    int64_t drift_us = (int64_t)uptime_us - (int64_t)sched_us;
+    uint64_t abs_drift_us = (drift_us < 0) ? (uint64_t)(-drift_us) : (uint64_t)drift_us;
+    uint64_t ppm = (uptime_us > 0) ? (abs_drift_us * 1000000ULL) / uptime_us : 0;
+
+    kprintf("Timecheck:\n");
+    kprintf("  Source:        %s (%u Hz)\n", source, hz);
+    kprintf("  Uptime us:     %llu\n", (unsigned long long)uptime_us);
+    kprintf("  Sched ticks:   %llu\n", (unsigned long long)sched_ticks);
+    kprintf("  Sched us est:  %llu\n", (unsigned long long)sched_us);
+    kprintf("  Drift us:      %lld\n", (long long)drift_us);
+    kprintf("  Drift ppm:     %llu\n", (unsigned long long)ppm);
+    if (ppm <= 5000ULL) {
+        kputs("  Status:        OK\n");
+    } else if (ppm <= 20000ULL) {
+        kputs("  Status:        WARN\n");
+    } else {
+        kputs("  Status:        BAD\n");
+    }
+    kputs("\n");
+    return RDNX_OK;
 }
 
 /**
@@ -747,6 +813,41 @@ static int shell_cmd_run(int argc, char** argv)
     return RDNX_OK;
 }
 
+static int shell_cmd_mount(int argc, char** argv)
+{
+    if (argc < 4) {
+        kputs("usage: mount -t <fs> [source] <target>\n");
+        return RDNX_E_INVALID;
+    }
+    if (strcmp(argv[1], "-t") != 0) {
+        kputs("mount: expected -t\n");
+        return RDNX_E_INVALID;
+    }
+
+    const char* fs_name = argv[2];
+    const char* source = NULL;
+    const char* target = NULL;
+
+    if (argc == 4) {
+        target = argv[3];
+    } else if (argc == 5) {
+        source = argv[3];
+        target = argv[4];
+    } else {
+        kputs("usage: mount -t <fs> [source] <target>\n");
+        return RDNX_E_INVALID;
+    }
+
+    int rc = vfs_mount(fs_name, source, target);
+    if (rc != RDNX_OK) {
+        kprintf("mount: failed rc=%d\n", rc);
+        return rc;
+    }
+
+    kprintf("mounted %s on %s\n", fs_name, target);
+    return RDNX_OK;
+}
+
 /**
  * @function shell_cmd_exit
  * @brief Exit shell (reboot system)
@@ -797,7 +898,9 @@ static const struct shell_command commands[] = {
     {"uname",   shell_cmd_uname,   "Show kernel identity"},
     {"uptime",  shell_cmd_uptime,  "Show system uptime"},
     {"timer",   shell_cmd_timer,   "Show timer information"},
+    {"timecheck", shell_cmd_timecheck, "Check timer/scheduler drift"},
     {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
+    {"mount",   shell_cmd_mount,   "Mount filesystem (mount -t <fs> [src] <target>)"},
     {"ls",      shell_cmd_ls,      "List directory"},
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},

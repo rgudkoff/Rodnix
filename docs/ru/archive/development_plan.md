@@ -1,6 +1,8 @@
 # План развития (кратко)
 
 Этот файл — сжатое резюме. Полный рабочий план: `docs/PLAN.md`.
+Исполнимый приоритизированный план и критерии готовности:
+`docs/ru/execution_plan_os_foundation.md`.
 
 ## Очередность (факт → документация)
 
@@ -22,6 +24,8 @@
 2. Планировщик
    - MLQ/priority queues + таймслайс.
    - Политики приоритетов и базовая диагностика.
+   - Переход к иерархии `bucket -> thread_group -> thread`.
+   - QoS-aware вытеснение (EDF-like bucket scheduling + anti-starvation окна).
 
 3. VFS
    - vnode/inode модель.
@@ -55,6 +59,10 @@
 - Минимальная очередь запуска.
 - Корректный context switch.
 - Приоритетный планировщик и таймслайс (MLQ/priority queues).
+- Ввести QoS bucket-и и правила latency budget.
+- Ввести `thread_group` fairness внутри bucket.
+- Добавить `warp window` (интерактивный burst) и `starvation avoidance window`.
+- Расширить метрики: bucket runtime/wait, starvation events, warp activations.
 
 ## Приоритет 4: VFS и RAMFS
 

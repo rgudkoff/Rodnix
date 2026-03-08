@@ -155,7 +155,7 @@ static void bootlog_compose_event(char* out, size_t out_len,
 void bootlog_init(void)
 {
     boot_info_t* info = boot_get_info();
-    bootlog_verbose = true;
+    bootlog_verbose = false;
 
     if (info) {
         const char* cmdline = info->cmdline;

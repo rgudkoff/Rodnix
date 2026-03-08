@@ -4,6 +4,7 @@
  */
 
 #include "../core/task.h"
+#include "../vm/vm_map.h"
 #include "heap.h"
 #include "../core/cpu.h"
 #include "../arch/x86_64/interrupt_frame.h"
@@ -200,6 +201,11 @@ task_t* task_create(void)
     task->task_id = next_task_id++;
     task->parent_task_id = 0;
     task->address_space = NULL;
+    task->vm_map = NULL;
+    task->vm_brk_base = 0;
+    task->vm_brk_end = 0;
+    task->vm_mmap_base = 0;
+    task->vm_mmap_hint = 0;
     task->state = TASK_STATE_NEW;
     task->uid = 0;
     task->gid = 0;
@@ -207,6 +213,7 @@ task_t* task_create(void)
     task->egid = 0;
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
+        task->fd_flags[i] = 0;
     }
     task->exit_code = 0;
     task->exited = 0;
@@ -250,7 +257,9 @@ void task_destroy(task_t* task)
             kfree(file);
             task->fd_table[i] = NULL;
         }
+        task->fd_flags[i] = 0;
     }
+    vm_task_destroy(task);
     kfree(task);
 }
 
@@ -301,6 +310,7 @@ int task_fd_alloc(task_t* task, void* handle)
     for (int i = 0; i < TASK_MAX_FD; i++) {
         if (!task->fd_table[i]) {
             task->fd_table[i] = handle;
+            task->fd_flags[i] = 0;
             return i;
         }
     }
@@ -324,6 +334,7 @@ int task_fd_close(task_t* task, int fd)
         return RDNX_E_INVALID;
     }
     task->fd_table[fd] = NULL;
+    task->fd_flags[fd] = 0;
     return RDNX_OK;
 }
 
@@ -381,6 +392,75 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->last_sleep_tick = 0;
     thread->entry = entry;
     thread->arg = arg;
+    thread->stack = stack;
+    thread->stack_size = KERNEL_STACK_SIZE;
+    thread->sched_link.tqe_next = NULL;
+    thread->sched_link.tqe_prev = NULL;
+    thread->ready_queued = 0;
+    thread->wait_link.tqe_next = NULL;
+    thread->wait_link.tqe_prev = NULL;
+    thread->wait_timeout_link.tqe_next = NULL;
+    thread->wait_timeout_link.tqe_prev = NULL;
+    thread->waitq_owner = NULL;
+    thread->wait_deadline_tick = 0;
+    thread->wait_timeout_armed = 0;
+    thread->wait_timed_out = 0;
+    thread->joiner = NULL;
+    thread->reap_queued = 0;
+    thread->reap_after_tick = 0;
+    thread->arch_specific = NULL;
+    task->thread_count++;
+    if (!task->main_thread) {
+        task->main_thread = thread;
+    }
+
+    return thread;
+}
+
+thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
+{
+    if (!task || !frame) {
+        return NULL;
+    }
+
+    thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
+    if (!thread) {
+        return NULL;
+    }
+
+    void* stack = task_kernel_stack_acquire();
+    if (!stack) {
+        kfree(thread);
+        return NULL;
+    }
+
+    uintptr_t sp = (uintptr_t)stack + KERNEL_STACK_SIZE;
+    sp &= ~(uintptr_t)0xF;
+    sp -= 8;
+    sp -= sizeof(interrupt_frame_t);
+    interrupt_frame_t* child_frame = (interrupt_frame_t*)sp;
+    *child_frame = *frame;
+    child_frame->rax = 0; /* fork() return in child */
+
+    thread->thread_id = next_thread_id++;
+    thread->task = task;
+    thread->context.stack_pointer = (uint64_t)(uintptr_t)child_frame;
+    thread->context.program_counter = child_frame->rip;
+    thread->state = THREAD_STATE_NEW;
+    thread->sched_class = SCHED_CLASS_TIMESHARE;
+    thread->priority = PRIORITY_DEFAULT;
+    thread->base_priority = PRIORITY_DEFAULT;
+    thread->dyn_priority = PRIORITY_DEFAULT;
+    thread->inherited_priority = PRIORITY_DEFAULT;
+    thread->has_inherited = 0;
+    thread->inherit_depth = 0;
+    for (size_t i = 0; i < 4; i++) {
+        thread->inherit_stack[i] = PRIORITY_DEFAULT;
+    }
+    thread->sched_usage = 0;
+    thread->last_sleep_tick = 0;
+    thread->entry = NULL;
+    thread->arg = NULL;
     thread->stack = stack;
     thread->stack_size = KERNEL_STACK_SIZE;
     thread->sched_link.tqe_next = NULL;

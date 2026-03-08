@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../tracev2.h"
+#include "../bootlog.h"
 #include "../../arch/x86_64/paging.h"
 #include "../../../include/debug.h"
 
@@ -43,7 +44,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     in_scheduler = true;
     static int log_count = 0;
-    if (log_count < 8) {
+    if (bootlog_is_verbose() && log_count < 8) {
         kprintf("[SCHED] irq switch: resched=%d current=%llu state=%d ready=%llu\n",
                 resched_pending ? 1 : 0,
                 (unsigned long long)(current_thread ? current_thread->thread_id : 0),
@@ -122,7 +123,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
                  prev ? prev->thread_id : 0, next->thread_id);
 
     in_scheduler = false;
-    if (log_count < 8) {
+    if (bootlog_is_verbose() && log_count < 8) {
         kprintf("[SCHED] switch to tid=%llu\n",
                 (unsigned long long)next->thread_id);
     }

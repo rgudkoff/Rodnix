@@ -70,10 +70,12 @@ Apple MIG: интерфейс описывается в `.defs`, после че
 - Настроены GDT/IDT, ISR/IRQ и базовые таймеры.
 - Есть PMM и заготовки под VMM.
 - Fabric зарегистрирован и используется для HID клавиатуры.
+- Fabric net-service активен: `lo0` + первый PCI backend для e1000 (`net0` при наличии устройства в QEMU/PCI).
 
 ## Планы
 
 - Устойчивый VMM и выделение ядра в higher-half.
+- VM-архитектура по слоям `vm_map -> vm_object -> pmap` с fault/COW/pager path.
 - Минимальный планировщик и потоки.
 - VFS и RAMFS.
 - Системные вызовы и минимальный userspace.

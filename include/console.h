@@ -130,5 +130,6 @@ void console_set_log_prefix_enabled(bool enabled);
 
 /* Uptime (microseconds) */
 uint64_t console_get_uptime_us(void);
+const char* console_get_uptime_source(void);
 
 #endif /* _RODNIX_CONSOLE_H */

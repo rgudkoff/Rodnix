@@ -6,19 +6,19 @@
 
 1. **Cross-compiler toolchain** (x86_64-elf-gcc, x86_64-elf-ld)
    - macOS: `brew install x86_64-elf-gcc x86_64-elf-binutils`
-   - Linux: Install from your distribution's package manager
+   - Ubuntu/Debian: Install from your distribution's package manager
 
 2. **NASM** (assembler)
    - macOS: `brew install nasm`
-   - Linux: `sudo apt-get install nasm`
+   - Ubuntu/Debian: `sudo apt-get install nasm`
 
 3. **QEMU** (for running the kernel)
    - macOS: `brew install qemu`
-   - Linux: `sudo apt-get install qemu-system-x86`
+   - Ubuntu/Debian: `sudo apt-get install qemu-system-x86`
 
 4. **GRUB** (for creating bootable ISO) - Optional but recommended
    - macOS: `brew install grub`
-   - Linux: `sudo apt-get install grub-pc-bin`
+   - Ubuntu/Debian: `sudo apt-get install grub-pc-bin`
 
 ## Building
 
@@ -53,19 +53,19 @@ If ISO exists, it will boot from ISO. Otherwise, it will attempt direct kernel l
 
 Install GRUB:
 - macOS: `brew install grub`
-- Linux: `sudo apt-get install grub-pc-bin`
+- Ubuntu/Debian: `sudo apt-get install grub-pc-bin`
 
 ### "qemu-system-x86_64 not found"
 
 Install QEMU:
 - macOS: `brew install qemu`
-- Linux: `sudo apt-get install qemu-system-x86`
+- Ubuntu/Debian: `sudo apt-get install qemu-system-x86`
 
 ### "x86_64-elf-gcc not found"
 
 Install cross-compiler:
 - macOS: `brew install x86_64-elf-gcc x86_64-elf-binutils`
-- Linux: Install from your distribution's package manager
+- Ubuntu/Debian: Install from your distribution's package manager
 
 ## Manual QEMU Run
 
@@ -90,4 +90,3 @@ qemu-system-x86_64 -m 64M -kernel build/rodnix.kernel -s -S &
 gdb build/rodnix.kernel
 (gdb) target remote :1234
 ```
-

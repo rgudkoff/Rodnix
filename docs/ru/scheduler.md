@@ -2,135 +2,111 @@
 
 ## Цели
 
-- Приоритетный планировщик с таймслайсами.
-- Без CFS на первом этапе: достаточно MLQ/priority queues.
-- Предсказуемость и диагностируемость.
+- Низкая латентность интерактивных задач без starvation фоновых.
+- Предсказуемость под нагрузкой и наблюдаемость через метрики.
+- Эволюция от текущего MLQ к иерархической модели `bucket -> group -> thread`.
 
-## Модель (MVP)
+## Источник архитектурного подхода
 
-- Несколько очередей по приоритетам (MLQ).
-- Таймерный тик для принудительного квантования.
-- Минимальные метрики: время в очереди, число переключений.
+При проектировании используем идеи из внутреннего design-note по
+иерархическому планированию `bucket -> group -> thread`.
 
-## Текущая реализация (v0)
+Это не копирование реализации, а перенос принципов:
+- приоритизация по QoS bucket,
+- fairness между группами потоков,
+- интерактивные окна (warp/starvation avoidance),
+- отдельная политика для top-level выбора и thread-level time sharing.
+
+## Текущий статус RodNIX (v0)
 
 - MLQ с 3 уровнями (low/normal/high).
-- Динамический приоритет:
-  - Boost при пробуждении после блока.
-  - Penalty при CPU‑нагрузке (простое затухание).
-  - Clamping в пределах `base ± {BOOST_MAX,PENALTY_MAX}`.
-- Есть базовые классы TIMESHARE/REALTIME и разные кванты.
-- IPC‑наследование приоритетов реализовано на IPC‑пути (best‑effort).
+- TIMESHARE/REALTIME + динамический приоритет для TIMESHARE.
+- boost при пробуждении, penalty для CPU-bound, clamping.
+- базовое IPC priority inheritance (best-effort).
+- deferred reaper + отдельный reaper-thread + базовые метрики reaper/stack-cache.
+- единый `waitq`-путь ожидания для sleep/IPC с timeout-list.
+
+## Целевая модель (v1-v2)
+
+### 1) Bucket level (QoS)
+
+- Ввести QoS bucket-и: `BACKGROUND`, `UTILITY`, `DEFAULT`, `INTERACTIVE`.
+- Выбор bucket делать не только по статическому приоритету, а по дедлайну.
+- Использовать EDF-подобный выбор bucket с latency budget (аналог WCEL).
+
+Инвариант:
+- high-QoS имеет lower latency target, но не может бесконечно вытеснять low-QoS.
+
+### 2) Group level (Thread Group)
+
+- Ввести `thread_group` (обычно process/service group).
+- Планировать справедливость между группами в пределах bucket.
+- Учитывать интерактивность группы: доля blocked/wakeup IPC vs CPU-bound.
+
+Инвариант:
+- один CPU-heavy процесс не должен выдавливать остальные группы того же bucket.
+
+### 3) Thread level
+
+- Внутри группы оставить decay/boost модель TIMESHARE.
+- Поддержать inheritance donation/rollback для IPC-цепочек.
+- Квант делать bucket-aware: интерактивные короче, фоновые длиннее.
+
+## Окна для латентности и anti-starvation
+
+### Warp window
+
+- Короткое окно для резкого повышения интерактивной задачи после wakeup/IPC.
+- Ограничение по времени и частоте, чтобы не разрушать fairness.
+
+### Starvation avoidance window
+
+- Если bucket/group долго не получает CPU, выделяется гарантированный слот.
+- Метрика starvation фиксируется в статистике планировщика.
 
 ## Старт первого потока
 
-На текущем этапе первый запуск потока инициируется через программный
-`int $32` внутри `scheduler_start()`. Это обеспечивает запуск из того же
-IRQ‑пути, что и обычная преэмпция, без отдельного пути восстановления контекста.
+Первый запуск инициируется через программный `int $32` в `scheduler_start()`,
+чтобы использовать тот же IRQ-путь, что и обычная преэмпция.
 
-Текущий порядок:
-
+Порядок:
 1. `scheduler_start()` выставляет `resched_pending = true`.
-2. Выполняется `int $32` (программный IRQ).
-3. В обработчике IRQ32 вызывается `scheduler_tick()` и
-   `scheduler_switch_from_irq()`.
-4. Первый runnable‑поток выбирается из ready‑очереди и
-   возвращает свой `interrupt_frame_t*` для `iretq`.
+2. Выполняется `int $32`.
+3. IRQ32 вызывает `scheduler_tick()` + `scheduler_switch_from_irq()`.
+4. Возвращается `interrupt_frame_t*` выбранного runnable-потока.
 
-## Что планируется
+## Пошаговое внедрение
 
-- Полноценная политика boost/penalty (тонкая настройка).
-- Полная поддержка IPC‑наследования (все пути и откаты).
+1. `v1`:
+- Зафиксировать структуру `thread_group` и bucket enum.
+- Добавить метрики latency/fairness/starvation.
+- Вынести выбор bucket в отдельный этап (до MLQ выбора потока).
+
+2. `v1.5`:
+- Включить warp window и starvation avoidance window.
+- Добавить per-bucket quantum policy.
+
+3. `v2`:
+- EDF-подобный bucket scheduling с budget/deadline.
+- Расширенное inheritance для IPC-цепочек.
 
 ## Инварианты
 
-- Контекст‑свитч должен сохранять/восстанавливать все регистры.
-- Выбор потока должен быть O(1) в рамках очередей.
+- Контекст-свитч сохраняет/восстанавливает полный набор регистров.
+- Решение планировщика детерминировано по фиксированным входам.
+- Любой bucket/group получает CPU в ограниченное время (bounded starvation).
+
+## Наблюдаемость
+
+Обязательные счётчики:
+- `context_switches`, `preemptions`, `voluntary_yields`,
+- per-bucket runtime и wait-time,
+- starvation events и warp activations,
+- reaper queue stats, stack-cache stats.
+- waitq stats: `sleep_waiters`, `timed_waiters`.
 
 ## Где смотреть в коде
 
-- `kernel/common` и `kernel/arch/x86_64`.
-
-## 4. Политика динамических приоритетов (TIMESHARE)
-
-Документ описывает целевую архитектуру и алгоритмы планировщика RodNIX,
-вдохновлённые Mach/XNU, **без копирования реализации**. Цель — обеспечить
-низкую латентность, устойчивость к priority inversion и предсказуемое
-поведение под интерактивной нагрузкой.
-
-### 4.1 Boost при пробуждении
-
-При пробуждении потока из `BLOCKED`:
-
-- вычисляется `sleep_duration = now - last_sleep_ts`,
-- если `sleep_duration` превышает порог, применяется boost:
-
-```
-dyn_priority += g(sleep_duration)
-```
-
-Boost ограничен сверху:
-
-```
-dyn_priority <= base_priority + BOOST_MAX
-```
-
-Это обеспечивает быстрый отклик UI/IPC‑нагрузки.
-
-### 4.3 Ограничения (clamping)
-
-Для предотвращения «убегания» приоритетов:
-
-```
-dyn_priority ∈ [base_priority - PENALTY_MAX,
-base_priority + BOOST_MAX]
-```
-
-Значения `BOOST_MAX` и `PENALTY_MAX` подбираются экспериментально.
-
-## 5. Квант времени (Time Quantum)
-
-Квант зависит от:
-
-- класса потока,
-- текущего `dyn_priority`.
-
-Рекомендуемая политика:
-
-- REALTIME: минимальный квант, строгий контроль.
-- TIMESHARE (интерактивный): короткий квант, частые переключения.
-- TIMESHARE (CPU‑bound): длинный квант, реже планируется.
-
-Формально:
-
-```
-quantum = BASE_Q + k * dyn_priority
-```
-
-## 7. Периодический пересчёт (Scheduler Tick)
-
-На каждом scheduler‑тике:
-
-- применяется затухание `sched_usage`,
-- пересчитываются `dyn_priority` для TIMESHARE потоков,
-- при необходимости потоки мигрируют между очередями.
-
-Тик не обязан быть частым (например, 100–250 Гц).
-
-## 8. Отладка и наблюдаемость
-
-Рекомендуется:
-
-- включить счётчики переключений контекста,
-- логировать изменения `dyn_priority` (debug‑режим),
-- иметь syscall `sched_debug_dump()` для вывода состояния очередей.
-
-## 9. Минимальный набор для v0
-
-Для первой версии достаточно:
-
-- TIMESHARE + IDLE,
-- динамический `dyn_priority`,
-- decay + boost,
-- очереди по приоритетам,
-- базовое IPC‑наследование.
+- `kernel/common/scheduler/` (модули: `state/runqueue/control/tick/switch/reaper/debug`)
+- `kernel/common/task.c`
+- `kernel/common/ipc.c`

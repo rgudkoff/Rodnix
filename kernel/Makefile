@@ -29,6 +29,10 @@ KERNEL_C_SRCS += \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \
+	kernel/vm/vm_object.c \
+	kernel/vm/vm_pager.c \
+	kernel/vm/vm_map.c \
+	kernel/vm/vm_fault.c \
 	kernel/common/string.c \
 	kernel/common/heap.c \
 	kernel/common/shell.c \
@@ -49,6 +53,9 @@ KERNEL_C_SRCS += \
 	kernel/net/socket.c \
 	kernel/fabric/fabric.c \
 	kernel/fabric/spin.c \
+	kernel/fabric/service/net_service.c \
+	kernel/fabric/service/block_service.c \
+	kernel/fabric/service/platform_services.c \
 	kernel/fabric/bus/virt.c \
 	kernel/fabric/bus/pci.c \
 	kernel/fabric/bus/ps2.c \

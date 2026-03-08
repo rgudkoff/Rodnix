@@ -45,34 +45,233 @@ typedef enum {
 static ansi_state_t ansi_state = ANSI_STATE_NORMAL;
 static char ansi_csi_buf[16];
 static uint8_t ansi_csi_len = 0;
+static bool tsc_uptime_base_set = false;
+static uint64_t tsc_uptime_base = 0;
+static bool rtc_uptime_base_set = false;
+static uint64_t rtc_uptime_base_sec = 0;
+static const char* uptime_source_name = "unknown";
+
+static inline void outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
+}
+
+static inline uint8_t inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+static uint8_t cmos_read(uint8_t reg)
+{
+    outb(0x70, (uint8_t)(0x80u | (reg & 0x7Fu)));
+    return inb(0x71);
+}
+
+static uint8_t bcd_to_bin(uint8_t v)
+{
+    return (uint8_t)((v & 0x0Fu) + ((v >> 4) * 10u));
+}
+
+static bool rtc_read_datetime(uint32_t* year,
+                              uint32_t* month,
+                              uint32_t* day,
+                              uint32_t* hour,
+                              uint32_t* min,
+                              uint32_t* sec)
+{
+    if (!year || !month || !day || !hour || !min || !sec) {
+        return false;
+    }
+
+    uint8_t sec0, min0, hour0, day0, mon0, year0, regb0;
+    uint8_t sec1, min1, hour1, day1, mon1, year1, regb1;
+    for (uint32_t tries = 0; tries < 8; tries++) {
+        while (cmos_read(0x0A) & 0x80u) {
+            /* wait while RTC update in progress */
+        }
+
+        sec0 = cmos_read(0x00);
+        min0 = cmos_read(0x02);
+        hour0 = cmos_read(0x04);
+        day0 = cmos_read(0x07);
+        mon0 = cmos_read(0x08);
+        year0 = cmos_read(0x09);
+        regb0 = cmos_read(0x0B);
+
+        while (cmos_read(0x0A) & 0x80u) {
+        }
+        sec1 = cmos_read(0x00);
+        min1 = cmos_read(0x02);
+        hour1 = cmos_read(0x04);
+        day1 = cmos_read(0x07);
+        mon1 = cmos_read(0x08);
+        year1 = cmos_read(0x09);
+        regb1 = cmos_read(0x0B);
+
+        if (sec0 == sec1 && min0 == min1 && hour0 == hour1 &&
+            day0 == day1 && mon0 == mon1 && year0 == year1 && regb0 == regb1) {
+            break;
+        }
+        if (tries == 7) {
+            return false;
+        }
+    }
+
+    uint8_t s = sec1, m = min1, h = hour1, d = day1, mo = mon1, y = year1;
+    uint8_t regb = regb1;
+
+    if ((regb & 0x04u) == 0) {
+        s = bcd_to_bin(s);
+        m = bcd_to_bin(m);
+        h = bcd_to_bin((uint8_t)(h & 0x7Fu)) | (h & 0x80u);
+        d = bcd_to_bin(d);
+        mo = bcd_to_bin(mo);
+        y = bcd_to_bin(y);
+    }
+
+    if ((regb & 0x02u) == 0 && (h & 0x80u)) {
+        h = (uint8_t)(((h & 0x7Fu) + 12u) % 24u);
+    } else {
+        h = (uint8_t)(h & 0x7Fu);
+    }
+
+    uint32_t full_year = (y < 70u) ? (2000u + y) : (1900u + y);
+    *year = full_year;
+    *month = mo;
+    *day = d;
+    *hour = h;
+    *min = m;
+    *sec = s;
+    return true;
+}
+
+static bool rtc_is_leap(uint32_t y)
+{
+    return ((y % 4u) == 0u && (y % 100u) != 0u) || ((y % 400u) == 0u);
+}
+
+static uint64_t rtc_unix_seconds(uint32_t y, uint32_t mo, uint32_t d,
+                                 uint32_t h, uint32_t mi, uint32_t s)
+{
+    static const uint16_t month_days[12] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+    };
+    if (y < 1970u || mo < 1u || mo > 12u || d < 1u || d > 31u || h > 23u || mi > 59u || s > 59u) {
+        return 0;
+    }
+    uint64_t days = 0;
+    for (uint32_t yy = 1970u; yy < y; yy++) {
+        days += rtc_is_leap(yy) ? 366u : 365u;
+    }
+    for (uint32_t mm = 1u; mm < mo; mm++) {
+        days += month_days[mm - 1u];
+        if (mm == 2u && rtc_is_leap(y)) {
+            days += 1u;
+        }
+    }
+    days += (uint64_t)(d - 1u);
+    return days * 86400ULL + (uint64_t)h * 3600ULL + (uint64_t)mi * 60ULL + (uint64_t)s;
+}
 
 static uint64_t console_get_uptime_us_internal(void)
 {
     extern bool apic_is_available(void);
     extern uint32_t apic_timer_get_ticks(void);
     extern uint32_t apic_timer_get_frequency(void);
-    extern uint32_t pit_get_ticks(void);
+    extern uint64_t pit_get_uptime_us(void);
     extern uint32_t pit_get_frequency(void);
+    extern uint64_t scheduler_get_ticks(void);
+    extern uint64_t cpu_get_time(void);
+    extern uint64_t cpu_get_frequency(void);
 
-    uint64_t ticks = 0;
-    uint32_t freq = 0;
+    uint64_t apic_us = 0;
+    uint64_t pit_us = 0;
+    uint64_t sched_us = 0;
+    uint64_t tsc_us = 0;
+    uint64_t rtc_us = 0;
+
     if (apic_is_available()) {
-        ticks = apic_timer_get_ticks();
-        freq = apic_timer_get_frequency();
-    } else {
-        ticks = pit_get_ticks();
-        freq = pit_get_frequency();
+        uint32_t af = apic_timer_get_frequency();
+        if (af > 0) {
+            apic_us = ((uint64_t)apic_timer_get_ticks() * 1000000ULL) / (uint64_t)af;
+        }
     }
 
-    if (freq == 0) {
-        return 0;
+    pit_us = pit_get_uptime_us();
+
+    {
+        uint32_t hz = 0;
+        if (apic_is_available()) {
+            hz = apic_timer_get_frequency();
+        }
+        if (hz == 0) {
+            hz = pit_get_frequency();
+        }
+        if (hz == 0) {
+            hz = 100;
+        }
+        sched_us = (scheduler_get_ticks() * 1000000ULL) / (uint64_t)hz;
     }
 
-    return (ticks * 1000000ULL) / (uint64_t)freq;
+    {
+        uint64_t tsc_freq = cpu_get_frequency();
+        if (tsc_freq > 0) {
+            uint64_t now = cpu_get_time();
+            if (!tsc_uptime_base_set) {
+                tsc_uptime_base = now;
+                tsc_uptime_base_set = true;
+            }
+            if (now >= tsc_uptime_base) {
+                tsc_us = ((now - tsc_uptime_base) * 1000000ULL) / tsc_freq;
+            }
+        }
+    }
+
+    {
+        uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+        if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
+            uint64_t now_sec = rtc_unix_seconds(y, mo, d, h, mi, s);
+            if (!rtc_uptime_base_set) {
+                rtc_uptime_base_sec = now_sec;
+                rtc_uptime_base_set = true;
+            }
+            if (now_sec >= rtc_uptime_base_sec) {
+                rtc_us = (now_sec - rtc_uptime_base_sec) * 1000000ULL;
+            }
+        }
+    }
+
+    uint64_t best = apic_us;
+    const char* best_name = "apic";
+    if (pit_us > best) {
+        best = pit_us;
+        best_name = "pit";
+    }
+    if (sched_us > best) {
+        best = sched_us;
+        best_name = "scheduler";
+    }
+    if (tsc_us > best) {
+        best = tsc_us;
+        best_name = "tsc";
+    }
+    if (rtc_us > best) {
+        best = rtc_us;
+        best_name = "bios-rtc";
+    }
+    uptime_source_name = best_name;
+    return best;
 }
 uint64_t console_get_uptime_us(void)
 {
     return console_get_uptime_us_internal();
+}
+
+const char* console_get_uptime_source(void)
+{
+    return uptime_source_name;
 }
 
 static void console_write_dec_fixed(uint64_t value, int width)
@@ -162,18 +361,6 @@ static void console_write_log_prefix(void)
 
     /* process */
     kputs("rodnix: ");
-}
-
-static inline void outb(uint16_t port, uint8_t value)
-{
-    __asm__ volatile ("outb %%al, %1" : : "a"(value), "Nd"(port));
-}
-
-static inline uint8_t inb(uint16_t port)
-{
-    uint8_t value;
-    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
 }
 
 static void serial_init(void)

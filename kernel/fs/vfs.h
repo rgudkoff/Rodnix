@@ -45,6 +45,12 @@ typedef struct vfs_file {
 } vfs_file_t;
 
 typedef void (*vfs_list_cb_t)(const vfs_node_t* node, void* ctx);
+typedef int (*vfs_mount_fn_t)(const char* source, vfs_node_t** out_root);
+
+typedef struct vfs_fs_driver {
+    const char* name;
+    vfs_mount_fn_t mount;
+} vfs_fs_driver_t;
 
 enum {
     VFS_OPEN_READ   = 1 << 0,
@@ -62,8 +68,14 @@ int vfs_is_ready(void);
 
 void vfs_set_initrd(const void* data, size_t size);
 
+int vfs_register_fs(const vfs_fs_driver_t* driver);
+int vfs_mount(const char* fs_name, const char* source, const char* target);
 int vfs_mount_ramfs(const char* path);
 int vfs_mount_initrd_root(void);
+
+vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type);
+int vfs_fs_add_child(vfs_node_t* parent, vfs_node_t* child);
+int vfs_fs_set_file_data(vfs_node_t* node, const void* data, size_t size);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);

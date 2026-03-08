@@ -24,6 +24,7 @@
 #define USER_INIT_PATH_MAX 128
 
 static char g_user_init_path[USER_INIT_PATH_MAX] = "/bin/init";
+static bool g_timer_use_apic = false;
 
 static bool bootarg_has_token(const char* cmdline, const char* token)
 {
@@ -279,6 +280,7 @@ void kmain(uint32_t magic, void* mbi)
     }
     __asm__ volatile ("" ::: "memory");
 
+    g_timer_use_apic = use_apic_timer;
     if (use_apic_timer) {
         bootlog_mark("timer", "lapic");
         kputs("[INIT-6.9] Timer source: LAPIC\n");
@@ -341,6 +343,12 @@ void kmain(uint32_t magic, void* mbi)
     extern void pci_bus_init(void);
     extern void ps2_bus_init(void);
     extern void hid_kbd_init(void);
+    extern void virtio_net_stub_init(void);
+    extern void e1000_net_stub_init(void);
+    extern void vga_display_stub_init(void);
+    extern void ide_storage_stub_init(void);
+    extern int fabric_block_service_init(void);
+    extern void fabric_platform_services_init(void);
     
     fabric_init();
     kputs("[INIT-9.1] Fabric initialized\n");
@@ -361,7 +369,34 @@ void kmain(uint32_t magic, void* mbi)
     hid_kbd_init();  /* HID keyboard driver */
     kputs("[INIT-9.5] HID keyboard driver initialized\n");
     __asm__ volatile ("" ::: "memory");
-    
+
+    virtio_net_stub_init(); /* Network driver stub via Fabric */
+    kputs("[INIT-9.5a] Virtio-net stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
+    e1000_net_stub_init(); /* e1000 PCI backend via Fabric */
+    kputs("[INIT-9.5b] e1000-net stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
+    vga_display_stub_init(); /* VGA display backend via Fabric */
+    kputs("[INIT-9.5c] VGA display stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
+    if (fabric_block_service_init() != 0) {
+        kputs("[INIT-9.5d] Block service init failed\n");
+    } else {
+        kputs("[INIT-9.5d] Block service initialized\n");
+    }
+    __asm__ volatile ("" ::: "memory");
+
+    ide_storage_stub_init(); /* IDE storage backend via Fabric */
+    kputs("[INIT-9.5e] IDE storage stub driver initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
+    fabric_platform_services_init(); /* clock/timer/serial/console services */
+    kputs("[INIT-9.5f] Platform services initialized\n");
+    __asm__ volatile ("" ::: "memory");
+
     kputs("[INIT-9-OK] Fabric initialization complete\n");
     bootlog_mark("fabric", "done");
     __asm__ volatile ("" ::: "memory");
@@ -406,10 +441,9 @@ void kmain(uint32_t magic, void* mbi)
     /* Temporarily disable timer to avoid immediate interrupt on sti */
     kputs("[INIT-10.1] Disable timer\n");
     __asm__ volatile ("" ::: "memory");
-    extern bool apic_is_available(void);
     extern void apic_timer_stop(void);
     extern void pit_disable(void);
-    if (apic_is_available()) {
+    if (g_timer_use_apic) {
         apic_timer_stop();
     } else {
         pit_disable();
@@ -432,10 +466,9 @@ void kmain(uint32_t magic, void* mbi)
     /* Re-enable timer after interrupts are enabled */
     kputs("[INIT-10.4] Enable timer\n");
     __asm__ volatile ("" ::: "memory");
-    extern bool apic_is_available(void);
     extern void apic_timer_start(void);
     extern void pit_enable(void);
-    if (apic_is_available()) {
+    if (g_timer_use_apic) {
         apic_timer_start();
     } else {
         pit_enable();
@@ -449,7 +482,29 @@ void kmain(uint32_t magic, void* mbi)
         __asm__ volatile ("pause");
     }
     __asm__ volatile ("" ::: "memory");
-    
+
+    /* Validate timer progress and fallback to PIT if APIC timer is not ticking. */
+    if (g_timer_use_apic) {
+        extern uint64_t scheduler_get_ticks(void);
+        extern int pit_init(uint32_t frequency);
+        uint64_t t0 = scheduler_get_ticks();
+        for (volatile int i = 0; i < 5000000; i++) {
+            __asm__ volatile ("pause");
+        }
+        uint64_t t1 = scheduler_get_ticks();
+        if (t1 <= t0) {
+            kputs("[INIT-10.6] APIC timer stalled, fallback to PIT\n");
+            apic_timer_stop();
+            if (pit_init(100) == 0) {
+                pit_enable();
+                g_timer_use_apic = false;
+                kputs("[INIT-10.7] PIT fallback active\n");
+            } else {
+                kputs("[INIT-10.7] PIT fallback failed\n");
+            }
+        }
+    }
+
     kputs("[INIT-10-OK] Interrupts enabled\n");
     bootlog_mark("interrupts", "enable_done");
     __asm__ volatile ("" ::: "memory");

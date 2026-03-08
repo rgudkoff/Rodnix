@@ -963,7 +963,61 @@ uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
             return pmm_index_to_page(start);
         }
     }
-    return 0;
+
+    /*
+     * Fallback path: if free-list metadata is stale/trimmed, scan bitmap
+     * directly for a contiguous run in the requested zone.
+     */
+    uint64_t run_start = 0;
+    uint32_t run_count = 0;
+    bool found = false;
+    for (uint64_t i = 0; i < pmm_state.total_pages; i++) {
+        if (pmm_bitmap_test(i)) {
+            run_count = 0;
+            continue;
+        }
+        uint64_t phys = pmm_index_to_page(i);
+        if (pmm_zone_for_addr(phys) != zone) {
+            run_count = 0;
+            continue;
+        }
+        if (run_count == 0) {
+            run_start = i;
+        }
+        run_count++;
+        if (run_count >= count) {
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        return 0;
+    }
+
+    for (uint32_t p = 0; p < count; p++) {
+        uint64_t idx = run_start + p;
+        pmm_bitmap_set(idx);
+        if (idx < pmm_state.pages_count) {
+            pmm_state.pages[idx].state = PMM_PAGE_USED;
+        }
+    }
+
+    pmm_state.free_pages -= count;
+    pmm_state.used_pages += count;
+    if (pmm_state.zones[zone].free_pages >= count) {
+        pmm_state.zones[zone].free_pages -= count;
+        pmm_state.zones[zone].used_pages += count;
+    }
+
+    uint64_t phys = pmm_index_to_page(run_start);
+    for (uint32_t p = 0; p < count; p++) {
+        pmm_zero_page(phys + (uint64_t)p * PAGE_SIZE);
+    }
+
+    /* Re-sync free-list metadata after bitmap fallback allocation. */
+    pmm_rebuild_free_lists();
+    return phys;
 }
 
 void pmm_reserve_range(uint64_t start, uint64_t end)
