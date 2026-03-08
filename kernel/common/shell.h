@@ -15,5 +15,7 @@ void shell_run(void);
 /* Stop shell */
 void shell_stop(void);
 
-#endif /* _RODNIX_COMMON_SHELL_H */
+/* Redraw prompt after asynchronous output */
+void shell_redraw_prompt(void);
 
+#endif /* _RODNIX_COMMON_SHELL_H */

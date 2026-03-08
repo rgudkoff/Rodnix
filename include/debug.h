@@ -119,5 +119,36 @@ __attribute__((noreturn)) void panic(const char* msg);
  */
 __attribute__((noreturn)) void panicf(const char* fmt, ...);
 
-#endif /* _RODNIX_DEBUG_H */
+/* ============================================================================
+ * Fail-fast helpers
+ * ============================================================================ */
 
+#define PANIC(fmt, ...) \
+    panicf("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
+
+#define BUG_ON(cond) \
+    do { \
+        if (cond) { \
+            panicf("%s:%d: BUG_ON(%s)", __FILE__, __LINE__, #cond); \
+        } \
+    } while (0)
+
+#define PANIC_IF(cond, fmt, ...) \
+    do { \
+        if (cond) { \
+            panicf("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__); \
+        } \
+    } while (0)
+
+/* ============================================================================
+ * Event trace (last events ring)
+ * ============================================================================ */
+
+void debug_event(const char* msg);
+
+#define TRACE_EVENT(msg) \
+    do { \
+        debug_event(msg); \
+    } while (0)
+
+#endif /* _RODNIX_DEBUG_H */

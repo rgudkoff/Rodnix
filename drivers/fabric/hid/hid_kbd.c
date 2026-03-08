@@ -262,7 +262,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     uint8_t config = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config read: 0x%x\n", (unsigned)config);
+        kprintf("[HID-KBD] Controller config read: %x\n", (unsigned)config);
     }
 
     /* Ensure IRQ1 enabled, system flag set, keyboard interface enabled */
@@ -278,7 +278,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     kbd_write_data(config);
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config written: 0x%x\n", (unsigned)config);
+        kprintf("[HID-KBD] Controller config written: %x\n", (unsigned)config);
     }
 
     /* Flush any pending data */
@@ -301,7 +301,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     uint8_t ack = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Keyboard ACK: 0x%x\n", (unsigned)ack);
+        kprintf("[HID-KBD] Keyboard ACK: %x\n", (unsigned)ack);
     }
     
     /* Register IRQ1 through Fabric and enable it if possible */
@@ -312,14 +312,16 @@ static int hid_kbd_attach(fabric_device_t *dev)
     } else {
         if (apic_is_available()) {
             if (ioapic_is_available()) {
-                kputs("[HID-KBD] IOAPIC present, forcing PIC routing for IRQ1\n");
-                pic_enable_irq(1);
+                kputs("[HID-KBD] IRQ1 routed via I/O APIC\n");
+                apic_enable_irq(1);
             } else {
                 kputs("[HID-KBD] IRQ1 routed via PIC (LAPIC EOI)\n");
+                kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (IOAPIC unavailable)\n");
                 pic_enable_irq(1);
             }
         } else {
             kputs("[HID-KBD] IRQ1 routed via PIC\n");
+            kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (APIC unavailable)\n");
             pic_enable_irq(1);
         }
         /* IRQ path is active; disable polling to avoid duplicate reads */
@@ -328,12 +330,10 @@ static int hid_kbd_attach(fabric_device_t *dev)
     }
     kputs("[HID-KBD] Keyboard driver attached successfully\n");
     
-    /* Temporarily disable interrupts during initialization to avoid interference */
-    __asm__ volatile ("cli"); /* Disable interrupts */
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    
     /* Initialize keyboard ops */
     kputs("[HID-KBD] Initializing keyboard ops...\n");
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    keyboard_ops.hdr = RDNX_ABI_INIT(keyboard_ops_t);
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting read_event pointer...\n");
     keyboard_ops.read_event = keyboard_read_event;
@@ -346,6 +346,8 @@ static int hid_kbd_attach(fabric_device_t *dev)
     /* Initialize keyboard service */
     kputs("[HID-KBD] Initializing keyboard service...\n");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    keyboard_service.hdr = RDNX_ABI_INIT(fabric_service_t);
+    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Setting service name...\n");
     keyboard_service.name = "keyboard";
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
@@ -356,27 +358,6 @@ static int hid_kbd_attach(fabric_device_t *dev)
     keyboard_service.context = NULL;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     kputs("[HID-KBD] Keyboard service initialized\n");
-    
-    /* Re-enable interrupts */
-    kputs("[HID-KBD] Re-enabling interrupts (sti)...\n");
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier before sti */
-    
-    
-    __asm__ volatile ("sti"); /* Enable interrupts */
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier after sti */
-    
-    
-    kputs("[HID-KBD] Interrupts re-enabled\n");
-    
-    /* Small delay */
-    for (volatile int i = 0; i < 10000; i++) {
-        __asm__ volatile ("pause");
-    }
-    
-    /* Small delay to allow any pending interrupts to be processed */
-    for (volatile int i = 0; i < 5000; i++) {
-        __asm__ volatile ("pause");
-    }
     
     /* Publish keyboard service */
     kputs("[HID-KBD] Publishing keyboard service...\n");

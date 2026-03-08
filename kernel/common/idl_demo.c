@@ -8,6 +8,7 @@
 #include "../../include/common.h"
 #include "../../include/console.h"
 #include "../core/task.h"
+#include "shell.h"
 
 #include "idl_runtime.h"
 #include "../../include/idl/example_ipc.h"
@@ -67,10 +68,11 @@ static void demo_client_thread(void* arg)
     memset(&rep, 0, sizeof(rep));
     req.value = 41;
     if (idl_ipc_call(demo_server_port, DEMO_MSG_PING, &req, sizeof(req), &rep, sizeof(rep), 0) == 0) {
-        kprintf("[IDL-DEMO] ping ok, status=%u\n", rep.status);
+        kprintf("\n[IDL-DEMO] ping ok, status=%u\n", rep.status);
     } else {
-        kputs("[IDL-DEMO] ping failed\n");
+        kputs("\n[IDL-DEMO] ping failed\n");
     }
+    shell_redraw_prompt();
 }
 
 void idl_demo_start(void)

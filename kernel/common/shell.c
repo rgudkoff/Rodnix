@@ -17,11 +17,19 @@
 #include "../core/boot.h"
 #include "../fs/vfs.h"
 #include "../core/cpu.h"
+#include "../core/memory.h"
+#include "../core/task.h"
 #include "../../include/console.h"
 #include "../../include/debug.h"
 #include "../../include/common.h"
+#include "../../include/error.h"
+#include "../../include/utsname.h"
+#include "../posix/posix_syscall.h"
 #include "../common/scheduler.h"
+#include "../common/heap.h"
+#include "../common/loader.h"
 #include "../core/interrupts.h"
+#include "../fabric/fabric.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -33,6 +41,29 @@
 #define SHELL_MAX_LINE_LENGTH  256
 #define SHELL_MAX_ARGS         16
 #define SHELL_PROMPT           "  rodnix> "
+#define SHELL_ANSI_CLEAR       "\x1b[2J"
+#define SHELL_ANSI_BOTTOM      "\x1b[999;1H"
+
+typedef struct {
+    char* path;
+} run_args_t;
+
+static void shell_run_thread(void* arg)
+{
+    run_args_t* ra = (run_args_t*)arg;
+    if (!ra || !ra->path) {
+        scheduler_exit_current();
+        return;
+    }
+    kputs("[RUN] user thread start\n");
+    int ret = loader_exec(ra->path);
+    if (ret != RDNX_OK) {
+        kprintf("run: failed (%d)\n", ret);
+    }
+    kfree(ra->path);
+    kfree(ra);
+    scheduler_exit_current();
+}
 
 /* ============================================================================
  * Shell State
@@ -72,9 +103,13 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  help      - Show this help message\n");
     kputs("  clear     - Clear the screen\n");
     kputs("  info      - Show system information\n");
+    kputs("  sysinfo   - Show extended system status\n");
     kputs("  cpu       - Show CPU information\n");
     kputs("  memory    - Show memory statistics\n");
     kputs("  mem       - Alias for memory\n");
+    kputs("  uname     - Show kernel identity\n");
+    kputs("  uptime    - Show system uptime\n");
+    kputs("  run       - Run userland program\n");
     kputs("  timer     - Show timer information\n");
     kputs("  echo      - Echo arguments\n");
     kputs("  sched     - Show scheduler statistics\n");
@@ -94,10 +129,16 @@ static int shell_cmd_sched(int argc, char** argv)
     (void)argv;
 
     extern int scheduler_get_stats(scheduler_stats_t* out_stats);
+    extern int scheduler_get_reap_stats(scheduler_reap_stats_t* out_stats);
+    extern int scheduler_get_waitq_stats(scheduler_waitq_stats_t* out_stats);
+    extern int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
     scheduler_stats_t stats;
+    scheduler_reap_stats_t reap_stats;
+    scheduler_waitq_stats_t waitq_stats;
+    task_stack_cache_stats_t stack_stats;
     if (scheduler_get_stats(&stats) != 0) {
         kputs("scheduler stats unavailable\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     kprintf("Scheduler Stats:\n");
@@ -106,6 +147,31 @@ static int shell_cmd_sched(int argc, char** argv)
     kprintf("  running_tasks:  %llu\n", (unsigned long long)stats.running_tasks);
     kprintf("  ready_tasks:    %llu\n", (unsigned long long)stats.ready_tasks);
     kprintf("  blocked_tasks:  %llu\n", (unsigned long long)stats.blocked_tasks);
+    if (scheduler_get_reap_stats(&reap_stats) == 0) {
+        kprintf("Reaper:\n");
+        kprintf("  queue_len:      %u\n", (unsigned)reap_stats.queue_len);
+        kprintf("  queue_hwm:      %u\n", (unsigned)reap_stats.queue_hwm);
+        kprintf("  enqueued:       %llu\n", (unsigned long long)reap_stats.enqueued);
+        kprintf("  reaped:         %llu\n", (unsigned long long)reap_stats.reaped);
+        kprintf("  deferred:       %llu\n", (unsigned long long)reap_stats.deferred);
+        kprintf("  dropped:        %llu\n", (unsigned long long)reap_stats.dropped);
+    }
+    if (scheduler_get_waitq_stats(&waitq_stats) == 0) {
+        kprintf("Wait Queues:\n");
+        kprintf("  sleep_waiters:  %u\n", (unsigned)waitq_stats.sleep_waiters);
+        kprintf("  timed_waiters:  %u\n", (unsigned)waitq_stats.timed_waiters);
+    }
+    if (task_get_stack_cache_stats(&stack_stats) == 0) {
+        kprintf("Stack Cache:\n");
+        kprintf("  in_cache:       %u/%u\n",
+                (unsigned)stack_stats.cache_count,
+                (unsigned)stack_stats.cache_capacity);
+        kprintf("  hits/misses:    %llu/%llu\n",
+                (unsigned long long)stack_stats.cache_hits,
+                (unsigned long long)stack_stats.cache_misses);
+        kprintf("  retired:        %llu\n", (unsigned long long)stack_stats.retired);
+        kprintf("  poison_fail:    %llu\n", (unsigned long long)stack_stats.poison_failures);
+    }
     scheduler_debug_dump();
     return 0;
 }
@@ -141,12 +207,147 @@ static int shell_cmd_info(int argc, char** argv)
     (void)argc;
     (void)argv;
     
-    kputs("RodNIX Kernel v0.1\n");
+    kputs("RodNIX Kernel v0.2\n");
     kputs("Architecture: x86_64 (64-bit)\n");
     kputs("Build: " __DATE__ " " __TIME__ "\n");
     kputs("\n");
     
     return 0;
+}
+
+static void shell_print_uptime(void)
+{
+    uint64_t us = console_get_uptime_us();
+    uint64_t sec = us / 1000000ULL;
+    uint64_t mins = sec / 60ULL;
+    uint64_t hours = mins / 60ULL;
+    uint64_t days = hours / 24ULL;
+    sec %= 60ULL;
+    mins %= 60ULL;
+    hours %= 24ULL;
+    /* kprintf doesn't support width/zero-pad, so format manually */
+    if (hours < 10) kputc('0');
+    kprintf("%llu:", (unsigned long long)hours);
+    if (mins < 10) kputc('0');
+    kprintf("%llu:", (unsigned long long)mins);
+    if (sec < 10) kputc('0');
+    kprintf("%llu\n", (unsigned long long)sec);
+    if (days > 0) {
+        kprintf("(%llu days)\n", (unsigned long long)days);
+    }
+}
+
+static int shell_cmd_uname(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    utsname_t u;
+    if (posix_syscall_dispatch(POSIX_SYS_UNAME, (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+    bool all = false;
+    if (argc >= 2 && argv[1] && strcmp(argv[1], "-a") == 0) {
+        all = true;
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-s") == 0)) {
+        kputs(u.sysname);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-r") == 0)) {
+        kputs(u.release);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-v") == 0)) {
+        kputs(u.version);
+        if (all) kputc(' ');
+    }
+    if (all || (argc >= 2 && strcmp(argv[1], "-m") == 0)) {
+        kputs(u.machine);
+    }
+    if (argc < 2) {
+        kputs(u.sysname);
+    }
+    kputc('\n');
+    return RDNX_OK;
+}
+
+static int shell_cmd_uptime(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    shell_print_uptime();
+    return RDNX_OK;
+}
+
+static int shell_cmd_sysinfo(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    utsname_t u;
+    if (posix_syscall_dispatch(POSIX_SYS_UNAME, (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+
+    memory_info_t mem;
+    if (memory_get_info(&mem) != RDNX_OK) {
+        memset(&mem, 0, sizeof(mem));
+    }
+
+    kputs("OS:           ");
+    kputs(u.sysname);
+    kputc('\n');
+    kputs("Kernel:       ");
+    kputs(u.release);
+    kputc('\n');
+    kputs("Build:        ");
+    kputs(u.version);
+    kputc('\n');
+    kputs("Architecture: ");
+    kputs(u.machine);
+    kputc('\n');
+
+    kputs("Scheduler:    Preemptive MLQ\n");
+
+    extern bool apic_is_available(void);
+    extern bool ioapic_is_available(void);
+    kputs("Timer:        ");
+    if (apic_is_available()) {
+        kputs("LAPIC\n");
+    } else {
+        kputs("PIT\n");
+    }
+
+    kputs("Interrupts:   ");
+    if (apic_is_available()) {
+        if (ioapic_is_available()) {
+            kputs("LAPIC+IOAPIC\n");
+        } else {
+            kputs("LAPIC+PIC\n");
+        }
+    } else {
+        kputs("PIC\n");
+    }
+
+    kputs("Paging:       enabled (higher-half physmap)\n");
+
+    fabric_stats_t fstats;
+    if (fabric_get_stats(&fstats) == RDNX_OK) {
+        kprintf("Fabric:       enabled\n");
+        kprintf("Drivers:      %u loaded\n", fstats.drivers);
+    } else {
+        kprintf("Fabric:       unknown\n");
+    }
+
+    kprintf("Uptime:       ");
+    shell_print_uptime();
+
+    kprintf("OOM:          pmm=%llu vmm=%llu heap=%llu\n",
+            (unsigned long long)mem.oom_pmm,
+            (unsigned long long)mem.oom_vmm,
+            (unsigned long long)mem.oom_heap);
+
+    return RDNX_OK;
 }
 
 /**
@@ -174,7 +375,7 @@ static int shell_cmd_cpu(int argc, char** argv)
     kprintf("  apic_id:  %u\n", info.apic_id);
     kprintf("  vendor:   %s\n", info.vendor ? info.vendor : "unknown");
     kprintf("  model:    %s\n", info.model ? info.model : "unknown");
-    kprintf("  features: 0x%x\n", info.features);
+    kprintf("  features: %x\n", info.features);
     kprintf("  cores:    %u\n", info.cores);
     kprintf("  threads:  %u\n", info.threads);
     kputs("\n");
@@ -209,6 +410,8 @@ static int shell_cmd_memory(int argc, char** argv)
     uint64_t free = pmm_get_free_pages();
     uint64_t used = pmm_get_used_pages();
     boot_info_t* bi = boot_get_info();
+    memory_info_t mem;
+    bool mem_ok = (memory_get_info(&mem) == RDNX_OK);
 
     typedef struct {
         uint64_t total_pages;
@@ -229,6 +432,12 @@ static int shell_cmd_memory(int argc, char** argv)
     kprintf("  Total: %llu pages (%llu KB)\n", total, (total * 4));
     kprintf("  Free:  %llu pages (%llu KB)\n", free, (free * 4));
     kprintf("  Used:  %llu pages (%llu KB)\n", used, (used * 4));
+    if (mem_ok) {
+        kprintf("  OOM:   pmm=%llu vmm=%llu heap=%llu\n",
+                (unsigned long long)mem.oom_pmm,
+                (unsigned long long)mem.oom_vmm,
+                (unsigned long long)mem.oom_heap);
+    }
     if (bi) {
         kprintf("Boot Memory Info:\n");
         kprintf("  Usable (MB2): %llu KB\n", (unsigned long long)(bi->mem_lower / 1024ULL));
@@ -464,6 +673,80 @@ static int shell_cmd_ring3(int argc, char** argv)
     return ret;
 }
 
+static int shell_cmd_run(int argc, char** argv)
+{
+    if (argc < 2 || !argv[1]) {
+        kputs("Usage: run <path>\n");
+        return RDNX_E_INVALID;
+    }
+    size_t len = strlen(argv[1]);
+    char* path = (char*)kmalloc(len + 1);
+    if (!path) {
+        return RDNX_E_NOMEM;
+    }
+    memcpy(path, argv[1], len + 1);
+    /* Trim trailing slashes to allow /bin/init/ */
+    while (len > 1 && path[len - 1] == '/') {
+        path[len - 1] = '\0';
+        len--;
+    }
+    if (len == 0) {
+        kfree(path);
+        return RDNX_E_INVALID;
+    }
+
+    run_args_t* args = (run_args_t*)kmalloc(sizeof(run_args_t));
+    if (!args) {
+        kfree(path);
+        return RDNX_E_NOMEM;
+    }
+    args->path = path;
+
+    task_t* parent_task = task_get_current();
+    if (!parent_task) {
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_INVALID;
+    }
+    task_t* user_task = task_create();
+    if (!user_task) {
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_NOMEM;
+    }
+    user_task->state = TASK_STATE_READY;
+    task_set_ids(user_task,
+                 parent_task->uid,
+                 parent_task->gid,
+                 parent_task->euid,
+                 parent_task->egid);
+    if (posix_bind_stdio_to_console(user_task) != RDNX_OK) {
+        task_destroy(user_task);
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_GENERIC;
+    }
+    thread_t* thread = thread_create(user_task, shell_run_thread, args);
+    if (!thread) {
+        task_destroy(user_task);
+        kfree(args->path);
+        kfree(args);
+        return RDNX_E_NOMEM;
+    }
+    /* Prefer running userland immediately */
+    thread->priority = 200;
+    kprintf("[RUN] schedule user thread tid=%llu\n",
+            (unsigned long long)thread->thread_id);
+    thread->joiner = thread_get_current();
+    kprintf("[RUN] block shell tid=%llu\n",
+            (unsigned long long)thread->joiner->thread_id);
+    /* Block shell before switching away to avoid it staying READY */
+    scheduler_block();
+    scheduler_add_thread(thread);
+    __asm__ volatile ("int $32");
+    return RDNX_OK;
+}
+
 /**
  * @function shell_cmd_exit
  * @brief Exit shell (reboot system)
@@ -507,14 +790,18 @@ static const struct shell_command commands[] = {
     {"sched",   shell_cmd_sched,   "Show scheduler statistics"},
     {"clear",   shell_cmd_clear,    "Clear the screen"},
     {"info",    shell_cmd_info,    "Show system information"},
+    {"sysinfo", shell_cmd_sysinfo, "Show extended system status"},
     {"cpu",     shell_cmd_cpu,     "Show CPU information"},
     {"memory",  shell_cmd_memory,  "Show memory statistics"},
     {"mem",     shell_cmd_memory,  "Alias for memory"},
+    {"uname",   shell_cmd_uname,   "Show kernel identity"},
+    {"uptime",  shell_cmd_uptime,  "Show system uptime"},
     {"timer",   shell_cmd_timer,   "Show timer information"},
     {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
     {"ls",      shell_cmd_ls,      "List directory"},
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
+    {"run",     shell_cmd_run,     "Run userland program"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };
@@ -627,13 +914,16 @@ void shell_run(void)
     extern void input_flush(void);
     input_flush();
 
-    kputs("\nRodNIX Shell v0.1\n");
-    kputs("Type 'help' for available commands.\n\n");
+    /* Clean handoff from boot logs to interactive prompt. */
+    kputs(SHELL_ANSI_CLEAR);
+    kputs(SHELL_ANSI_BOTTOM);
     __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
+        scheduler_reap_finished();
         interrupts_enable();
         interrupts_disable();
+        kputs(SHELL_ANSI_BOTTOM);
         kputs(SHELL_PROMPT);
         interrupts_enable();
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
@@ -654,6 +944,7 @@ void shell_run(void)
             shell_execute_command(argc, argv);
             shell_state.command_count++;
         }
+        scheduler_reap_finished();
         scheduler_ast_check();
     }
 }
@@ -665,4 +956,13 @@ void shell_run(void)
 void shell_stop(void)
 {
     shell_state.running = false;
+}
+
+void shell_redraw_prompt(void)
+{
+    if (!shell_state.running) {
+        return;
+    }
+    kputs(SHELL_ANSI_BOTTOM);
+    kputs(SHELL_PROMPT);
 }

@@ -14,6 +14,7 @@
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
 #include "../../common/syscall.h"
+#include "../../common/tracev2.h"
 #include "interrupt_frame.h"
 #include "types.h"
 #include "config.h"
@@ -233,12 +234,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     uint32_t vector = regs->int_no;
 
     if (vector == SYSCALL_VECTOR) {
-        static int logged = 0;
-        if (!logged) {
-            extern void kputs(const char* str);
-            kputs("[ISR] syscall vector 0x80\n");
-            logged = 1;
-        }
         return handle_syscall(regs);
     }
     
@@ -266,7 +261,15 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             interrupt_handlers[vector](&ctx);
         } else {
             /* Unhandled IRQ - mask it silently (no panic) */
-            pic_disable_irq(irq);
+            /* Keep timer IRQ enabled to preserve preemption. */
+            if (irq != 0) {
+                extern bool ioapic_is_available(void);
+                if (apic_is_available() && ioapic_is_available()) {
+                    apic_disable_irq((uint8_t)irq);
+                } else {
+                    pic_disable_irq((uint8_t)irq);
+                }
+            }
         }
         
         irq_send_eoi(irq);
@@ -280,6 +283,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     
     /* Handle exception (0-31) */
     if (vector < 32) {
+        tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -366,6 +370,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         if (vector == 14) {
             uint64_t cr2;
             __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_PAGE, cr2, regs->rip);
             serial_write_str("[EXC] cr2=");
             serial_write_hex64(cr2);
             serial_write_str("\n");

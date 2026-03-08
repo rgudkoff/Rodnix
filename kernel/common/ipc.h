@@ -9,6 +9,8 @@
 #define _RODNIX_COMMON_IPC_H
 
 #include "../core/task.h"
+#include "waitq.h"
+#include "../../include/abi.h"
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -43,6 +45,7 @@ typedef struct port {
     uint64_t rights;          /* Port rights */
     task_t* owner;            /* Owning task */
     thread_t* owner_thread;   /* Owning thread (best-effort) */
+    waitq_t waiters;          /* Blocked receiver wait queue */
     uint32_t ref_count;       /* Reference count */
     void* queue;              /* Message queue */
     bool active;              /* Is port active */
@@ -56,6 +59,7 @@ typedef struct port {
 #define IPC_MAX_PORTS_PER_MSG 8
 
 typedef struct {
+    rdnx_abi_header_t hdr;
     uint64_t msg_id;          /* Message identifier */
     uint32_t msg_size;        /* Message size */
     uint32_t port_count;      /* Number of ports attached */
@@ -74,6 +78,8 @@ typedef struct port_set {
     port_t** ports;           /* Array of ports */
     uint32_t port_count;      /* Number of ports */
     uint32_t capacity;        /* Capacity of ports array */
+    waitq_t waiters;          /* Waiters blocked in port_set_receive */
+    struct port_set* next_all;/* Internal list of all port sets */
 } port_set_t;
 
 /* ============================================================================

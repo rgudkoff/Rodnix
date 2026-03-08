@@ -10,6 +10,8 @@
 
 #include "arch_types.h"
 #include "cpu.h"
+#include <bsd/sys/queue.h>
+#include <bsd/sys/tree.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -69,6 +71,7 @@ enum {
 
 typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
+    uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
     void* address_space;       /* Адресное пространство (vm_map) */
     task_state_t state;        /* Состояние задачи */
     uint32_t uid;              /* Реальный UID */
@@ -76,7 +79,14 @@ typedef struct task {
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
+    int32_t exit_code;         /* Код завершения процесса */
+    uint8_t exited;            /* Процесс завершен через posix_exit */
+    uint8_t waited;            /* Статус уже забран waitpid */
+    struct thread* main_thread;/* Основной поток процесса */
+    uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */
+    struct task* next_all;     /* Связный список всех задач */
+    RB_ENTRY(task) task_id_link; /* Узел task_id-индекса */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } task_t;
 
@@ -103,7 +113,17 @@ typedef struct thread {
     void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
-    struct thread* sched_next; /* Следующий в очереди планировщика */
+    TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
+    uint8_t ready_queued;      /* Поток находится в ready queue */
+    TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
+    TAILQ_ENTRY(thread) wait_timeout_link; /* Узел глобального timeout-list ожидания */
+    struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */
+    uint64_t wait_deadline_tick;    /* Дедлайн ожидания в тиках (0=без дедлайна) */
+    uint8_t wait_timeout_armed;     /* Поток находится в timeout-list ожидания */
+    uint8_t wait_timed_out;         /* Поток разбужен по timeout waitq */
+    struct thread* joiner;     /* Поток, ожидающий завершения */
+    uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
+    uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
     void* arch_specific;       /* Архитектурно-зависимые данные */
 } thread_t;
 
@@ -180,6 +200,49 @@ uint32_t task_get_euid(const task_t* task);
  * @return egid
  */
 uint32_t task_get_egid(const task_t* task);
+
+/**
+ * Получение количества потоков задачи
+ * @param task Указатель на задачу
+ * @return Число потоков
+ */
+uint32_t task_get_thread_count(const task_t* task);
+
+/**
+ * Find task by task_id.
+ * @param task_id Numeric task id
+ * @return Pointer to task or NULL
+ */
+task_t* task_find_by_id(uint64_t task_id);
+
+typedef struct {
+    uint32_t cache_count;
+    uint32_t cache_capacity;
+    uint64_t cache_hits;
+    uint64_t cache_misses;
+    uint64_t retired;
+    uint64_t poison_failures;
+} task_stack_cache_stats_t;
+
+/**
+ * Acquire kernel thread stack (reused from cache or freshly allocated).
+ * @return Stack base pointer or NULL
+ */
+void* task_kernel_stack_acquire(void);
+
+/**
+ * Retire kernel thread stack for deferred reuse.
+ * @param stack Stack base pointer
+ * @param size Stack size
+ */
+void task_kernel_stack_retire(void* stack, size_t size);
+
+/**
+ * Get kernel stack cache statistics.
+ * @param out_stats Pointer to structure to fill
+ * @return 0 on success, negative value on error
+ */
+int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
 
 /* ============================================================================
  * Функции для потоков

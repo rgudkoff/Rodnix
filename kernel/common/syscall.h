@@ -15,6 +15,9 @@ typedef uint64_t (*syscall_fn_t)(uint64_t a1,
 
 enum {
     SYS_NOP = 0,
+    SYS_TEST_SLEEP = 62,
+    /* Reserved for legacy in-kernel compatibility only; userland must use POSIX. */
+    SYS_WRITE = 63,
 };
 
 void syscall_init(void);

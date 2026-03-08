@@ -1,0 +1,4 @@
+/dev is managed by kernel VFS at boot time.
+
+The kernel creates virtual device nodes here (for example /dev/console).
+This file keeps the directory present in initrd/rootfs layout.

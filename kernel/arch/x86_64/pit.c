@@ -350,7 +350,14 @@ void pit_sleep_ms(uint32_t milliseconds)
  */
 void pit_disable(void)
 {
-    pic_disable_irq(0);
+    extern bool apic_is_available(void);
+    extern bool ioapic_is_available(void);
+    extern void apic_disable_irq(uint8_t irq);
+    if (apic_is_available() && ioapic_is_available()) {
+        apic_disable_irq(0);
+    } else {
+        pic_disable_irq(0);
+    }
 }
 
 /**

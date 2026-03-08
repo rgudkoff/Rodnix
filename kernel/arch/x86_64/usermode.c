@@ -10,6 +10,7 @@
 #include "types.h"
 #include "config.h"
 #include "../../include/common.h"
+#include "../../include/error.h"
 #include <stdint.h>
 
 #define USER_CODE_VA  0x0000000040000000ULL
@@ -23,10 +24,15 @@ static const uint8_t user_stub_code[] = {
 
 static uint64_t user_pml4_phys = 0;
 
+void usermode_set_pml4(uint64_t pml4_phys)
+{
+    user_pml4_phys = pml4_phys;
+}
+
 int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 {
     if (!entry || !user_stack || !rsp0_out) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     extern void kputs(const char* str);
@@ -35,23 +41,23 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     user_pml4_phys = paging_create_user_pml4();
     if (!user_pml4_phys) {
         kputs("[USERMODE] create_pml4 failed\n");
-        return -1;
+        return RDNX_E_NOMEM;
     }
 
     uint64_t code_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     uint64_t stack_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     if (!code_phys || !stack_phys) {
         kputs("[USERMODE] alloc pages failed\n");
-        return -1;
+        return RDNX_E_NOMEM;
     }
 
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
         kputs("[USERMODE] map code failed\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
         kputs("[USERMODE] map stack failed\n");
-        return -1;
+        return RDNX_E_GENERIC;
     }
 
     memcpy(X86_64_PHYS_TO_VIRT(code_phys), user_stub_code, sizeof(user_stub_code));
@@ -61,10 +67,10 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     *entry = (void*)(uintptr_t)USER_CODE_VA;
     *user_stack = (void*)(uintptr_t)(USER_STACK_VA + X86_64_PAGE_SIZE - 16);
     *rsp0_out = 0;
-    return 0;
+    return RDNX_OK;
 }
 
-void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
+void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0, uint64_t arg1)
 {
     tss_set_rsp0(rsp0);
     extern void kputs(const char* str);
@@ -85,6 +91,8 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
         "mov %%ax, %%es\n\t"
         "mov %%ax, %%fs\n\t"
         "mov %%ax, %%gs\n\t"
+        "mov %4, %%rdi\n\t"
+        "mov %5, %%rsi\n\t"
         "pushq %0\n\t"
         "pushq %1\n\t"
         "pushq $0x202\n\t"
@@ -95,7 +103,9 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0)
         : "r"(user_ds),
           "r"(user_stack),
           "r"(user_cs),
-          "r"(entry)
-        : "memory", "rax"
+          "r"(entry),
+          "r"(arg0),
+          "r"(arg1)
+        : "memory", "rax", "rdi", "rsi"
     );
 }

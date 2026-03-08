@@ -8,30 +8,143 @@
 #include "../include/debug.h"
 #include "core/interrupts.h"
 #include "syscall.h"
+#include "posix/posix_syscall.h"
 #include "fs/vfs.h"
 #include "net/net.h"
 #include "common/security.h"
 #include "common/bootstrap.h"
 #include "common/loader.h"
+#include "common/shell.h"
+#include "common/bootlog.h"
 #include "common/idl_demo.h"
 #include "core/boot.h"
 #include "arch/x86_64/config.h"
+#include "../include/common.h"
+
+#define USER_INIT_PATH_MAX 128
+
+static char g_user_init_path[USER_INIT_PATH_MAX] = "/bin/init";
+
+static bool bootarg_has_token(const char* cmdline, const char* token)
+{
+    if (!cmdline || !token || token[0] == '\0') {
+        return false;
+    }
+
+    size_t tok_len = strlen(token);
+    const char* p = cmdline;
+
+    while (*p) {
+        while (*p == ' ') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+
+        const char* start = p;
+        while (*p && *p != ' ') {
+            p++;
+        }
+        size_t len = (size_t)(p - start);
+        if (len == tok_len && strncmp(start, token, tok_len) == 0) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void bootarg_pick_init_path(char* out, size_t out_len)
+{
+    if (!out || out_len == 0) {
+        return;
+    }
+
+    const char* fallback = "/bin/init";
+    size_t i = 0;
+    while (fallback[i] && i + 1 < out_len) {
+        out[i] = fallback[i];
+        i++;
+    }
+    out[i] = '\0';
+
+    boot_info_t* bi = boot_get_info();
+    if (!bi || !bi->cmdline[0]) {
+        return;
+    }
+
+    const char* cmdline = bi->cmdline;
+    const char* key = "rdnx.init=";
+    size_t key_len = strlen(key);
+    const char* p = cmdline;
+
+    while (*p) {
+        while (*p == ' ') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+
+        const char* start = p;
+        while (*p && *p != ' ') {
+            p++;
+        }
+        size_t len = (size_t)(p - start);
+        if (len > key_len && strncmp(start, key, key_len) == 0) {
+            size_t path_len = len - key_len;
+            if (path_len >= out_len) {
+                path_len = out_len - 1;
+            }
+            memcpy(out, start + key_len, path_len);
+            out[path_len] = '\0';
+            return;
+        }
+    }
+}
 
 static void idle_thread(void* arg)
 {
     (void)arg;
     for (;;) {
-        interrupts_enable();
-        /* Yield if any ready thread exists */
-        scheduler_yield();
+        __asm__ volatile ("sti; hlt" ::: "memory");
+    }
+}
+
+static void kernel_shell_thread(void* arg)
+{
+    (void)arg;
+    if (shell_init() != 0) {
+        panic("Shell init failed");
+    }
+    shell_run();
+    for (;;) {
         cpu_idle();
     }
 }
 
-static void shell_thread(void* arg)
+static void user_init_thread(void* arg)
 {
-    (void)arg;
-    extern void shell_run(void);
+    const char* init_path = (const char*)arg;
+    if (!init_path || init_path[0] == '\0') {
+        init_path = "/bin/init";
+    }
+
+    kprintf("[INIT-USER] exec %s\n", init_path);
+    int ret = loader_exec(init_path);
+    if (ret == 0) {
+        /* usermode_enter should not return on success */
+        for (;;) {
+            cpu_idle();
+        }
+    }
+
+    kprintf("[INIT-USER] exec failed (%d)\n", ret);
+    kputs("[DEGRADED] userland init unavailable, starting kernel shell fallback\n");
+    if (shell_init() != 0) {
+        panic("Shell fallback init failed");
+    }
     shell_run();
     for (;;) {
         cpu_idle();
@@ -56,6 +169,7 @@ void kmain(uint32_t magic, void* mbi)
     kputs("========================================\n\n");
     
     kputs("[INIT] Starting kernel...\n");
+    bootlog_mark("kmain", "enter");
 
     /* Step 1: Initialize boot subsystem */
     kputs("[INIT] Boot subsystem\n");
@@ -68,53 +182,69 @@ void kmain(uint32_t magic, void* mbi)
     boot_info.cmdline[0] = '\0';
     boot_info.flags = 0;
 
+    bootlog_mark("boot", "enter");
     int boot_result = boot_early_init(&boot_info);
     if (boot_result != 0) {
+        bootlog_mark("boot", "fail");
         kputs("[INIT-ERR] Boot init failed\n");
         panic("Boot init failed");
     }
-
+    bootlog_init();
+    bootlog_mark("boot", "done");
     kputs("[INIT] Boot done\n");
     
     /* Step 2: Initialize CPU */
     kputs("[INIT] CPU\n");
+    bootlog_mark("cpu", "enter");
     extern int cpu_init(void);
     if (cpu_init() != 0) {
+        bootlog_mark("cpu", "fail");
         panic("CPU init failed");
     }
+    bootlog_mark("cpu", "done");
     
     /* Step 3: Initialize interrupts */
     kputs("[INIT] Interrupts\n");
+    bootlog_mark("interrupts", "enter");
     if (interrupts_init() != 0) {
+        bootlog_mark("interrupts", "fail");
         panic("Interrupts init failed");
     }
+    bootlog_mark("interrupts", "done");
     
     /* Step 4: Initialize memory */
     kputs("[INIT] Memory\n");
+    bootlog_mark("memory", "enter");
     if (memory_init() != 0) {
+        bootlog_mark("memory", "fail");
         panic("Memory init failed");
     }
+    bootlog_mark("memory", "done");
     
     /* Step 5: Initialize APIC (after paging is ready) */
     kputs("[INIT-5] APIC\n");
+    bootlog_mark("apic", "enter");
     __asm__ volatile ("" ::: "memory");
     extern int apic_init(void);
     extern bool apic_is_available(void);
     if (apic_init() == 0) {
+        bootlog_mark("apic", "done");
         kputs("[INIT-5.1] APIC initialized\n");
     } else {
+        bootlog_mark("apic", "fallback_pic");
         kputs("[INIT-5.2] APIC init failed, fallback to PIC\n");
     }
     __asm__ volatile ("" ::: "memory");
 
-    /* If LAPIC is available, keep PIC enabled for legacy IRQs (PS/2) */
+    /* External IRQ routing status */
     if (apic_is_available()) {
         extern bool ioapic_is_available(void);
         if (ioapic_is_available()) {
-            kputs("[INIT-5.3] I/O APIC available, keep PIC enabled for legacy IRQs\n");
+            kputs("[INIT-5.3] I/O APIC available, PIC masked (APIC mode)\n");
             __asm__ volatile ("" ::: "memory");
         } else {
-            kputs("[INIT-5.3] LAPIC available, I/O APIC not - keep PIC for external IRQ\n");
+            kputs("[INIT-5.3] LAPIC available, I/O APIC not - PIC fallback for external IRQ\n");
+            kputs("[DEGRADED] External IRQ routing stays on PIC fallback path\n");
             __asm__ volatile ("" ::: "memory");
         }
     }
@@ -122,6 +252,7 @@ void kmain(uint32_t magic, void* mbi)
     
     /* Step 6: Initialize timer (LAPIC timer if available, otherwise PIT) */
     kputs("[INIT-6] Timer\n");
+    bootlog_mark("timer", "enter");
     __asm__ volatile ("" ::: "memory");
     extern int apic_timer_init(uint32_t frequency);
     extern int pit_init(uint32_t frequency);
@@ -142,52 +273,68 @@ void kmain(uint32_t magic, void* mbi)
         kputs("[INIT-6.2] Use PIT\n");
         __asm__ volatile ("" ::: "memory");
         if (pit_init(100) != 0) {
+            bootlog_mark("timer", "fail");
             panic("Timer init failed");
         }
     }
     __asm__ volatile ("" ::: "memory");
 
     if (use_apic_timer) {
+        bootlog_mark("timer", "lapic");
         kputs("[INIT-6.9] Timer source: LAPIC\n");
     } else {
+        bootlog_mark("timer", "pit");
         kputs("[INIT-6.9] Timer source: PIT\n");
     }
     __asm__ volatile ("" ::: "memory");
     
     /* Step 7: Initialize scheduler */
     kputs("[INIT-7] Scheduler\n");
+    bootlog_mark("scheduler", "enter");
     __asm__ volatile ("" ::: "memory");
     if (scheduler_init() != 0) {
+        bootlog_mark("scheduler", "fail");
         panic("Scheduler init failed");
     }
+    bootlog_mark("scheduler", "done");
     __asm__ volatile ("" ::: "memory");
     
     /* Step 8: Initialize IPC */
     kputs("[INIT-8] IPC\n");
+    bootlog_mark("ipc", "enter");
     __asm__ volatile ("" ::: "memory");
     if (ipc_init() != 0) {
+        bootlog_mark("ipc", "fail");
         panic("IPC init failed");
     }
+    bootlog_mark("ipc", "done");
     __asm__ volatile ("" ::: "memory");
 
     /* Step 8.5: Initialize syscalls */
     kputs("[INIT-8.5] Syscalls\n");
+    bootlog_mark("syscall", "enter");
     __asm__ volatile ("" ::: "memory");
     syscall_init();
+    bootlog_mark("syscall", "done");
     __asm__ volatile ("" ::: "memory");
 
     kputs("[INIT-8.6] Security\n");
+    bootlog_mark("security", "enter");
     __asm__ volatile ("" ::: "memory");
     security_init();
+    bootlog_mark("security", "done");
     __asm__ volatile ("" ::: "memory");
 
     kputs("[INIT-8.7] Loader\n");
+    bootlog_mark("loader", "enter");
     __asm__ volatile ("" ::: "memory");
     loader_init();
+    bootlog_mark("loader", "done");
     __asm__ volatile ("" ::: "memory");
     
     /* Step 9: Initialize Fabric */
     kputs("[INIT-9] Fabric\n");
+    bootlog_mark("fabric", "enter");
     __asm__ volatile ("" ::: "memory");
     extern void fabric_init(void);
     extern void virt_bus_init(void);
@@ -216,33 +363,44 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INIT-9-OK] Fabric initialization complete\n");
+    bootlog_mark("fabric", "done");
     __asm__ volatile ("" ::: "memory");
 
     kputs("[INIT-9.6] VFS/RAMFS\n");
+    bootlog_mark("vfs", "enter");
     __asm__ volatile ("" ::: "memory");
     boot_info_t* bi = boot_get_info();
     if (bi && bi->initrd_start && bi->initrd_size) {
+        kprintf("[INIT-9.6] initrd: start=%llx size=%llu\n",
+                (unsigned long long)bi->initrd_start,
+                (unsigned long long)bi->initrd_size);
         void* initrd = X86_64_PHYS_TO_VIRT(bi->initrd_start);
         vfs_set_initrd(initrd, (size_t)bi->initrd_size);
     }
     if (vfs_init() != 0) {
+        bootlog_mark("vfs", "fail");
         kputs("[INIT-9.6] VFS init failed\n");
     } else {
+        bootlog_mark("vfs", "done");
         kputs("[INIT-9.6] VFS ready\n");
     }
     __asm__ volatile ("" ::: "memory");
 
     kputs("[INIT-9.7] Network\n");
+    bootlog_mark("net", "enter");
     __asm__ volatile ("" ::: "memory");
     if (net_init() != 0) {
+        bootlog_mark("net", "fail");
         kputs("[INIT-9.7] Net init failed\n");
     } else {
+        bootlog_mark("net", "done");
         kputs("[INIT-9.7] Net ready (stub)\n");
     }
     __asm__ volatile ("" ::: "memory");
     
     /* Step 10: Enable interrupts (set IRQL to PASSIVE) */
     kputs("[INIT-10] Enable interrupts\n");
+    bootlog_mark("interrupts", "enable_enter");
     __asm__ volatile ("" ::: "memory");
     
     /* Temporarily disable timer to avoid immediate interrupt on sti */
@@ -293,42 +451,80 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INIT-10-OK] Interrupts enabled\n");
+    bootlog_mark("interrupts", "enable_done");
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 11: Initialize shell */
-    kputs("[INIT-11] Shell\n");
-    __asm__ volatile ("" ::: "memory");
-    extern int shell_init(void);
-    if (shell_init() != 0) {
-        panic("Shell init failed");
+    bool force_kernel_shell = false;
+    boot_info_t* boot_cfg = boot_get_info();
+    if (boot_cfg) {
+        force_kernel_shell =
+            bootarg_has_token(boot_cfg->cmdline, "rdnx.shell=1") ||
+            bootarg_has_token(boot_cfg->cmdline, "shell=1");
     }
+    bootarg_pick_init_path(g_user_init_path, sizeof(g_user_init_path));
+
+    /* Step 11: Bootstrap mode selection */
+    kputs("[INIT-11] Bootstrap\n");
+    bootlog_mark("shell", "enter");
+    __asm__ volatile ("" ::: "memory");
+    if (force_kernel_shell) {
+        kputs("[INIT-11.1] Kernel shell forced by boot arg (rdnx.shell=1)\n");
+    } else {
+        kprintf("[INIT-11.1] Userspace init target: %s\n", g_user_init_path);
+    }
+    bootlog_mark("shell", "done");
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INIT-OK] Kernel ready\n");
+    bootlog_mark("kmain", "kernel_ready");
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INIT-12] Starting scheduler threads...\n");
+    bootlog_mark("threads", "create_enter");
     __asm__ volatile ("" ::: "memory");
 
     task_t* kernel_task = task_create();
     if (!kernel_task) {
+        bootlog_mark("threads", "kernel_task_fail");
         panic("Kernel task create failed");
     }
     kernel_task->state = TASK_STATE_READY;
     task_set_current(kernel_task);
 
-    thread_t* shell = thread_create(kernel_task, shell_thread, NULL);
+    thread_t* primary = NULL;
+    if (force_kernel_shell) {
+        primary = thread_create(kernel_task, kernel_shell_thread, NULL);
+    } else {
+        task_t* init_task = task_create();
+        if (!init_task) {
+            bootlog_mark("threads", "kernel_task_fail");
+            panic("Init task create failed");
+        }
+        init_task->state = TASK_STATE_READY;
+        if (posix_bind_stdio_to_console(init_task) != 0) {
+            bootlog_mark("threads", "thread_create_fail");
+            panic("Init stdio bind failed");
+        }
+        primary = thread_create(init_task, user_init_thread, (void*)g_user_init_path);
+    }
     thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
+    if (idle) {
+        idle->priority = PRIORITY_MIN;
+    }
     bootstrap_start();
-    idl_demo_start();
-    if (!shell || !idle) {
+    /* Keep IDL demo disabled in baseline boot path; it perturbs contract CI. */
+    /* idl_demo_start(); */
+    if (!primary || !idle) {
+        bootlog_mark("threads", "thread_create_fail");
         panic("Kernel thread create failed");
     }
 
-    scheduler_add_thread(shell);
+    scheduler_add_thread(primary);
     scheduler_add_thread(idle);
+    bootlog_mark("threads", "created");
 
     kputs("[INIT-12.1] scheduler_start()\n");
+    bootlog_mark("scheduler", "start");
     __asm__ volatile ("" ::: "memory");
     scheduler_start();
 

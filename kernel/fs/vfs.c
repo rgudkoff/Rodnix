@@ -5,9 +5,12 @@
 
 #include "vfs.h"
 #include "initrd.h"
+#include "../common/tty_console.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
+#include "../../include/error.h"
+#include "../../include/debug.h"
 
 #define VFS_CACHE_SIZE 64
 
@@ -298,6 +301,47 @@ static int vfs_mount_root_ramfs(void)
     return 0;
 }
 
+static int vfs_setup_console_node(void)
+{
+    if (!vfs_root) {
+        return -1;
+    }
+
+    vfs_node_t* dev = vfs_lookup("/dev");
+    if (!dev) {
+        dev = vfs_create_node(vfs_root, "dev", VFS_NODE_DIR);
+        if (!dev) {
+            return -1;
+        }
+    }
+    if (dev->type != VFS_NODE_DIR) {
+        return -1;
+    }
+
+    static const char* names[] = {
+        "console",
+        "stdin",
+        "stdout",
+        "stderr",
+    };
+
+    for (size_t i = 0; i < (sizeof(names) / sizeof(names[0])); i++) {
+        vfs_node_t* node = vfs_find_child(dev, names[i]);
+        if (!node) {
+            node = vfs_create_node(dev, names[i], VFS_NODE_FILE);
+            if (!node) {
+                return -1;
+            }
+        }
+        if (node->type != VFS_NODE_FILE || !node->inode) {
+            return -1;
+        }
+        node->inode->flags |= VFS_INODE_CONSOLE;
+    }
+
+    return 0;
+}
+
 static int vfs_import_initrd(void);
 
 int vfs_mount_initrd_root(void)
@@ -316,7 +360,14 @@ int vfs_mount_initrd_root(void)
     vfs_root_mount->root = new_root;
     vfs_root = new_root;
     vfs_cache_reset();
-    return vfs_import_initrd();
+    int ret = vfs_import_initrd();
+    if (ret != 0) {
+        return ret;
+    }
+    if (vfs_setup_console_node() != 0) {
+        return -1;
+    }
+    return 0;
 }
 int vfs_mount_ramfs(const char* path)
 {
@@ -361,8 +412,10 @@ static int vfs_import_initrd(void)
 
     const initrd_header_t* hdr = (const initrd_header_t*)vfs_initrd_data;
     if (hdr->magic != INITRD_MAGIC) {
+        kputs("[VFS] initrd: bad magic\n");
         return -1;
     }
+    kprintf("[VFS] initrd: entries=%u\n", (unsigned)hdr->entry_count);
 
     const uint8_t* base = (const uint8_t*)vfs_initrd_data;
     size_t entries_size = hdr->entry_count * sizeof(initrd_entry_t);
@@ -377,11 +430,38 @@ static int vfs_import_initrd(void)
         if (e->path[0] == '\0') {
             continue;
         }
+        kprintf("[VFS] initrd entry: %s (%u bytes)\n", e->path, (unsigned)e->size);
         size_t end = (size_t)e->offset + (size_t)e->size;
         if (end > vfs_initrd_size) {
             continue;
         }
-        vfs_node_t* node = vfs_create_node(vfs_root, e->path, VFS_NODE_FILE);
+        /* Ensure parent directories exist */
+        char dirbuf[128];
+        size_t plen = strlen(e->path);
+        if (plen == 0 || plen >= sizeof(dirbuf)) {
+            continue;
+        }
+        memcpy(dirbuf, e->path, plen + 1);
+        if (dirbuf[0] != '/') {
+            continue;
+        }
+        for (char* p = dirbuf + 1; *p; p++) {
+            if (*p == '/') {
+                *p = '\0';
+                vfs_mkdir(dirbuf);
+                *p = '/';
+            }
+        }
+
+        char leaf[32];
+        vfs_node_t* parent = vfs_resolve_parent(e->path, leaf, sizeof(leaf));
+        if (!parent) {
+            continue;
+        }
+        vfs_node_t* node = vfs_find_child(parent, leaf);
+        if (!node) {
+            node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
+        }
         if (!node) {
             continue;
         }
@@ -404,17 +484,22 @@ void vfs_set_initrd(const void* data, size_t size)
 int vfs_init(void)
 {
     if (vfs_ready) {
-        return 0;
+        return RDNX_OK;
     }
+    TRACE_EVENT("vfs_init");
     if (vfs_mount_root_ramfs() != 0) {
-        return -1;
+        return RDNX_E_GENERIC;
     }
     vfs_cache_reset();
     if (vfs_import_initrd() != 0) {
         kputs("[VFS] initrd import failed\n");
     }
+    tty_console_init();
+    if (vfs_setup_console_node() != 0) {
+        kputs("[VFS] console node setup failed\n");
+    }
     vfs_ready = 1;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_is_ready(void)
@@ -424,38 +509,38 @@ int vfs_is_ready(void)
 
 int vfs_mkdir(const char* path)
 {
-    if (!path || !vfs_ready) {
-        return -1;
+    if (!path || !vfs_root) {
+        return RDNX_E_INVALID;
     }
     if (strcmp(path, "/") == 0) {
-        return 0;
+        return RDNX_OK;
     }
     char leaf[32];
     vfs_node_t* parent = vfs_resolve_parent(path, leaf, sizeof(leaf));
     if (!parent) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     if (vfs_find_child(parent, leaf)) {
-        return 0;
+        return RDNX_OK;
     }
-    return vfs_create_node(parent, leaf, VFS_NODE_DIR) ? 0 : -1;
+    return vfs_create_node(parent, leaf, VFS_NODE_DIR) ? RDNX_OK : RDNX_E_NOMEM;
 }
 
 int vfs_unlink(const char* path)
 {
     if (!path || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* node = vfs_lookup(path);
     if (!node || node == vfs_root) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     if (node->type == VFS_NODE_DIR && node->children) {
-        return -1;
+        return RDNX_E_BUSY;
     }
     vfs_node_t* parent = node->parent;
     if (!parent) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* prev = NULL;
     for (vfs_node_t* it = parent->children; it; it = it->sibling) {
@@ -471,46 +556,47 @@ int vfs_unlink(const char* path)
     }
     vfs_free_node(node);
     vfs_cache_reset();
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx)
 {
     if (!path || !cb || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_node_t* dir = vfs_lookup(path);
     if (!dir || dir->type != VFS_NODE_DIR) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     for (vfs_node_t* it = dir->children; it; it = it->sibling) {
         cb(it, ctx);
     }
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file)
 {
     if (!path || !out_file || !vfs_ready) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("vfs_open");
     vfs_node_t* node = vfs_lookup(path);
     if (!node) {
         if (!(flags & VFS_OPEN_CREATE)) {
-            return -1;
+            return RDNX_E_NOTFOUND;
         }
         char leaf[32];
         vfs_node_t* parent = vfs_resolve_parent(path, leaf, sizeof(leaf));
         if (!parent) {
-            return -1;
+            return RDNX_E_NOTFOUND;
         }
         node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
         if (!node) {
-            return -1;
+            return RDNX_E_NOMEM;
         }
     }
     if (node->type != VFS_NODE_FILE || !node->inode) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (flags & VFS_OPEN_TRUNC) {
         node->inode->size = 0;
@@ -518,26 +604,29 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     out_file->node = node;
     out_file->pos = 0;
     out_file->writable = (flags & VFS_OPEN_WRITE) != 0;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_close(vfs_file_t* file)
 {
     if (!file) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     file->node = NULL;
     file->pos = 0;
     file->writable = false;
-    return 0;
+    return RDNX_OK;
 }
 
 int vfs_read(vfs_file_t* file, void* buffer, size_t size)
 {
     if (!file || !file->node || !file->node->inode || !buffer) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_inode_t* inode = file->node->inode;
+    if (inode->flags & VFS_INODE_CONSOLE) {
+        return tty_console_read(buffer, size, file->writable);
+    }
     if (file->pos >= inode->size) {
         return 0;
     }
@@ -551,12 +640,15 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
 {
     if (!file || !file->node || !file->node->inode || !buffer || !file->writable) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     vfs_inode_t* inode = file->node->inode;
+    if (inode->flags & VFS_INODE_CONSOLE) {
+        return tty_console_write(buffer, size);
+    }
     size_t end = file->pos + size;
     if (vfs_grow_file(file->node, end) != 0) {
-        return -1;
+        return RDNX_E_NOMEM;
     }
     memcpy(inode->data + file->pos, buffer, size);
     file->pos += size;

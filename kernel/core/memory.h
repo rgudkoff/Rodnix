@@ -171,6 +171,9 @@ typedef struct {
     uint64_t total_virtual;   /* Общая виртуальная память */
     uint64_t free_virtual;    /* Свободная виртуальная память */
     uint64_t used_virtual;    /* Используемая виртуальная память */
+    uint64_t oom_pmm;         /* OOM счетчик PMM */
+    uint64_t oom_vmm;         /* OOM счетчик VMM */
+    uint64_t oom_heap;        /* OOM счетчик heap */
 } memory_info_t;
 
 /**
@@ -179,6 +182,10 @@ typedef struct {
  * @return 0 при успехе, отрицательное значение при ошибке
  */
 int memory_get_info(memory_info_t* info);
+
+void memory_oom_inc_pmm(void);
+void memory_oom_inc_vmm(void);
+void memory_oom_inc_heap(void);
 
 /* ============================================================================
  * Kernel Heap (simple allocator)

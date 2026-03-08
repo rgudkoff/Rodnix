@@ -14,6 +14,7 @@
 #include "service/service.h"
 #include "../../include/console.h"
 #include "../../core/interrupts.h"
+#include "../../include/error.h"
 #include <stddef.h>
 #include <stdarg.h>
 
@@ -33,6 +34,7 @@ static uint32_t bus_count = 0;
 static uint32_t driver_count = 0;
 static uint32_t device_count = 0;
 static uint32_t service_count = 0;
+static bool fabric_initialized = false;
 
 /* Spinlock for thread safety */
 static spinlock_t fabric_lock;
@@ -100,6 +102,19 @@ void fabric_init(void)
     service_count = 0;
     
     fabric_log("[fabric] Fabric initialized\n");
+    fabric_initialized = true;
+}
+
+int fabric_get_stats(fabric_stats_t* out)
+{
+    if (!out) {
+        return RDNX_E_INVALID;
+    }
+    out->buses = bus_count;
+    out->drivers = driver_count;
+    out->devices = device_count;
+    out->services = service_count;
+    return RDNX_OK;
 }
 
 /* Register a bus */
@@ -253,7 +268,21 @@ int fabric_service_publish(fabric_service_t *service)
     
     if (!service || !service->name) {
         kputs("[FABRIC-SVC] ERROR: Invalid service or name\n");
-        return -1;
+        return RDNX_E_INVALID;
+    }
+
+    if (service->hdr.abi_version != RDNX_ABI_VERSION ||
+        service->hdr.size < sizeof(fabric_service_t)) {
+        kputs("[FABRIC-SVC] ERROR: Service ABI mismatch\n");
+        return RDNX_E_INVALID;
+    }
+    if (service->ops) {
+        rdnx_abi_header_t* ops_hdr = (rdnx_abi_header_t*)service->ops;
+        if (ops_hdr->abi_version != RDNX_ABI_VERSION ||
+            ops_hdr->size < sizeof(rdnx_abi_header_t)) {
+            kputs("[FABRIC-SVC] ERROR: Service ops ABI mismatch\n");
+            return RDNX_E_INVALID;
+        }
     }
     
     kputs("[FABRIC-SVC] Service name: ");

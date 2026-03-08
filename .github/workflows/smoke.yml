@@ -1,0 +1,45 @@
+name: Smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  qemu-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            nasm \
+            qemu-system-x86 \
+            grub-pc-bin \
+            grub-common \
+            xorriso \
+            mtools
+
+      - name: Provide x86_64-elf Tool Names
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          ln -sf /usr/bin/gcc "$HOME/.local/bin/x86_64-elf-gcc"
+          ln -sf /usr/bin/ld "$HOME/.local/bin/x86_64-elf-ld"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run Smoke
+        run: |
+          TIMEOUT_SEC=20 scripts/ci/smoke_qemu.sh
+
+      - name: Upload Boot Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log
+          path: boot.log
+          if-no-files-found: ignore

@@ -37,10 +37,12 @@ typedef struct interrupt_frame {
     uint64_t int_no;
     uint64_t err_code;
 
-    /* CPU-saved execution context (ring 0: rip/cs/rflags only) */
+    /* CPU-saved execution context */
     uint64_t rip;
     uint64_t cs;
     uint64_t rflags;
+    uint64_t rsp;
+    uint64_t ss;
 } interrupt_frame_t;
 
 #endif /* _RODNIX_X86_64_INTERRUPT_FRAME_H */

@@ -10,13 +10,35 @@
 
 #include "../../core/memory.h"
 #include "../../core/boot.h"
+#include "../../common/tracev2.h"
 #include "../../../include/console.h"
+#include "../../../include/debug.h"
 #include "types.h"
 #include "config.h"
 #include "pmm.h"
 #include "paging.h"
 #include <stddef.h>
 #include <stdbool.h>
+#include "../../../include/error.h"
+
+static uint64_t memory_oom_pmm = 0;
+static uint64_t memory_oom_vmm = 0;
+static uint64_t memory_oom_heap = 0;
+
+void memory_oom_inc_pmm(void)
+{
+    memory_oom_pmm++;
+}
+
+void memory_oom_inc_vmm(void)
+{
+    memory_oom_vmm++;
+}
+
+void memory_oom_inc_heap(void)
+{
+    memory_oom_heap++;
+}
 
 /* ============================================================================
  * Internal Helper Functions
@@ -70,6 +92,7 @@ int memory_init(void)
     extern boot_info_t* boot_get_info(void);
     
     kputs("[MEM-1] Start\n");
+    tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_ENTER, 0, 0);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-2] Call paging_init\n");
@@ -77,6 +100,7 @@ int memory_init(void)
     /* Initialize paging first (uses existing page tables from boot.S) */
     if (paging_init() != 0) {
         kputs("[MEM-ERR] paging_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 1, 0);
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
@@ -128,11 +152,13 @@ int memory_init(void)
                                PMM_BITMAP_PHYS_ADDR, bi->mmap_addr,
                                bi->mmap_size, bi->mmap_entry_size) != 0) {
             kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
+            tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 2, 0);
             __asm__ volatile ("sti");
             return -1;
         }
     } else if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
         kputs("[MEM-ERR] pmm_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 3, 0);
         __asm__ volatile ("sti");
         return -1;
     }
@@ -165,13 +191,17 @@ int memory_init(void)
     extern int paging_bootstrap_physmap(uint64_t max_phys);
     if (paging_bootstrap_physmap(physmap_max) != 0) {
         kputs("[MEM-ERR] bootstrap physmap failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 4, 0);
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
+    PANIC_IF(!paging_is_physmap_ready(), "physmap not ready before identity map drop");
 
+    TRACE_EVENT("memory: physmap ready");
     /* Switch VGA console to higher-half direct map */
     console_set_vga_buffer(X86_64_PHYS_TO_VIRT(0xB8000));
 
+    TRACE_EVENT("memory: drop identity map");
     /* Drop low identity map: lower half becomes user-only */
     paging_disable_identity_map();
 
@@ -179,7 +209,18 @@ int memory_init(void)
     extern int heap_init(size_t initial_pages);
     if (heap_init(16) != 0) {
         kputs("[MEM-ERR] heap_init failed\n");
+        tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 5, 0);
         return -1;
+    }
+
+    /* Release init sections back to PMM */
+    extern char __init_start;
+    extern char __init_end;
+    uint64_t init_start = (uint64_t)X86_64_VIRT_TO_PHYS(&__init_start);
+    uint64_t init_end = (uint64_t)X86_64_VIRT_TO_PHYS(&__init_end);
+    if (init_end > init_start) {
+        TRACE_EVENT("memory: release init sections");
+        pmm_release_range(init_start, init_end);
     }
 
     /* Log PMM summary */
@@ -194,6 +235,8 @@ int memory_init(void)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[MEM-OK] Done\n");
+    tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_DONE,
+                 pmm_get_free_pages(), pmm_get_used_pages());
     return 0;
 }
 
@@ -323,6 +366,8 @@ void* vmm_alloc_pages(uint32_t count, uint64_t flags)
     extern uint64_t pmm_alloc_pages(uint32_t pages);
     uint64_t phys = pmm_alloc_pages(count);
     if (!phys) {
+        TRACE_EVENT("oom: vmm_alloc_pages");
+        memory_oom_inc_vmm();
         return NULL;
     }
     return X86_64_PHYS_TO_VIRT(phys);
@@ -355,7 +400,7 @@ void vmm_free_pages(void* virt, uint32_t count)
 int memory_get_info(memory_info_t* info)
 {
     if (!info) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     
     /* Get PMM statistics */
@@ -367,6 +412,9 @@ int memory_get_info(memory_info_t* info)
     info->total_virtual = 0;
     info->free_virtual = 0;
     info->used_virtual = 0;
+    info->oom_pmm = memory_oom_pmm;
+    info->oom_vmm = memory_oom_vmm;
+    info->oom_heap = memory_oom_heap;
     
-    return 0;
+    return RDNX_OK;
 }

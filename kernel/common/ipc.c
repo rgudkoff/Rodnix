@@ -9,6 +9,8 @@
 #include "../fabric/spin.h"
 #include "heap.h"
 #include "../../include/common.h"
+#include "../../include/debug.h"
+#include "../../include/error.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -16,6 +18,7 @@ static bool ipc_initialized = false;
 static uint64_t next_port_id = 1;
 static uint64_t next_set_id = 1;
 static port_t* bootstrap_port = NULL;
+static port_set_t* all_port_sets_head = NULL;
 
 /* Simple port table (fixed size for now) */
 #define IPC_MAX_PORTS 1024
@@ -71,23 +74,29 @@ static void ipc_queue_destroy(ipc_queue_t* q)
 static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
 {
     if (!q || !message) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    if (message->hdr.abi_version != RDNX_ABI_VERSION ||
+        message->hdr.size < sizeof(ipc_message_t)) {
+        return RDNX_E_INVALID;
+    }
+    BUG_ON(message->msg_size > IPC_MSG_MAX_SIZE);
+    BUG_ON(message->port_count > IPC_MAX_PORTS_PER_MSG);
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->msg_size > 0 && !message->data) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->msg_size > 0 && !message->data) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     ipc_msg_node_t* node = (ipc_msg_node_t*)kmalloc(sizeof(ipc_msg_node_t));
     if (!node) {
-        return -1;
+        return RDNX_E_NOMEM;
     }
     node->next = NULL;
     memset(&node->msg, 0, sizeof(node->msg));
@@ -95,6 +104,7 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
     node->msg.msg_size = message->msg_size;
     node->msg.port_count = message->port_count;
     node->msg.reply_port = message->reply_port;
+    node->msg.hdr = message->hdr;
     if (message->port_count > 0) {
         memcpy(node->msg.ports, message->ports, message->port_count * sizeof(uint64_t));
     }
@@ -102,7 +112,7 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
         node->msg.data = (uint8_t*)kmalloc(message->msg_size);
         if (!node->msg.data) {
             kfree(node);
-            return -1;
+            return RDNX_E_NOMEM;
         }
         memcpy(node->msg.data, message->data, message->msg_size);
     }
@@ -123,13 +133,13 @@ static int ipc_queue_push(ipc_queue_t* q, const ipc_message_t* message)
 static int ipc_queue_pop(ipc_queue_t* q, ipc_message_t* out)
 {
     if (!q || !out) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     spinlock_lock(&q->lock);
     ipc_msg_node_t* node = q->head;
     if (!node) {
         spinlock_unlock(&q->lock);
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
     q->head = node->next;
     if (!q->head) {
@@ -154,10 +164,35 @@ static inline int port_table_index(uint64_t port_id)
     return (int)(port_id - 1);
 }
 
+static bool port_set_contains_port(const port_set_t* set, const port_t* port)
+{
+    if (!set || !port) {
+        return false;
+    }
+    for (uint32_t i = 0; i < set->port_count; i++) {
+        if (set->ports[i] == port) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void ipc_wake_port_sets_for_port(port_t* port)
+{
+    if (!port) {
+        return;
+    }
+    for (port_set_t* set = all_port_sets_head; set; set = set->next_all) {
+        if (port_set_contains_port(set, port)) {
+            (void)waitq_wake_one(&set->waiters);
+        }
+    }
+}
+
 int ipc_init(void)
 {
     if (ipc_initialized) {
-        return 0;
+        return RDNX_OK;
     }
     
     next_port_id = 1;
@@ -170,7 +205,7 @@ int ipc_init(void)
     ipc_initialized = true;
     /* Reserve bootstrap port (placeholder, no protocol yet) */
     bootstrap_port = port_allocate(PORT_TYPE_CONTROL);
-    return 0;
+    return RDNX_OK;
 }
 
 port_t* port_allocate(port_type_t type)
@@ -195,6 +230,7 @@ port_t* port_allocate(port_type_t type)
     port->rights = PORT_RIGHT_RECEIVE | PORT_RIGHT_SEND;
     port->owner = task_get_current();
     port->owner_thread = thread_get_current();
+    waitq_init(&port->waiters, "ipc_port_waiters");
     port->ref_count = 1;
     port->queue = ipc_queue_create();
     if (!port->queue) {
@@ -221,6 +257,7 @@ void port_deallocate(port_t* port)
     
     if (port->ref_count == 0) {
         port->active = false;
+        waitq_wake_all(&port->waiters);
         ipc_queue_destroy((ipc_queue_t*)port->queue);
         port->queue = NULL;
         int idx = port_table_index(port->port_id);
@@ -287,32 +324,34 @@ int port_insert_receive_right(task_t* task, port_t* port)
 int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
 {
     if (!port || !message) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    message->hdr = RDNX_ABI_INIT(ipc_message_t);
+    TRACE_EVENT("ipc_send");
     
     if (!port->active) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
 
     if ((port->rights & PORT_RIGHT_SEND) == 0) {
-        return -1;
+        return RDNX_E_DENIED;
     }
     
     (void)timeout;
     if (message->msg_size > IPC_MSG_MAX_SIZE) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (message->port_count > IPC_MAX_PORTS_PER_MSG) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     if (!port->queue) {
-        return -1;
+        return RDNX_E_INVALID;
     }
     uint32_t bumped = 0;
     for (uint32_t i = 0; i < message->port_count; i++) {
         port_t* p = port_lookup(message->ports[i]);
         if (!p || !p->active) {
-            return -1;
+            return RDNX_E_INVALID;
         }
         p->ref_count++;
         bumped++;
@@ -324,10 +363,13 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
                 p->ref_count--;
             }
         }
-        return -1;
+        return RDNX_E_BUSY;
     }
+
+    (void)waitq_wake_one(&port->waiters);
+    ipc_wake_port_sets_for_port(port);
     
-    return 0;
+    return RDNX_OK;
 }
 
 static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
@@ -346,17 +388,18 @@ static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
 int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
 {
     if (!port || !message) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    TRACE_EVENT("ipc_receive");
     
     if (!port->active) {
-        return -1;
+        return RDNX_E_NOTFOUND;
     }
 
     if (port->owner) {
         task_t* current = task_get_current();
         if (current != port->owner) {
-            return -1;
+            return RDNX_E_DENIED;
         }
     }
     
@@ -370,22 +413,41 @@ int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
         if (port->owner_thread) {
             scheduler_clear_inherit(port->owner_thread);
         }
-        return -1;
+        return RDNX_E_INVALID;
     }
     for (;;) {
         if (ipc_queue_pop((ipc_queue_t*)port->queue, message) == 0) {
+            if (receiver && waitq_contains(&port->waiters, receiver)) {
+                (void)waitq_remove(&port->waiters, receiver);
+            }
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
-            return 0;
+            return RDNX_OK;
         }
-        if (deadline && scheduler_get_ticks() >= deadline) {
+        if (!receiver) {
             if (port->owner_thread) {
                 scheduler_clear_inherit(port->owner_thread);
             }
-            return -1;
+            return RDNX_E_INVALID;
         }
-        scheduler_yield();
+
+        int wret = waitq_wait_until(&port->waiters, deadline);
+        if (wret == RDNX_E_TIMEOUT) {
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
+            }
+            return RDNX_E_TIMEOUT;
+        }
+        if (wret != RDNX_OK) {
+            if (receiver && waitq_contains(&port->waiters, receiver)) {
+                (void)waitq_remove(&port->waiters, receiver);
+            }
+            if (port->owner_thread) {
+                scheduler_clear_inherit(port->owner_thread);
+            }
+            return wret;
+        }
     }
     
 }
@@ -394,11 +456,13 @@ int ipc_send_receive(port_t* port, ipc_message_t* send_msg,
                      ipc_message_t* reply_msg, uint64_t timeout)
 {
     if (!port || !send_msg || !reply_msg) {
-        return -1;
+        return RDNX_E_INVALID;
     }
+    send_msg->hdr = RDNX_ABI_INIT(ipc_message_t);
+    TRACE_EVENT("ipc_send_receive");
     
     if (!send_msg->reply_port) {
-        return -1;
+        return RDNX_E_INVALID;
     }
 
     thread_t* sender = thread_get_current();
@@ -439,6 +503,9 @@ port_set_t* port_set_create(void)
     set->ports = NULL;
     set->port_count = 0;
     set->capacity = 0;
+    waitq_init(&set->waiters, "ipc_portset_waiters");
+    set->next_all = all_port_sets_head;
+    all_port_sets_head = set;
     
     return set;
 }
@@ -453,6 +520,18 @@ void port_set_destroy(port_set_t* set)
         kfree(set->ports);
         set->ports = NULL;
     }
+    waitq_wake_all(&set->waiters);
+    if (all_port_sets_head == set) {
+        all_port_sets_head = set->next_all;
+    } else {
+        for (port_set_t* it = all_port_sets_head; it; it = it->next_all) {
+            if (it->next_all == set) {
+                it->next_all = set->next_all;
+                break;
+            }
+        }
+    }
+    set->next_all = NULL;
     kfree(set);
 }
 
@@ -530,6 +609,12 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
         if (deadline && scheduler_get_ticks() >= deadline) {
             return -1;
         }
-        scheduler_yield();
+        int wret = waitq_wait_until(&set->waiters, deadline);
+        if (wret == RDNX_E_TIMEOUT) {
+            return -1;
+        }
+        if (wret != RDNX_OK) {
+            return -1;
+        }
     }
 }

@@ -41,6 +41,13 @@ uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count);
 void pmm_free_pages(uint64_t phys, uint32_t count);
 void pmm_reserve_range(uint64_t start, uint64_t end);
 
+/**
+ * Release a reserved physical range back to PMM.
+ * @param start Physical start
+ * @param end Physical end
+ */
+void pmm_release_range(uint64_t start, uint64_t end);
+
 /* Statistics */
 uint64_t pmm_get_total_pages(void);
 uint64_t pmm_get_free_pages(void);

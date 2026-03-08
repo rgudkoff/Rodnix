@@ -30,6 +30,15 @@ typedef struct {
 /* Initialize Fabric */
 void fabric_init(void);
 
+typedef struct {
+    uint32_t buses;
+    uint32_t drivers;
+    uint32_t devices;
+    uint32_t services;
+} fabric_stats_t;
+
+int fabric_get_stats(fabric_stats_t* out);
+
 /* Bus registration */
 int fabric_bus_register(fabric_bus_t *bus);
 
@@ -52,4 +61,3 @@ void fabric_free_irq(int vector, fabric_irq_handler_t h);
 void fabric_log(const char *fmt, ...);
 
 #endif /* _RODNIX_FABRIC_H */
-

@@ -144,6 +144,7 @@ struct madt_ioapic {
  * ============================================================================ */
 
 static volatile uint32_t* apic_base = NULL;
+static uint64_t apic_base_phys_global = 0;
 static bool apic_initialized = false;
 static bool apic_available = false;
 
@@ -167,6 +168,7 @@ static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
 
 /* Forward declarations */
 static int ioapic_init(void);
+uint8_t apic_get_lapic_id(void);
 
 /* Find I/O APIC address from ACPI MADT */
 static uint64_t find_ioapic_from_madt(void)
@@ -394,6 +396,16 @@ static uint32_t apic_read_register(uint32_t offset)
         #endif
         return 0;
     }
+    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
+        uint64_t phys = msr & 0xFFFFF000;
+        if (phys) {
+            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
+        }
+        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+            return 0;
+        }
+    }
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
@@ -451,9 +463,40 @@ static void apic_write_register(uint32_t offset, uint32_t value)
     if (!apic_base) {
         return;
     }
+    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
+        uint64_t phys = msr & 0xFFFFF000;
+        if (phys) {
+            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
+        }
+        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
+            return;
+        }
+    }
     /* APIC registers are 32-bit aligned, so divide by 4 using bit shift */
     apic_base[offset >> 2] = value;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+}
+
+static void apic_reset_local(void)
+{
+    if (!apic_base) {
+        return;
+    }
+    /* Mask all LVT entries before enabling APIC */
+    apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_THERMAL, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_PERF, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT1, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_ERROR, APIC_LVT_MASKED);
+
+    /* Clear Error Status Register (write twice per Intel recommendation) */
+    apic_write_register(APIC_ESR, 0);
+    apic_write_register(APIC_ESR, 0);
+
+    /* Allow all priorities */
+    apic_write_register(APIC_TPR, 0);
 }
 
 /**
@@ -605,6 +648,7 @@ int apic_init(void)
     extern int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
     
     /* APIC region is 4KB, map it with PCD flag for uncached access */
+    apic_base_phys_global = apic_base_phys;
     uint64_t apic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(apic_base_phys);
     uint64_t mmio_flags = 0x001 | 0x002 | 0x010; /* PRESENT | RW | PCD (uncached) */
     
@@ -628,7 +672,12 @@ int apic_init(void)
     
     kputs("[APIC-6.4] Base assigned\n");
     __asm__ volatile ("" ::: "memory");
-    
+
+    kputs("[APIC-6.5] Reset LAPIC state\n");
+    __asm__ volatile ("" ::: "memory");
+    apic_reset_local();
+    __asm__ volatile ("" ::: "memory");
+
     kputs("[APIC-7] Read SVR\n");
     __asm__ volatile ("" ::: "memory");
     /* Enable APIC (set SVR enable bit) */
@@ -654,12 +703,10 @@ int apic_init(void)
     apic_write_register(APIC_SVR, svr);
     __asm__ volatile ("" ::: "memory");
 
-    /* Route legacy PIC interrupts via LINT0 (ExtINT) */
-    kputs("[APIC-9.1] Configure LINT0 for ExtINT\n");
+    /* Keep legacy ExtINT path enabled until I/O APIC verdict is known. */
+    kputs("[APIC-9.1] Configure LINT0 for temporary ExtINT fallback\n");
     __asm__ volatile ("" ::: "memory");
-    /* Delivery mode ExtINT (0b111 << 8), unmasked (bit 16 = 0) */
     apic_write_register(APIC_LVT_LINT0, (0x7u << 8));
-    /* Mask LINT1 (optional) */
     apic_write_register(APIC_LVT_LINT1, (1u << 16));
     __asm__ volatile ("" ::: "memory");
     
@@ -689,6 +736,13 @@ int apic_init(void)
     int ioapic_result = ioapic_init();
     if (ioapic_result == 0) {
         kputs("[APIC-11.1] I/O APIC initialized successfully\n");
+        kputs("[APIC-11.2] Switching external IRQ routing to I/O APIC\n");
+        /* Stop accepting ExtINT from 8259 via LAPIC LINT0. */
+        apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+        /* Route legacy IRQs away from PIC and fully mask PIC lines. */
+        pic_set_imcr(true);
+        pic_disable();
+        kputs("[APIC-11.3] PIC masked and detached (APIC/IOAPIC mode)\n");
         __asm__ volatile ("" ::: "memory");
     } else {
         kputs("[APIC-11.2] I/O APIC init failed (error code above)\n");
@@ -696,6 +750,7 @@ int apic_init(void)
         kputs("[APIC-11.4] Check [IOAPIC-*] logs above for failure details\n");
         /* Route external IRQs to PIC (IMCR PIC mode) */
         pic_set_imcr(false);
+        /* Keep ExtINT path on LINT0 for PIC fallback mode. */
         __asm__ volatile ("" ::: "memory");
     }
     
@@ -837,10 +892,6 @@ int ioapic_init(void)
         kprintf("[IOAPIC-1.2] ERROR: Failed to map I/O APIC page (error=%d)\n", map_result);
         kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
         __asm__ volatile ("" ::: "memory");
-        /* DEBUG: остановиться, чтобы можно было увидеть логи */
-        for (;;) {
-            __asm__ volatile ("hlt");
-        }
         return -1;
     }
     
@@ -868,8 +919,8 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     #endif
     
-    /* Check if ID register is readable (should not be all 0xFF or 0x00) */
-    if (id_reg == 0xFFFFFFFF || id_reg == 0x00000000) {
+    /* Only 0xFFFFFFFF is a hard failure. ID==0 can be valid (e.g. QEMU). */
+    if (id_reg == 0xFFFFFFFF) {
         kputs("[IOAPIC-2.2] WARNING: I/O APIC ID register returns invalid value\n");
         kputs("[IOAPIC-2.3] I/O APIC may not be present at this address; using PIC for external IRQs\n");
         __asm__ volatile ("" ::: "memory");
@@ -919,7 +970,8 @@ int ioapic_init(void)
     }
     
     ioapic_version = (uint8_t)(ver & 0xFF);
-    ioapic_max_redir = (uint8_t)((ver >> 16) & 0xFF);
+    /* Bits 16..23 are maximum redirection entry index, so +1 gives count. */
+    ioapic_max_redir = (uint8_t)(((ver >> 16) & 0xFF) + 1u);
     
     #if APIC_DEBUG
     kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
@@ -931,11 +983,25 @@ int ioapic_init(void)
     #endif
     
     /* Validate extracted values */
-    if (ioapic_max_redir == 0 || ioapic_max_redir > 24) {
+    if (ioapic_max_redir == 0 || ioapic_max_redir > IOAPIC_MAX_REDIR) {
         #if APIC_DEBUG
         kputs("[IOAPIC-4.4] WARNING: Invalid max redir entries, using default 24\n");
         #endif
-        ioapic_max_redir = 24;
+        ioapic_max_redir = IOAPIC_MAX_REDIR;
+    }
+
+    /* Mask all I/O APIC lines until individual drivers enable required IRQs. */
+    uint8_t bsp_lapic_id = apic_get_lapic_id();
+    for (uint8_t i = 0; i < ioapic_max_redir; i++) {
+        uint32_t rte_low = IOAPIC_RTE_VECTOR(32 + i)
+                         | IOAPIC_RTE_DELIVERY_FIXED
+                         | IOAPIC_RTE_POLARITY_HIGH
+                         | IOAPIC_RTE_TRIGGER_EDGE
+                         | IOAPIC_RTE_DEST_MODE_PHYS
+                         | IOAPIC_RTE_MASKED;
+        uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID(bsp_lapic_id);
+        ioapic_write_register(IOAPIC_REDIR_TBL(i), rte_low);
+        ioapic_write_register(IOAPIC_REDIR_TBL_H(i), rte_high);
     }
     
     ioapic_initialized = true;

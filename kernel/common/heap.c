@@ -6,8 +6,10 @@
 #include "heap.h"
 #include "../../include/common.h"
 #include "../../include/debug.h"
+#include "../../include/error.h"
 #include "../core/memory.h"
 #include "../core/config.h"
+#include "../core/interrupts.h"
 
 typedef struct heap_block {
     size_t size;
@@ -18,6 +20,34 @@ typedef struct heap_block {
 
 static heap_block_t* heap_head = NULL;
 static heap_block_t* heap_tail = NULL;
+
+static inline irql_t heap_lock(void)
+{
+    return set_irql(IRQL_HIGH);
+}
+
+static inline void heap_unlock(irql_t old)
+{
+    (void)set_irql(old);
+}
+
+static bool heap_block_in_list(const heap_block_t* needle)
+{
+    if (!needle) {
+        return false;
+    }
+    uint32_t guard = 0;
+    for (heap_block_t* cur = heap_head; cur; cur = cur->next) {
+        if (cur == needle) {
+            return true;
+        }
+        guard++;
+        if (guard > 1000000u) {
+            break;
+        }
+    }
+    return false;
+}
 
 static size_t heap_align(size_t size)
 {
@@ -114,7 +144,9 @@ static heap_block_t* heap_grow(size_t min_size)
 
     void* mem = vmm_alloc_pages((uint32_t)pages, PAGE_FLAG_WRITABLE);
     if (!mem) {
-        return NULL;
+        TRACE_EVENT("oom: heap_grow");
+        memory_oom_inc_heap();
+        PANIC("OOM: heap_grow pages=%u", (unsigned)pages);
     }
 
     heap_block_t* block = (heap_block_t*)mem;
@@ -125,7 +157,12 @@ static heap_block_t* heap_grow(size_t min_size)
     heap_insert_block(block);
 
     if (block->prev && block->prev->free) {
-        heap_merge_if_possible(block->prev);
+        uint8_t* prev_end = (uint8_t*)block->prev + sizeof(heap_block_t) + block->prev->size;
+        if (prev_end == (uint8_t*)block) {
+            heap_merge_if_possible(block->prev);
+            /* Newly inserted block is absorbed into prev. */
+            return block->prev;
+        }
     }
 
     return block;
@@ -134,7 +171,7 @@ static heap_block_t* heap_grow(size_t min_size)
 int heap_init(size_t initial_pages)
 {
     if (heap_head) {
-        return 0;
+        return RDNX_OK;
     }
 
     if (initial_pages == 0) {
@@ -143,7 +180,9 @@ int heap_init(size_t initial_pages)
 
     void* mem = vmm_alloc_pages((uint32_t)initial_pages, PAGE_FLAG_WRITABLE);
     if (!mem) {
-        return -1;
+        TRACE_EVENT("oom: heap_init");
+        memory_oom_inc_heap();
+        PANIC("OOM: heap_init pages=%u", (unsigned)initial_pages);
     }
 
     heap_block_t* block = (heap_block_t*)mem;
@@ -154,12 +193,14 @@ int heap_init(size_t initial_pages)
     heap_head = block;
     heap_tail = block;
 
-    return 0;
+    return RDNX_OK;
 }
 
 void* kmalloc(size_t size)
 {
+    irql_t old = heap_lock();
     if (size == 0) {
+        heap_unlock(old);
         return NULL;
     }
 
@@ -168,24 +209,38 @@ void* kmalloc(size_t size)
     if (!block) {
         block = heap_grow(aligned);
         if (!block) {
+            heap_unlock(old);
             return NULL;
         }
     }
 
     heap_split_block(block, aligned);
     block->free = false;
-    return (uint8_t*)block + sizeof(heap_block_t);
+    void* ptr = (uint8_t*)block + sizeof(heap_block_t);
+    heap_unlock(old);
+    return ptr;
 }
 
 void kfree(void* ptr)
 {
+    irql_t old = heap_lock();
     if (!ptr) {
+        heap_unlock(old);
         return;
     }
 
     heap_block_t* block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
+    if (!heap_block_in_list(block)) {
+        heap_unlock(old);
+        PANIC("kfree: invalid pointer %p block=%p ra=%p", ptr, block, __builtin_return_address(0));
+    }
+    if (block->free) {
+        heap_unlock(old);
+        PANIC("kfree: double free ptr=%p block=%p ra=%p", ptr, block, __builtin_return_address(0));
+    }
     block->free = true;
     heap_merge_if_possible(block);
+    heap_unlock(old);
 }
 
 void* kcalloc(size_t count, size_t size)
