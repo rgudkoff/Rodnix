@@ -18,6 +18,12 @@
 - `include/bsd/sys/tree.h` (минимальные RB-совместимые примитивы).
 - Scheduler runqueue переведен на `TAILQ`.
 - Поиск `task` по `task_id` переведен с линейного обхода на индекс-дерево.
+- Заголовки `include/bsd/sys/*` уже используются в runtime-коде ядра:
+  - `kernel/common/waitq.h`
+  - `kernel/common/scheduler/internal.h`
+- `include/bsd/sys/*` считается рабочим compatibility-layer:
+  любые изменения должны проходить через процесс импорта и фиксироваться в
+  `third_party/bsd/SOURCES.md`.
 
 ## Приоритет P0 (делать в первую очередь)
 

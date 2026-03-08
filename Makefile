@@ -99,10 +99,10 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run iso debug check help check-deps idl userland initrd kernel drivers boot posix-syscalls
+.PHONY: all clean run iso debug check check-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls
 
 # ===== Build =====
-all: posix-syscalls $(KERNEL_BIN)
+all: check-abi posix-syscalls $(KERNEL_BIN)
 	@echo "[+] Built RodNIX kernel (64-bit)"
 
 $(KERNEL_BIN): $(OBJS) link.ld
@@ -230,6 +230,9 @@ clean:
 check-deps:
 	@bash scripts/check-deps.sh
 
+check-abi:
+	@python3 scripts/check_bsd_abi_headers.py
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -254,6 +257,7 @@ help:
 	@echo "  run         - Run kernel in QEMU"
 	@echo "  debug       - Run with debugger support"
 	@echo "  check       - Verify Multiboot2 header"
+	@echo "  check-abi   - Verify userland BSD ABI constants"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
 	@echo ""

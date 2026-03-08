@@ -5,6 +5,8 @@
 - Таблица системных вызовов располагается в POSIX‑слое.
 - Вход из userland через ловушку/переходник (traps).
 - Пользовательские API строятся поверх POSIX‑слоя.
+- Для userland ABI принимаем FreeBSD-совместимый канон для ключевых числовых
+  констант (`errno/fcntl/wait`) с автоматической проверкой на этапе сборки.
 
 ## MVP
 
@@ -45,6 +47,9 @@
 
 - Любой syscall должен быть описан и иметь стабильный номер.
 - Обработчик syscalls не должен зависеть от конкретного драйвера.
+- Публичный userspace ABI использует только `POSIX_SYS_*`.
+- `SYS_*` остаётся как legacy‑пространство для совместимости и не должен
+  пересекаться с активным POSIX диапазоном.
 
 ## Таблица POSIX‑syscalls (фиксированные номера)
 
@@ -66,6 +71,9 @@
 - `13` — `WRITE` — experimental
 - `14` — `UNAME` — stable
 - `15` — `EXIT` — experimental
+- `16` — `EXEC` — experimental
+- `17` — `SPAWN` — experimental
+- `18` — `WAITPID` — experimental
 
 Свободные номера помечаются как `RESERVED` и не переиспользуются.
 
@@ -74,3 +82,6 @@
 - `kernel/common/syscall.c`, `kernel/common/syscall.h`.
 - `kernel/arch/x86_64/idt.c` (IDT entry 0x80).
 - `kernel/arch/x86_64/isr_handlers.c` (dispatch).
+- `userland/include/sys/{errno.h,fcntl.h,wait.h}` (userland ABI constants).
+- `third_party/bsd/freebsd-src/sys/sys/{errno.h,fcntl.h,wait.h}` (канон).
+- `scripts/check_bsd_abi_headers.py` + `userland/Makefile` (`check-bsd-abi`).

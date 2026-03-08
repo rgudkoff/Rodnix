@@ -8,13 +8,15 @@
 Текущая схема запуска:
 - `/bin/init` — launcher (smoke + `exec("/bin/sh")`).
 - `/bin/sh` — интерактивный userspace shell (`sh>`), команды:
-  `help`, `pid`, `hostname`, `motd`, `uname`, `cat <path>`,
+  `help`, `pid`, `hostname`, `cd [path]`, `motd`, `uname`, `cat <path>`,
   `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`.
   Также поддержан запуск внешних программ без `run`:
   - `sh> <program> [args...]` (ищет `/bin/<program>`, если не задан абсолютный путь).
   - Аргументы передаются в userspace как `argc/argv` (MVP, без envp).
 - `/bin/echo` — внешний userspace-бинарник (не built-in shell-команда), запускается:
   - `sh> echo hello world`
+- `/bin/ls`, `/bin/cat`, `/bin/true` — внешние userland-заготовки
+  (MVP-утилиты для модели "не builtin").
 - `/etc` в rootfs:
   - `/etc/motd` — приветствие, печатается `init` при старте;
   - `/etc/hostname` — hostname, читается `init`;
@@ -31,8 +33,20 @@ POSIX syscall номера синхронизируются автоматиче
 
 Минимальный POSIX-совместимый заголовочный слой для userland находится в
 `userland/include`:
-- `unistd.h`, `fcntl.h`, `errno.h`
+- `unistd.h`, `fcntl.h`, `errno.h`, `signal.h`, `mman.h`
+- `dirent.h`, `termios.h`, `time.h`, `pwd.h`, `grp.h`, `limits.h`
 - `sys/types.h`, `sys/fcntl.h`, `sys/wait.h`, `sys/stat.h`, `sys/errno.h`
+- `sys/signal.h`, `sys/mman.h`, `sys/dirent.h`, `sys/termios.h`, `sys/time.h`
+
+Числовые значения ключевых `errno`/`fcntl`/`wait` констант выравниваются с
+FreeBSD-каноном (`third_party/bsd/freebsd-src/sys/sys/*`) и проверяются
+автоматически в `make -C userland` через:
+- `scripts/check_bsd_abi_headers.py`
+
+Модель команд (принята как в FreeBSD):
+- команды, меняющие состояние shell-процесса (например, `cd`) должны быть builtin;
+- файловые/системные утилиты (`ls`, `cat`, `echo`, и т.п.) развиваются как
+  отдельные внешние программы.
 
 План:
 - минимальный loader и переход в ring3;

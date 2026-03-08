@@ -1,7 +1,10 @@
 #ifndef _RODNIX_USERLAND_SYS_ERRNO_H
 #define _RODNIX_USERLAND_SYS_ERRNO_H
 
-/* Keep values aligned with common BSD/POSIX expectations. */
+/*
+ * Minimal errno set aligned to FreeBSD numeric values.
+ * Source of truth: third_party/bsd/freebsd-src/sys/sys/errno.h
+ */
 #define EPERM    1
 #define ENOENT   2
 #define ESRCH    3
@@ -12,7 +15,7 @@
 #define ENOEXEC  8
 #define EBADF    9
 #define ECHILD   10
-#define EAGAIN   11
+#define EDEADLK  11
 #define ENOMEM   12
 #define EACCES   13
 #define EFAULT   14
@@ -29,6 +32,7 @@
 #define EROFS    30
 #define EPIPE    32
 #define ERANGE   34
+#define EAGAIN   35
 #define ENOSYS   78
 
 #endif /* _RODNIX_USERLAND_SYS_ERRNO_H */

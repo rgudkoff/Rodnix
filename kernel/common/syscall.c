@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 static syscall_fn_t syscall_table[SYSCALL_MAX];
+_Static_assert(SYS_WRITE > POSIX_SYS_LAST, "legacy SYS_* ids must not overlap POSIX ids");
 
 static uint64_t sys_nop(uint64_t a1,
                         uint64_t a2,

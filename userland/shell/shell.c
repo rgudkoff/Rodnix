@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_syscall.h"
+#include "dirent.h"
 
 #define SYS_NOP 0
 #define VFS_OPEN_READ 1
@@ -17,6 +18,7 @@
 #define SH_ARG_MAX  16
 #define SH_ANSI_CLEAR  "\x1b[2J"
 #define SH_ANSI_BOTTOM "\x1b[25;1H"
+#define SH_PATH_MAX 256
 
 typedef struct {
     uint32_t abi_version;
@@ -102,6 +104,102 @@ static int parse_line(char* line, char** argv, int max_args)
     return argc;
 }
 
+static char shell_cwd[SH_PATH_MAX] = "/";
+
+static int path_is_abs(const char* p)
+{
+    return p && p[0] == '/';
+}
+
+static void path_normalize(const char* in, char* out, int out_sz)
+{
+    char segs[32][SH_PATH_MAX];
+    int seg_count = 0;
+    int i = 0;
+
+    if (!in || !out || out_sz < 2) {
+        return;
+    }
+
+    while (in[i] == '/') {
+        i++;
+    }
+    while (in[i] != '\0') {
+        char seg[SH_PATH_MAX];
+        int slen = 0;
+        while (in[i] != '\0' && in[i] != '/' && slen + 1 < SH_PATH_MAX) {
+            seg[slen++] = in[i++];
+        }
+        seg[slen] = '\0';
+        while (in[i] == '/') {
+            i++;
+        }
+
+        if (slen == 0 || (slen == 1 && seg[0] == '.')) {
+            continue;
+        }
+        if (slen == 2 && seg[0] == '.' && seg[1] == '.') {
+            if (seg_count > 0) {
+                seg_count--;
+            }
+            continue;
+        }
+        if (seg_count < 32) {
+            for (int k = 0; k <= slen; k++) {
+                segs[seg_count][k] = seg[k];
+            }
+            seg_count++;
+        }
+    }
+
+    int p = 0;
+    out[p++] = '/';
+    for (int s = 0; s < seg_count; s++) {
+        int k = 0;
+        while (segs[s][k] != '\0') {
+            if (p + 1 < out_sz) {
+                out[p++] = segs[s][k];
+            }
+            k++;
+        }
+        if (s + 1 < seg_count && p + 1 < out_sz) {
+            out[p++] = '/';
+        }
+    }
+    if (p <= 0) {
+        p = 1;
+        out[0] = '/';
+    }
+    out[p] = '\0';
+}
+
+static void resolve_path(const char* in, char* out, int out_sz)
+{
+    char tmp[SH_PATH_MAX];
+    int p = 0;
+
+    if (!in || !out || out_sz < 2) {
+        return;
+    }
+
+    if (path_is_abs(in)) {
+        path_normalize(in, out, out_sz);
+        return;
+    }
+
+    for (int i = 0; shell_cwd[i] != '\0' && p + 1 < (int)sizeof(tmp); i++) {
+        tmp[p++] = shell_cwd[i];
+    }
+    if (p == 0 || tmp[p - 1] != '/') {
+        tmp[p++] = '/';
+    }
+    for (int i = 0; in[i] != '\0' && p + 1 < (int)sizeof(tmp); i++) {
+        tmp[p++] = in[i];
+    }
+    tmp[p] = '\0';
+    path_normalize(tmp, out, out_sz);
+}
+
 static int read_line(char* out, int out_len)
 {
     int pos = 0;
@@ -168,28 +266,6 @@ static void cmd_uname(void)
     (void)write_str(" ");
     (void)write_str(u.machine);
     (void)write_str("\n");
-}
-
-static void cmd_cat(const char* path)
-{
-    char buf[64];
-    if (!path || path[0] == '\0') {
-        (void)write_str("cat: path required\n");
-        return;
-    }
-    long fd = posix_open(path, VFS_OPEN_READ);
-    if (fd < 0) {
-        (void)write_str("cat: open failed\n");
-        return;
-    }
-    for (;;) {
-        long n = posix_read((int)fd, buf, sizeof(buf));
-        if (n <= 0) {
-            break;
-        }
-        (void)posix_write(FD_STDOUT, buf, (uint64_t)n);
-    }
-    (void)posix_close((int)fd);
 }
 
 static void cmd_hostname(void)
@@ -261,11 +337,28 @@ static int cmd_run(int argc, char** argv, int verbose)
 {
     int status = 0;
     const char* path = (argc >= 1) ? argv[0] : 0;
+    const char* spawn_path = path;
+    const char* spawn_argv[SH_ARG_MAX + 1];
+    char resolved[SH_PATH_MAX];
     if (!path || path[0] == '\0') {
         (void)write_str("run: path required\n");
         return -1;
     }
-    long pid = posix_spawn(path, (const char* const*)argv);
+    for (int i = 0; i < SH_ARG_MAX + 1; i++) {
+        spawn_argv[i] = 0;
+    }
+    for (int i = 0; i < argc && i < SH_ARG_MAX; i++) {
+        spawn_argv[i] = argv[i];
+    }
+    if (argc < SH_ARG_MAX) {
+        spawn_argv[argc] = 0;
+    }
+    if (!path_is_abs(path)) {
+        resolve_path(path, resolved, (int)sizeof(resolved));
+        spawn_path = resolved;
+        spawn_argv[0] = resolved;
+    }
+    long pid = posix_spawn(spawn_path, spawn_argv);
     if (pid < 0) {
         return -1;
     }
@@ -290,9 +383,31 @@ static int cmd_run(int argc, char** argv, int verbose)
     return 0;
 }
 
+static int cmd_cd(int argc, char** argv)
+{
+    struct dirent ents[1];
+    char resolved[SH_PATH_MAX];
+    const char* in = "/";
+    if (argc >= 2 && argv[1] && argv[1][0] != '\0') {
+        in = argv[1];
+    }
+    resolve_path(in, resolved, (int)sizeof(resolved));
+    long n = posix_readdir(resolved, ents, sizeof(ents));
+    if (n < 0) {
+        (void)write_str("cd: no such directory\n");
+        return -1;
+    }
+    for (int i = 0; resolved[i] != '\0' && i + 1 < SH_PATH_MAX; i++) {
+        shell_cwd[i] = resolved[i];
+        shell_cwd[i + 1] = '\0';
+    }
+    return 0;
+}
+
 static int cmd_autorun(int argc, char** argv)
 {
-    char path_buf[SH_LINE_MAX];
+    char path_buf[SH_PATH_MAX];
+    char resolved[SH_PATH_MAX];
     if (argc <= 0 || !argv || !argv[0]) {
         return -1;
     }
@@ -306,6 +421,8 @@ static int cmd_autorun(int argc, char** argv)
     }
 
     if (has_slash) {
+        resolve_path(argv[0], resolved, (int)sizeof(resolved));
+        argv[0] = resolved;
         return cmd_run(argc, argv, 0);
     }
 
@@ -330,10 +447,11 @@ static void cmd_help(void)
     (void)write_str("  help          - show this help\n");
     (void)write_str("  pid           - show current pid\n");
     (void)write_str("  hostname      - print /etc/hostname\n");
+    (void)write_str("  cd [path]     - change shell working directory\n");
     (void)write_str("  motd          - print /etc/motd\n");
     (void)write_str("  uname         - show system information\n");
-    (void)write_str("  ls            - placeholder (readdir syscall pending)\n");
-    (void)write_str("  cat <path>    - print file content\n");
+    (void)write_str("  ls [path]     - external /bin/ls\n");
+    (void)write_str("  cat <path>    - external /bin/cat\n");
     (void)write_str("  smoke         - run basic POSIX smoke check\n");
     (void)write_str("  ttytest       - interactive tty line test\n");
     (void)write_str("  run <path>    - spawn program and wait for exit\n");
@@ -380,14 +498,42 @@ int main(void)
             }
         } else if (str_eq(argv[0], "hostname")) {
             cmd_hostname();
+        } else if (str_eq(argv[0], "cd")) {
+            (void)cmd_cd(argc, argv);
         } else if (str_eq(argv[0], "motd")) {
-            cmd_cat("/etc/motd");
+            char* av[3];
+            av[0] = "/bin/cat";
+            av[1] = "/etc/motd";
+            av[2] = 0;
+            (void)cmd_run(2, av, 0);
         } else if (str_eq(argv[0], "uname")) {
             cmd_uname();
         } else if (str_eq(argv[0], "ls")) {
-            (void)write_str("ls: not implemented yet in userspace (readdir syscall pending)\n");
+            char path_buf[SH_PATH_MAX];
+            char* av[3];
+            av[0] = "/bin/ls";
+            if (argc >= 2 && argv[1]) {
+                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
+                av[1] = path_buf;
+                av[2] = 0;
+                (void)cmd_run(2, av, 0);
+            } else {
+                av[1] = shell_cwd;
+                av[2] = 0;
+                (void)cmd_run(2, av, 0);
+            }
         } else if (str_eq(argv[0], "cat")) {
-            cmd_cat((argc >= 2) ? argv[1] : 0);
+            char path_buf[SH_PATH_MAX];
+            char* av[3];
+            if (argc < 2 || !argv[1]) {
+                (void)write_str("cat: path required\n");
+            } else {
+                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
+                av[0] = "/bin/cat";
+                av[1] = path_buf;
+                av[2] = 0;
+                (void)cmd_run(2, av, 0);
+            }
         } else if (str_eq(argv[0], "smoke")) {
             run_smoke();
         } else if (str_eq(argv[0], "ttytest")) {
@@ -404,7 +550,9 @@ int main(void)
             if (argc < 2) {
                 (void)write_str("exec: path required\n");
             } else {
-                long ret = posix_exec(argv[1]);
+                char path_buf[SH_PATH_MAX];
+                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
+                long ret = posix_exec(path_buf);
                 if (ret < 0) {
                     (void)write_str("exec: failed\n");
                 }

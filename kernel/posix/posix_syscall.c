@@ -16,12 +16,59 @@
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];
 #define POSIX_PATH_MAX 256
 #define POSIX_ARG_MAX 16
+#define POSIX_DIRENT_NAME_MAX 255
+#define POSIX_DT_UNKNOWN 0
+#define POSIX_DT_DIR 4
+#define POSIX_DT_REG 8
 
 typedef struct {
     char* path;
     int argc;
     char* argv[POSIX_ARG_MAX + 1];
 } posix_spawn_args_t;
+
+typedef struct {
+    uint64_t d_fileno;
+    uint16_t d_reclen;
+    uint8_t d_type;
+    uint8_t d_namlen;
+    char d_name[POSIX_DIRENT_NAME_MAX + 1];
+} posix_dirent_u_t;
+
+typedef struct {
+    posix_dirent_u_t* out;
+    size_t cap_bytes;
+    size_t used_bytes;
+    uint64_t next_ino;
+} posix_readdir_ctx_t;
+
+static void posix_readdir_cb(const vfs_node_t* node, void* ctx)
+{
+    posix_readdir_ctx_t* c = (posix_readdir_ctx_t*)ctx;
+    if (!node || !c || !c->out) {
+        return;
+    }
+    if (c->used_bytes + sizeof(posix_dirent_u_t) > c->cap_bytes) {
+        return;
+    }
+
+    posix_dirent_u_t* de = (posix_dirent_u_t*)((uint8_t*)c->out + c->used_bytes);
+    memset(de, 0, sizeof(*de));
+    de->d_fileno = c->next_ino++;
+    de->d_reclen = (uint16_t)sizeof(*de);
+    de->d_type = (node->type == VFS_NODE_DIR) ? POSIX_DT_DIR :
+                 (node->type == VFS_NODE_FILE) ? POSIX_DT_REG : POSIX_DT_UNKNOWN;
+
+    size_t nlen = strlen(node->name);
+    if (nlen > POSIX_DIRENT_NAME_MAX) {
+        nlen = POSIX_DIRENT_NAME_MAX;
+    }
+    memcpy(de->d_name, node->name, nlen);
+    de->d_name[nlen] = '\0';
+    de->d_namlen = (uint8_t)nlen;
+
+    c->used_bytes += sizeof(*de);
+}
 
 static int posix_bind_fd_to_console(task_t* task, int fd, int open_flags)
 {
@@ -754,6 +801,45 @@ static uint64_t posix_uname(uint64_t a1,
     strncpy(u->version, RODNIX_VERSION, sizeof(u->version) - 1);
     strncpy(u->machine, X86_64_MACHINE, sizeof(u->machine) - 1);
     return (uint64_t)RDNX_OK;
+}
+
+static uint64_t posix_readdir(uint64_t a1,
+                              uint64_t a2,
+                              uint64_t a3,
+                              uint64_t a4,
+                              uint64_t a5,
+                              uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    const char* user_path = (const char*)(uintptr_t)a1;
+    void* user_buf = (void*)(uintptr_t)a2;
+    size_t user_len = (size_t)a3;
+    char path_buf[POSIX_PATH_MAX];
+
+    if (user_len < sizeof(posix_dirent_u_t)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!posix_is_user_range(user_buf, user_len)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (posix_copy_user_cstr(path_buf, sizeof(path_buf), user_path) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    posix_readdir_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.out = (posix_dirent_u_t*)user_buf;
+    ctx.cap_bytes = user_len;
+    ctx.next_ino = 1;
+
+    int rc = vfs_list_dir(path_buf, posix_readdir_cb, &ctx);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
+    }
+    return (uint64_t)ctx.used_bytes;
 }
 
 void posix_syscall_init(void)

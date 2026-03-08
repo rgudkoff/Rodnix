@@ -25,10 +25,15 @@
 - По умолчанию bootstrap идёт через userspace `init` (не через kernel shell).
 - Userspace разделён на 2 программы:
   - `/bin/init` — launcher: smoke + `exec("/bin/sh")`;
-  - `/bin/sh` — интерактивный shell (`help`, `pid`, `hostname`, `motd`,
-    `uname`, `cat`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
+  - `/bin/sh` — интерактивный shell (`help`, `pid`, `hostname`, `cd [path]`,
+    `motd`, `uname`, `cat`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
   - shell умеет запускать внешние программы напрямую:
     `<program> [args...]` (по умолчанию как `/bin/<program>`, либо абсолютный путь).
+  - принята модель FreeBSD по командам shell:
+    - stateful-команды (минимум `cd`) остаются builtin в `sh`;
+    - утилиты (`ls`, `cat`, `echo`, и др.) развиваются как отдельные
+      userland-бинарники в `/bin`/`/usr/bin`.
+  - В rootfs добавлены внешние заготовки утилит `/bin/ls`, `/bin/cat`, `/bin/true`.
 - В rootfs введён базовый `/etc`:
   - `/etc/motd` печатается `init` при старте;
   - `/etc/hostname` читается `init` и логируется;

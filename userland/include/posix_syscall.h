@@ -60,4 +60,9 @@ static inline long posix_waitpid(long pid, int* status)
     return rdnx_syscall6(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status, 0, 0, 0, 0);
 }
 
+static inline long posix_readdir(const char* path, void* entries, uint64_t len)
+{
+    return rdnx_syscall6(POSIX_SYS_READDIR, (long)(uintptr_t)path, (long)(uintptr_t)entries, (long)len, 0, 0, 0);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

@@ -26,3 +26,4 @@
 16 exec
 17 spawn
 18 waitpid
+19 readdir

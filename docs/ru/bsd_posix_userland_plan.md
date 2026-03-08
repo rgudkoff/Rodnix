@@ -12,6 +12,14 @@
 
 Важно: этот baseline пока не подключен в сборку Rodnix напрямую.
 
+Текущее состояние интеграции (выполнено):
+- В `userland/include/sys/*` поднят минимальный POSIX-слой
+  (`errno/fcntl/wait/types/stat`) с выравниванием ключевых числовых
+  констант по FreeBSD.
+- В `userland/Makefile` добавлен обязательный шаг `check-bsd-abi`, который
+  валидирует соответствие `errno/fcntl/wait` против
+  `third_party/bsd/freebsd-src/sys/sys/*`.
+
 ## Почему не подключаем сразу
 
 - Полный `bin/sh` и libc в BSD опираются на широкий слой ABI/CRT/libc.
@@ -24,6 +32,9 @@
 - выровнять сигнатуры и коды ошибок в syscall ABI;
 - расширить ядро до минимального набора `open/read/write/close/fstat/lseek/mmap/brk/sigaction`.
 
+Статус: частично выполнено (числовые константы userland ABI по
+`errno/fcntl/wait` синхронизированы и проверяются автоматически).
+
 2. Userland libc shim:
 - ввести промежуточный `libc-lite` с BSD-совместимыми заголовками;
 - подключить `errno`, `fcntl`, `sys/types`, `sys/stat`, `sys/wait` и базовые string/stdio wrappers.
@@ -32,6 +43,12 @@
 - сначала перенести лексер/парсер как отдельный таргет;
 - затем подключить builtins и execution path;
 - только после этого сделать BSD-shell `sh` default в rootfs.
+
+Shell/utility policy (как в FreeBSD):
+- `cd` и другие команды, меняющие состояние самого shell-процесса, остаются builtin;
+- `ls/cat/echo/...` — отдельные исполняемые утилиты в userland;
+- не дублировать без необходимости одну и ту же команду как builtin и как
+  внешний бинарник.
 
 ## Что нужно дополнительно скачать из FreeBSD
 
