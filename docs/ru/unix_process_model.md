@@ -15,9 +15,9 @@ RodNIX v1: **Unix-like simplified model**.
 
 - `spawn` — primary process creation primitive.
 - `exec` — replace current process image.
-- `fork` — intentionally absent in v1.
+- `fork` — доступен в v1 как COW-based clone.
 
-Важно: это не "почти классический Unix", а явно ограниченная модель v1.
+Важно: это всё ещё ограниченная модель v1 (без полной POSIX-complete семантики).
 
 ## 2. Контракт `spawn`
 
@@ -119,10 +119,11 @@ Path semantics:
 - `ZOMBIE`
 - `TERMINATED`
 
-## 7. Совместимость без `fork`: стратегия
+## 7. Совместимость и эволюция `fork/spawn`
 
-Отсутствие `fork` в v1 признано явно. Для практической совместимости shell и
-userland развиваем расширенный `spawn` (attrs + file actions), чтобы покрывать:
+`fork` в v1 реализован через clone `vm_map` + COW entries (shared object + write-fault split).
+Для практической совместимости shell и userland сохраняем развитие расширенного
+`spawn` (attrs + file actions), чтобы покрывать:
 
 - redirection;
 - pipelines;

@@ -97,6 +97,11 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
     return (pid_t)wr;
 }
 
+static inline pid_t fork(void)
+{
+    return (pid_t)posix_fork();
+}
+
 static inline void _exit(int status)
 {
     (void)posix_exit(status);

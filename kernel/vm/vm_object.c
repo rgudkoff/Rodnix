@@ -32,7 +32,10 @@ void vm_object_unref(vm_object_t* obj)
         obj->ref_count--;
     }
     if (obj->ref_count == 0) {
+        if (obj->pager_private) {
+            kfree(obj->pager_private);
+            obj->pager_private = NULL;
+        }
         kfree(obj);
     }
 }
-

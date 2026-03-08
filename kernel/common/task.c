@@ -417,6 +417,75 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     return thread;
 }
 
+thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
+{
+    if (!task || !frame) {
+        return NULL;
+    }
+
+    thread_t* thread = (thread_t*)kmalloc(sizeof(thread_t));
+    if (!thread) {
+        return NULL;
+    }
+
+    void* stack = task_kernel_stack_acquire();
+    if (!stack) {
+        kfree(thread);
+        return NULL;
+    }
+
+    uintptr_t sp = (uintptr_t)stack + KERNEL_STACK_SIZE;
+    sp &= ~(uintptr_t)0xF;
+    sp -= 8;
+    sp -= sizeof(interrupt_frame_t);
+    interrupt_frame_t* child_frame = (interrupt_frame_t*)sp;
+    *child_frame = *frame;
+    child_frame->rax = 0; /* fork() return in child */
+
+    thread->thread_id = next_thread_id++;
+    thread->task = task;
+    thread->context.stack_pointer = (uint64_t)(uintptr_t)child_frame;
+    thread->context.program_counter = child_frame->rip;
+    thread->state = THREAD_STATE_NEW;
+    thread->sched_class = SCHED_CLASS_TIMESHARE;
+    thread->priority = PRIORITY_DEFAULT;
+    thread->base_priority = PRIORITY_DEFAULT;
+    thread->dyn_priority = PRIORITY_DEFAULT;
+    thread->inherited_priority = PRIORITY_DEFAULT;
+    thread->has_inherited = 0;
+    thread->inherit_depth = 0;
+    for (size_t i = 0; i < 4; i++) {
+        thread->inherit_stack[i] = PRIORITY_DEFAULT;
+    }
+    thread->sched_usage = 0;
+    thread->last_sleep_tick = 0;
+    thread->entry = NULL;
+    thread->arg = NULL;
+    thread->stack = stack;
+    thread->stack_size = KERNEL_STACK_SIZE;
+    thread->sched_link.tqe_next = NULL;
+    thread->sched_link.tqe_prev = NULL;
+    thread->ready_queued = 0;
+    thread->wait_link.tqe_next = NULL;
+    thread->wait_link.tqe_prev = NULL;
+    thread->wait_timeout_link.tqe_next = NULL;
+    thread->wait_timeout_link.tqe_prev = NULL;
+    thread->waitq_owner = NULL;
+    thread->wait_deadline_tick = 0;
+    thread->wait_timeout_armed = 0;
+    thread->wait_timed_out = 0;
+    thread->joiner = NULL;
+    thread->reap_queued = 0;
+    thread->reap_after_tick = 0;
+    thread->arch_specific = NULL;
+    task->thread_count++;
+    if (!task->main_thread) {
+        task->main_thread = thread;
+    }
+
+    return thread;
+}
+
 void thread_destroy(thread_t* thread)
 {
     if (!thread) {

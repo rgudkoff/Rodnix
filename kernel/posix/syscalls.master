@@ -32,3 +32,4 @@
 22 mmap
 23 munmap
 24 brk
+25 fork

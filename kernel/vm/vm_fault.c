@@ -73,6 +73,18 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
         if (!phys) {
             return RDNX_E_NOMEM;
         }
+        if (e->object && e->object->type == VM_OBJECT_FILE && e->object->pager_private) {
+            vm_file_backing_t* fb = (vm_file_backing_t*)e->object->pager_private;
+            if (fb->data && fb->size > 0) {
+                uint64_t rel = va - e->start;
+                uint64_t off = fb->file_offset + e->object_offset + rel;
+                if (off < fb->size) {
+                    uint64_t avail = fb->size - off;
+                    uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
+                    memcpy(X86_64_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
+                }
+            }
+        }
         int rc = paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,
                                           va,
                                           phys,
@@ -85,4 +97,3 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
 
     return RDNX_E_DENIED;
 }
-

@@ -89,6 +89,7 @@ polling-циклов: вызов может уступить квант план
 - `22` — `MMAP` — experimental
 - `23` — `MUNMAP` — experimental
 - `24` — `BRK` — experimental
+- `25` — `FORK` — experimental
 
 Свободные номера помечаются как `RESERVED` и не переиспользуются.
 

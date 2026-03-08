@@ -15,9 +15,14 @@ typedef struct vm_object {
     void* pager_private;
 } vm_object_t;
 
+typedef struct vm_file_backing {
+    const uint8_t* data;
+    uint64_t size;
+    uint64_t file_offset;
+} vm_file_backing_t;
+
 vm_object_t* vm_object_create(vm_object_type_t type, uint64_t size);
 void vm_object_ref(vm_object_t* obj);
 void vm_object_unref(vm_object_t* obj);
 
 #endif /* _RODNIX_VM_OBJECT_H */
-

@@ -28,8 +28,9 @@ enum {
     POSIX_SYS_MMAP = 22,
     POSIX_SYS_MUNMAP = 23,
     POSIX_SYS_BRK = 24,
+    POSIX_SYS_FORK = 25,
 };
 
-#define POSIX_SYS_LAST 24
+#define POSIX_SYS_LAST 25
 
 #endif /* _RODNIX_POSIX_SYSNUMS_H */

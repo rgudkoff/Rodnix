@@ -103,4 +103,9 @@ static inline long posix_brk(void* new_break)
     return rdnx_syscall1(POSIX_SYS_BRK, (long)(uintptr_t)new_break);
 }
 
+static inline long posix_fork(void)
+{
+    return rdnx_syscall0(POSIX_SYS_FORK);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

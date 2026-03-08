@@ -18,7 +18,9 @@
   - `vm_pager` (zero-fill страница для demand path),
   - `vm_fault_handle` (user page fault recheck/map path).
 - Минимальные POSIX точки входа:
-  - `mmap/munmap/brk` (анонимная память, lazy allocation на page fault).
+  - `mmap/munmap/brk` (анонимная + file-backed память, lazy allocation на page fault).
+- `fork` v1 через clone `vm_map` и COW-entries:
+  - shared object + write-fault split для private writable mappings.
 
 ## Что планируется (кратко)
 

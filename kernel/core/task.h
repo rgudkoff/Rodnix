@@ -15,6 +15,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+struct interrupt_frame;
+
 /* ============================================================================
  * Состояние задачи
  * ============================================================================ */
@@ -262,6 +264,7 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
  * @return Указатель на поток или NULL при ошибке
  */
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg);
+thread_t* thread_create_user_clone(task_t* task, const struct interrupt_frame* frame);
 
 /**
  * Удаление потока
