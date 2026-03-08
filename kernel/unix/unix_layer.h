@@ -37,11 +37,19 @@ typedef struct {
     char d_name[UNIX_DIRENT_NAME_MAX + 1];
 } unix_dirent_u_t;
 
+typedef struct {
+    uint32_t st_mode;
+    int64_t st_size;
+} unix_stat_u_t;
+
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
 /* CT-007/CT-008 */
 uint64_t unix_fs_close(uint64_t fd);
 uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
 uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
+uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence);
+uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
+uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
 /* CT-003 target */
 uint64_t unix_fs_exec(uint64_t user_path_ptr);

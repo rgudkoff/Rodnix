@@ -426,9 +426,10 @@ bool input_has_char(void)
     }
 #endif
 
-    /* Всегда делаем один polling-pass как fallback:
-     * если IRQ работает, порт уже пуст и дубликатов не будет. */
-    input_poll_keyboard_ps2();
+    /* Poll PS/2 only when fallback mode is enabled. */
+    if (input_polling_enabled) {
+        input_poll_keyboard_ps2();
+    }
     
     /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);
@@ -461,9 +462,10 @@ int input_read_char(void)
     }
 #endif
 
-    /* Всегда делаем один polling-pass как fallback:
-     * если IRQ работает, порт уже пуст и дубликатов не будет. */
-    input_poll_keyboard_ps2();
+    /* Poll PS/2 only when fallback mode is enabled. */
+    if (input_polling_enabled) {
+        input_poll_keyboard_ps2();
+    }
     
     /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
     extern void input_process_queue(void);

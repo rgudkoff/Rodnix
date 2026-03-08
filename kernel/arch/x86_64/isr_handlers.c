@@ -174,6 +174,7 @@ static void safe_vga_hex(uint8_t row, uint8_t col, uint64_t value, uint8_t color
 
 static interrupt_frame_t* handle_syscall(interrupt_frame_t* regs)
 {
+    syscall_account_int80();
     thread_t* cur = thread_get_current();
     void* prev_arch = NULL;
     if (cur) {

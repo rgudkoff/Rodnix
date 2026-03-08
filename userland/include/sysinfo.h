@@ -45,6 +45,9 @@ typedef struct rodnix_sysinfo {
     uint8_t ioapic_available;
     uint8_t reserved0;
     uint8_t reserved1;
+
+    uint64_t syscall_int80_count;
+    uint64_t syscall_fast_count;
 } rodnix_sysinfo_t;
 
 #endif /* _RODNIX_USERLAND_SYSINFO_H */

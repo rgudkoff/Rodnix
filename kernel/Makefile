@@ -39,6 +39,7 @@ KERNEL_C_SRCS += \
 	kernel/arch/x86_64/interrupts.c \
 	kernel/arch/x86_64/idt.c \
 	kernel/arch/x86_64/pic.c \
+	kernel/arch/x86_64/lapic_access.c \
 	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
@@ -48,6 +49,7 @@ KERNEL_C_SRCS += \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
+	kernel/arch/x86_64/syscall_fast.c \
 	kernel/arch/x86_64/usermode.c \
 	kernel/net/net.c \
 	kernel/net/socket.c \
@@ -64,4 +66,5 @@ KERNEL_C_SRCS += \
 include kernel/fs/Makefile
 
 KERNEL_ASM_SRCS += \
-	kernel/arch/x86_64/isr_stubs.S
+	kernel/arch/x86_64/isr_stubs.S \
+	kernel/arch/x86_64/syscall_fast_entry.S

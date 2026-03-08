@@ -61,6 +61,7 @@ typedef struct {
 
 static gdt_table_t gdt;
 static tss64_t tss;
+uint64_t g_tss_rsp0_shadow = 0;
 
 static void gdt_set_entry(gdt_entry_t* e, uint32_t base, uint32_t limit, uint8_t access, uint8_t gran)
 {
@@ -118,4 +119,5 @@ void gdt_init(void)
 void tss_set_rsp0(uint64_t rsp0)
 {
     tss.rsp0 = rsp0;
+    g_tss_rsp0_shadow = rsp0;
 }

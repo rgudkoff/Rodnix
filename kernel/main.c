@@ -19,12 +19,18 @@
 #include "common/idl_demo.h"
 #include "core/boot.h"
 #include "arch/x86_64/config.h"
+#include "arch/x86_64/syscall_fast.h"
 #include "../include/common.h"
 
 #define USER_INIT_PATH_MAX 128
 
 static char g_user_init_path[USER_INIT_PATH_MAX] = "/bin/init";
 static bool g_timer_use_apic = false;
+
+const char* kernel_timer_source_name(void)
+{
+    return g_timer_use_apic ? "lapic" : "pit";
+}
 
 static bool bootarg_has_token(const char* cmdline, const char* token)
 {
@@ -317,6 +323,11 @@ void kmain(uint32_t magic, void* mbi)
     bootlog_mark("syscall", "enter");
     __asm__ volatile ("" ::: "memory");
     syscall_init();
+    if (x86_64_syscall_fast_init() == 0) {
+        kputs("[INIT-8.5a] syscall/sysret fast path enabled\n");
+    } else {
+        kputs("[INIT-8.5a] syscall/sysret fast path init failed, int 0x80 fallback\n");
+    }
     bootlog_mark("syscall", "done");
     __asm__ volatile ("" ::: "memory");
 
@@ -486,14 +497,37 @@ void kmain(uint32_t magic, void* mbi)
     /* Validate timer progress and fallback to PIT if APIC timer is not ticking. */
     if (g_timer_use_apic) {
         extern uint64_t scheduler_get_ticks(void);
+        extern uint32_t apic_timer_get_ticks(void);
+        extern uint32_t apic_timer_get_frequency(void);
+        extern uint32_t apic_timer_get_lvt_raw(void);
+        extern uint32_t apic_timer_get_initial_count(void);
+        extern uint32_t apic_timer_get_current_count(void);
         extern int pit_init(uint32_t frequency);
         uint64_t t0 = scheduler_get_ticks();
+        uint32_t ap0 = apic_timer_get_ticks();
+        uint32_t lvt0 = apic_timer_get_lvt_raw();
+        uint32_t init0 = apic_timer_get_initial_count();
+        uint32_t cur0 = apic_timer_get_current_count();
         for (volatile int i = 0; i < 5000000; i++) {
             __asm__ volatile ("pause");
         }
         uint64_t t1 = scheduler_get_ticks();
-        if (t1 <= t0) {
+        uint32_t ap1 = apic_timer_get_ticks();
+        uint32_t lvt1 = apic_timer_get_lvt_raw();
+        uint32_t init1 = apic_timer_get_initial_count();
+        uint32_t cur1 = apic_timer_get_current_count();
+        bool apic_progress = (ap1 > ap0) || (cur1 != cur0);
+        bool sched_progress = (t1 > t0);
+        if (!apic_progress && !sched_progress) {
             kputs("[INIT-10.6] APIC timer stalled, fallback to PIT\n");
+            kprintf("[INIT-10.6.1] LAPIC diag: sched=%llu->%llu apic_ticks=%u->%u hz=%u\n",
+                    (unsigned long long)t0,
+                    (unsigned long long)t1,
+                    ap0,
+                    ap1,
+                    apic_timer_get_frequency());
+            kprintf("[INIT-10.6.2] LAPIC diag: lvt=%x->%x init=%u->%u cur=%u->%u\n",
+                    lvt0, lvt1, init0, init1, cur0, cur1);
             apic_timer_stop();
             if (pit_init(100) == 0) {
                 pit_enable();

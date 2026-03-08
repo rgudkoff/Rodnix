@@ -44,6 +44,11 @@ typedef struct vfs_file {
     bool writable;
 } vfs_file_t;
 
+typedef struct vfs_stat {
+    uint32_t mode;
+    uint64_t size;
+} vfs_stat_t;
+
 typedef void (*vfs_list_cb_t)(const vfs_node_t* node, void* ctx);
 typedef int (*vfs_mount_fn_t)(const char* source, vfs_node_t** out_root);
 
@@ -85,3 +90,6 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file);
 int vfs_close(vfs_file_t* file);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
+int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);
+int vfs_stat(const char* path, vfs_stat_t* out_stat);
+int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat);

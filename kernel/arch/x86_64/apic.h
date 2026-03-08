@@ -32,10 +32,12 @@ void apic_timer_start(void);
 void apic_timer_stop(void);
 uint32_t apic_timer_get_ticks(void);
 uint32_t apic_timer_get_frequency(void);
+uint32_t apic_timer_get_lvt_raw(void);
+uint32_t apic_timer_get_initial_count(void);
+uint32_t apic_timer_get_current_count(void);
 
 /* APIC IRQ management */
 void apic_enable_irq(uint8_t irq);
 void apic_disable_irq(uint8_t irq);
 
 #endif /* _RODNIX_ARCH_X86_64_APIC_H */
-

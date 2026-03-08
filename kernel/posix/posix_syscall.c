@@ -3,6 +3,7 @@
 #include "../core/cpu.h"
 #include "../core/memory.h"
 #include "../common/security.h"
+#include "../common/syscall.h"
 #include "../fabric/fabric.h"
 #include "../fabric/device/device.h"
 #include "../fabric/bus/pci.h"
@@ -260,6 +261,47 @@ static uint64_t posix_fcntl(uint64_t a1,
     return unix_fs_fcntl(a1, a2, a3);
 }
 
+static uint64_t posix_stat(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_stat(a1, a2);
+}
+
+static uint64_t posix_fstat(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_fstat(a1, a2);
+}
+
+static uint64_t posix_lseek(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_lseek(a1, a2, a3);
+}
+
 static uint64_t posix_read(uint64_t a1,
                            uint64_t a2,
                            uint64_t a3,
@@ -483,6 +525,9 @@ typedef struct rodnix_sysinfo {
     uint8_t ioapic_available;
     uint8_t reserved0;
     uint8_t reserved1;
+
+    uint64_t syscall_int80_count;
+    uint64_t syscall_fast_count;
 } rodnix_sysinfo_t;
 
 typedef struct rdnx_timespec {
@@ -715,6 +760,8 @@ static uint64_t posix_sysinfo(uint64_t a1,
     extern bool ioapic_is_available(void);
     out->apic_available = apic_is_available() ? 1u : 0u;
     out->ioapic_available = ioapic_is_available() ? 1u : 0u;
+    out->syscall_int80_count = syscall_get_int80_count();
+    out->syscall_fast_count = syscall_get_fast_count();
 
     return (uint64_t)RDNX_OK;
 }
@@ -732,7 +779,8 @@ static uint64_t posix_clock_gettime(uint64_t a1,
     (void)a6;
     enum {
         CLOCK_REALTIME = 0,
-        CLOCK_MONOTONIC = 4
+        CLOCK_MONOTONIC = 4,
+        CLOCK_MONOTONIC_ALT = 1
     };
     int clock_id = (int)a1;
     rdnx_timespec_t* out = (rdnx_timespec_t*)(uintptr_t)a2;
@@ -740,12 +788,13 @@ static uint64_t posix_clock_gettime(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     uint64_t us = 0;
-    if (clock_id == CLOCK_MONOTONIC) {
+    if (clock_id == CLOCK_MONOTONIC || clock_id == CLOCK_MONOTONIC_ALT) {
         us = console_get_uptime_us();
     } else if (clock_id == CLOCK_REALTIME) {
         us = console_get_realtime_us();
     } else {
-        return (uint64_t)RDNX_E_INVALID;
+        /* Be permissive for early userland ABI drift: treat unknown clocks as monotonic. */
+        us = console_get_uptime_us();
     }
     out->tv_sec = (int64_t)(us / 1000000ULL);
     out->tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);

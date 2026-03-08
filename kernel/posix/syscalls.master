@@ -38,3 +38,6 @@
 28 fabricevents
 29 sysinfo
 30 clock_gettime
+31 stat
+32 fstat
+33 lseek

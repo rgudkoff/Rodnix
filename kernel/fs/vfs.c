@@ -730,6 +730,74 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
     return (int)size;
 }
 
+int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos)
+{
+    uint64_t base;
+    uint64_t end;
+    int64_t next;
+
+    if (!file || !file->node || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+    if (file->node->inode->flags & VFS_INODE_CONSOLE) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    base = 0;
+    end = (uint64_t)file->node->inode->size;
+    switch (whence) {
+        case 0: /* SEEK_SET */
+            base = 0;
+            break;
+        case 1: /* SEEK_CUR */
+            base = (uint64_t)file->pos;
+            break;
+        case 2: /* SEEK_END */
+            base = end;
+            break;
+        default:
+            return RDNX_E_INVALID;
+    }
+
+    next = (int64_t)base + off;
+    if (next < 0) {
+        return RDNX_E_INVALID;
+    }
+    file->pos = (size_t)next;
+    if (out_pos) {
+        *out_pos = (uint64_t)file->pos;
+    }
+    return RDNX_OK;
+}
+
+int vfs_stat(const char* path, vfs_stat_t* out_stat)
+{
+    vfs_node_t* node;
+    if (!path || !out_stat || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    node = vfs_lookup(path);
+    if (!node || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    memset(out_stat, 0, sizeof(*out_stat));
+    out_stat->mode = (node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->size = (uint64_t)node->inode->size;
+    return RDNX_OK;
+}
+
+int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat)
+{
+    if (!file || !file->node || !file->node->inode || !out_stat) {
+        return RDNX_E_INVALID;
+    }
+    memset(out_stat, 0, sizeof(*out_stat));
+    out_stat->mode = (file->node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->size = (uint64_t)file->node->inode->size;
+    return RDNX_OK;
+}
+
 vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type)
 {
     return vfs_alloc_node(name, type);

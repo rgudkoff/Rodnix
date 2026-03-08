@@ -48,6 +48,8 @@ typedef struct {
     char* path;
 } run_args_t;
 
+static int shell_cmd_run(int argc, char** argv);
+
 static void shell_run_thread(void* arg)
 {
     run_args_t* ra = (run_args_t*)arg;
@@ -285,6 +287,12 @@ static int shell_cmd_sysinfo(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
+
+    char* run_argv[] = { "run", "/bin/hostinfo", NULL };
+    int run_rc = shell_cmd_run(2, run_argv);
+    if (run_rc == RDNX_OK) {
+        return RDNX_OK;
+    }
 
     utsname_t u;
     if (posix_syscall_dispatch(POSIX_SYS_UNAME, (uint64_t)(uintptr_t)&u, 0, 0, 0, 0, 0) != RDNX_OK) {
@@ -575,6 +583,12 @@ static int shell_cmd_timecheck(int argc, char** argv)
 {
     (void)argc;
     (void)argv;
+
+    char* run_argv[] = { "run", "/bin/timecheck", NULL };
+    int run_rc = shell_cmd_run(2, run_argv);
+    if (run_rc == RDNX_OK) {
+        return RDNX_OK;
+    }
 
     extern bool apic_is_available(void);
     extern uint32_t apic_timer_get_frequency(void);

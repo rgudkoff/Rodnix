@@ -3,7 +3,9 @@
 Этот каталог содержит заготовки пользовательских компонентов RodNIX.
 Минимальный запуск userland уже доступен по умолчанию при boot:
 ядро загружает `/bin/init` (ELF64), переключает поток в ring3 и использует
-`int 0x80` для базовых POSIX-вызовов (`read/write/exit` и др.).
+базовые POSIX-вызовы (`read/write/exit` и др.).
+В userland по умолчанию используется fast entry `syscall/sysret`;
+legacy entry `int 0x80` сохранён как fallback.
 
 Текущая схема запуска:
 - `/bin/init` — launcher (smoke + `exec("/bin/sh")`).
@@ -41,6 +43,8 @@ POSIX syscall номера синхронизируются автоматиче
 В `userland/libc` подключен `libc-lite` (минимальный runtime-слой):
 - `errno` storage;
 - базовые `string`/`ctype`/`stdlib`/`stdio` функции;
+- handle-based `dirent` API (`opendir/readdir/closedir`);
+- базовый file-path API (`stat/fstat/lseek`);
 - POSIX-обертки в `unistd.h` возвращают `-1` и выставляют `errno`
   для отрицательных кодов ядра.
 

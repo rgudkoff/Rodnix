@@ -40,6 +40,21 @@ static inline long posix_fcntl(int fd, int cmd, long arg)
     return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
 }
 
+static inline long posix_stat(const char* path, void* st)
+{
+    return rdnx_syscall6(POSIX_SYS_STAT, (long)(uintptr_t)path, (long)(uintptr_t)st, 0, 0, 0, 0);
+}
+
+static inline long posix_fstat(int fd, void* st)
+{
+    return rdnx_syscall6(POSIX_SYS_FSTAT, fd, (long)(uintptr_t)st, 0, 0, 0, 0);
+}
+
+static inline long posix_lseek(int fd, long off, int whence)
+{
+    return rdnx_syscall6(POSIX_SYS_LSEEK, fd, off, whence, 0, 0, 0);
+}
+
 static inline long posix_uname(void* u)
 {
     return rdnx_syscall1(POSIX_SYS_UNAME, (long)(uintptr_t)u);

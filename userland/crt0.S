@@ -6,7 +6,7 @@ _start:
     call main
     mov rdi, rax
     mov rax, 15
-    int 0x80
+    syscall
 .hang:
     pause
     jmp .hang

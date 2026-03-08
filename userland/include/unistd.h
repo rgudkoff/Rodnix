@@ -16,6 +16,10 @@ extern "C" {
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
 static inline int rdnx_open_flags_from_posix(int flags)
 {
     enum {
@@ -81,6 +85,16 @@ static inline int close(int fd)
         return -1;
     }
     return (int)r;
+}
+
+static inline off_t lseek(int fd, off_t off, int whence)
+{
+    long r = posix_lseek(fd, (long)off, whence);
+    if (r < 0) {
+        errno = (int)(-r);
+        return (off_t)-1;
+    }
+    return (off_t)r;
 }
 
 static inline int fcntl(int fd, int cmd, int arg)

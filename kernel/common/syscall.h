@@ -29,5 +29,9 @@ uint64_t syscall_dispatch(uint64_t num,
                           uint64_t a4,
                           uint64_t a5,
                           uint64_t a6);
+void syscall_account_int80(void);
+void syscall_account_fast(void);
+uint64_t syscall_get_int80_count(void);
+uint64_t syscall_get_fast_count(void);
 
 #endif /* _RODNIX_SYSCALL_H */

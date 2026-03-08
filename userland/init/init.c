@@ -4,6 +4,7 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include "syscall.h"
 #include "posix_syscall.h"
 #include "unistd.h"
@@ -416,6 +417,107 @@ static void run_contract_mode_if_enabled(void)
                     ct_log("CT-011", "FAIL", "exec image-specific state leaked");
                     ok = 0;
                 }
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_heap", 0);
+        if (pid <= 0) {
+            ct_log("CT-018", "FAIL", "heap probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-018", "PASS", "heap probe child passed");
+            } else {
+                ct_log("CT-018", "FAIL", "heap probe child failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        uint8_t* p = (uint8_t*)malloc(64);
+        uint8_t* q = (uint8_t*)calloc(16, 8);
+        int local_ok = 1;
+        if (!p || !q) {
+            local_ok = 0;
+        }
+        if (local_ok) {
+            for (int i = 0; i < 64; i++) {
+                p[i] = (uint8_t)(0xA0 + i);
+            }
+            p = (uint8_t*)realloc(p, 256);
+            if (!p) {
+                local_ok = 0;
+            } else {
+                for (int i = 0; i < 64; i++) {
+                    if (p[i] != (uint8_t)(0xA0 + i)) {
+                        local_ok = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        free(p);
+        free(q);
+        if (local_ok) {
+            ct_log("CT-019", "PASS", "parent heap alloc/realloc/free sequence");
+        } else {
+            ct_log("CT-019", "FAIL", "parent heap sequence failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_dirent", 0);
+        if (pid <= 0) {
+            ct_log("CT-020", "FAIL", "dirent probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-020", "PASS", "dirent handle API probe passed");
+            } else {
+                ct_log("CT-020", "FAIL", "dirent handle API probe failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_fsio", 0);
+        if (pid <= 0) {
+            ct_log("CT-021", "FAIL", "fsio probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-021", "PASS", "stat/fstat/lseek probe passed");
+            } else {
+                ct_log("CT-021", "FAIL", "stat/fstat/lseek probe failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_wait_nonchild", 0);
+        if (pid <= 0) {
+            ct_log("CT-004", "FAIL", "wait-nonchild probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-004", "PASS", "waitpid on non-child is denied");
+            } else {
+                ct_log("CT-004", "FAIL", "waitpid non-child contract failed");
+                ok = 0;
             }
         }
     }
