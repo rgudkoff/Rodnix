@@ -5,7 +5,7 @@
 делаем поведение воспроизводимым для разработки и отладки.
 
 Базовый референс:
-- [xnu/doc/vm/memorystatus_kills.md](https://github.com/apple-oss-distributions/xnu/blob/main/doc/vm/memorystatus_kills.md)
+- внутренний документ по kill-политике при memory pressure.
 
 ## Зачем это нужно
 
@@ -56,11 +56,11 @@
 - `SWAPPABLE_KILL`: kill swap-eligible процессов (появится вместе со swap).
 - `NO_PAGING_SPACE_ACTION`: специализированное действие при нехватке paging space.
 
-## Матрица причин (XNU -> RodNIX)
+## Матрица причин (reference model -> RodNIX)
 
-Ниже то, что берем как целевую модель из XNU `memorystatus_kills.md`:
+Ниже то, что берем как целевую модель из reference policy:
 
-| XNU reason | RodNIX статус | Действие |
+| reference reason | RodNIX статус | Действие |
 | --- | --- | --- |
 | `MEMORY_HIGHWATER` | P1 | soft-limit kill в pressure-фазе |
 | `VNODE` | P2 | синхронный kill по vnode pressure |

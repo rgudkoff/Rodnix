@@ -12,7 +12,7 @@
 - Парсинг карты памяти Multiboot2 при загрузке.
 - Физический менеджер памяти на битовой карте (ранняя версия).
 - Базовый `pmap`/paging для x86_64 (`create_user_pml4`, map/unmap/switch CR3).
-- Каркас VM-слоя в стиле FreeBSD/XNU:
+- Каркас VM-слоя в слоистой модели:
   - `vm_map` (таблица регионов процесса),
   - `vm_object` (жизненный цикл backing object),
   - `vm_pager` (zero-fill страница для demand path),
@@ -66,8 +66,8 @@
 
 ## Источник архитектурного подхода
 
-Для целевого дизайна используем подходы из документации XNU `doc/vm`:
-[xnu/doc/vm](https://github.com/apple-oss-distributions/xnu/tree/main/doc/vm)
+Для целевого дизайна используем внутренние VM-design notes
+по разделению `vm_map -> vm_object -> pmap`.
 
 Исторические заметки по memory pressure policy:
 `docs/ru/archive/memorystatus.md`.

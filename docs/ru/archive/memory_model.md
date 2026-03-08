@@ -76,8 +76,8 @@
 
 ## Источник целевой модели
 
-Подход выравнивается по документации XNU `doc/vm`:
-[xnu/doc/vm](https://github.com/apple-oss-distributions/xnu/tree/main/doc/vm)
+Подход выравнивается по внутреннему VM-дизайну
+(`vm_map -> vm_object -> pmap`).
 
 ## Освобождение init‑секций
 

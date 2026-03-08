@@ -19,7 +19,7 @@ make clean && make && make iso && make run
 
 **Note**: Homebrew does not provide `grub-mkrescue`. The Makefile will automatically use Docker if grub-mkrescue is not found.
 
-### Linux (Ubuntu/Debian)
+### Ubuntu/Debian
 
 ```bash
 # Install dependencies
@@ -27,7 +27,7 @@ sudo apt-get update
 sudo apt-get install build-essential nasm qemu-system-x86 grub-pc-bin grub-common
 
 # For cross-compiler (if not available in repos):
-# Download from: https://github.com/lordmilko/i686-elf-tools (or similar)
+# Download from any trusted cross-toolchain source (or similar)
 
 # Build and run
 make clean && make && make iso && make run
@@ -43,7 +43,7 @@ brew tap nativeos/i386-elf-toolchain
 brew install x86_64-elf-gcc x86_64-elf-binutils
 ```
 
-**Linux:**
+**Ubuntu/Debian:**
 - Use your distribution's package manager
 - Or build from source: https://wiki.osdev.org/GCC_Cross-Compiler
 
@@ -54,7 +54,7 @@ brew install x86_64-elf-gcc x86_64-elf-binutils
 brew install nasm
 ```
 
-**Linux:**
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get install nasm
 ```
@@ -66,7 +66,7 @@ sudo apt-get install nasm
 brew install qemu
 ```
 
-**Linux:**
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get install qemu-system-x86
 ```
@@ -78,7 +78,7 @@ sudo apt-get install qemu-system-x86
 brew install grub
 ```
 
-**Linux:**
+**Ubuntu/Debian:**
 ```bash
 sudo apt-get install grub-pc-bin grub-common
 ```
@@ -115,4 +115,3 @@ make run
 ## Troubleshooting
 
 See [docs/BUILD.md](docs/BUILD.md) for detailed troubleshooting information.
-

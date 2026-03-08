@@ -29,7 +29,7 @@
     `motd`, `uname`, `cat`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
   - shell умеет запускать внешние программы напрямую:
     `<program> [args...]` (по умолчанию как `/bin/<program>`, либо абсолютный путь).
-  - принята модель FreeBSD по командам shell:
+  - принята традиционная Unix-модель команд shell:
     - stateful-команды (минимум `cd`) остаются builtin в `sh`;
     - утилиты (`ls`, `cat`, `echo`, и др.) развиваются как отдельные
       userland-бинарники в `/bin`/`/usr/bin`.
@@ -47,7 +47,7 @@
   `netiflist` и Fabric net-service.
 - Для CI есть авто-сценарий `/etc/smoke.ifconfig.auto`:
   `init` запускает `/bin/ifconfig`, ждёт завершения и печатает `[SMK]` маркеры.
-- Таблица POSIX syscall-ов теперь ведётся в стиле XNU:
+- Таблица POSIX syscall-ов теперь ведётся через master-таблицу:
   - master-файл: `kernel/posix/syscalls.master`;
   - генерация: `scripts/mkposixsyscalls.py`;
   - output: `kernel/posix/posix_sysnums.h`, `userland/include/posix_sysnums.h`,

@@ -5,7 +5,7 @@
 - Таблица системных вызовов располагается в POSIX‑слое.
 - Вход из userland через ловушку/переходник (traps).
 - Пользовательские API строятся поверх POSIX‑слоя.
-- Для userland ABI принимаем FreeBSD-совместимый канон для ключевых числовых
+- Для userland ABI принимаем vendor-baseline канон для ключевых числовых
   констант (`errno/fcntl/wait`) с автоматической проверкой на этапе сборки.
 
 ## MVP
@@ -99,5 +99,5 @@ polling-циклов: вызов может уступить квант план
 - `kernel/arch/x86_64/idt.c` (IDT entry 0x80).
 - `kernel/arch/x86_64/isr_handlers.c` (dispatch).
 - `userland/include/sys/{errno.h,fcntl.h,wait.h}` (userland ABI constants).
-- `third_party/bsd/freebsd-src/sys/sys/{errno.h,fcntl.h,wait.h}` (канон).
+- `third_party/bsd/*/sys/sys/{errno.h,fcntl.h,wait.h}` (канон).
 - `scripts/check_bsd_abi_headers.py` + `userland/Makefile` (`check-bsd-abi`).

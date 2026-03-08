@@ -112,7 +112,7 @@
   - `warp window` для интерактивных всплесков.
   - `starvation avoidance window` для bounded fairness.
 
-5. VM v2 (xnu-like принципы)
+5. VM v2 (слоистые принципы)
   - Явное разделение ответственности `vm_map -> vm_object -> pmap`.
   - Pager/backing-store интерфейс для file/anonymous объектов.
   - Модель page states (active/inactive/wired/pager-backed) и наблюдаемость.

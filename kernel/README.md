@@ -24,8 +24,8 @@ The kernel directory contains the core operating system kernel.
 
 ## Refactor plan
 
-See `/Users/romangudkov/dev/Rodnix/docs/ru/kernel_layout_refactor.md` for the
-XNU-inspired file layout migration plan.
+See `docs/ru/archive/kernel_layout_refactor.md`
+for the file layout migration plan.
 
 ## Components
 

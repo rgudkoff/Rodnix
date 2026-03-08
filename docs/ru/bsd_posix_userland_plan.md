@@ -1,11 +1,11 @@
-# BSD POSIX/Userland Plan
+# POSIX/Userland Plan
 
 Этот документ фиксирует, как мы переносим POSIX и userland-подход в Rodnix
 на базе BSD-кода, поэтапно и без регрессий boot/runtime.
 
 ## Что уже импортировано
 
-- Vendor baseline в `third_party/bsd/freebsd-src/`:
+- Vendor baseline в `third_party/bsd/`:
   - `bin/sh/*` (исходники shell как референс-база)
   - выбранные POSIX заголовки из `include/`
   - `sys/sys/{cdefs.h,queue.h,tree.h}` (локальный снимок)
@@ -15,10 +15,10 @@
 Текущее состояние интеграции (выполнено):
 - В `userland/include/sys/*` поднят минимальный POSIX-слой
   (`errno/fcntl/wait/types/stat`) с выравниванием ключевых числовых
-  констант по FreeBSD.
+  констант по эталонному baseline.
 - В `userland/Makefile` добавлен обязательный шаг `check-bsd-abi`, который
   валидирует соответствие `errno/fcntl/wait` против
-  `third_party/bsd/freebsd-src/sys/sys/*`.
+  `third_party/bsd/*/sys/sys/*`.
 
 ## Почему не подключаем сразу
 
@@ -44,13 +44,13 @@
 - затем подключить builtins и execution path;
 - только после этого сделать BSD-shell `sh` default в rootfs.
 
-Shell/utility policy (как в FreeBSD):
+Shell/utility policy (традиционный Unix shell-подход):
 - `cd` и другие команды, меняющие состояние самого shell-процесса, остаются builtin;
 - `ls/cat/echo/...` — отдельные исполняемые утилиты в userland;
 - не дублировать без необходимости одну и ту же команду как builtin и как
   внешний бинарник.
 
-## Что нужно дополнительно скачать из FreeBSD
+## Что нужно дополнительно добавить из эталонного baseline
 
 Для следующего шага (POSIX ABI + libc-lite) нужны как минимум:
 

@@ -8,8 +8,8 @@
 
 ## Источник архитектурного подхода
 
-При проектировании используем идеи из XNU `sched_clutch`/`sched_clutch_edge`:
-[sched_clutch_edge.md](https://github.com/apple-oss-distributions/xnu/blob/main/doc/scheduler/sched_clutch_edge.md)
+При проектировании используем идеи из внутреннего design-note по
+иерархическому планированию `bucket -> group -> thread`.
 
 Это не копирование реализации, а перенос принципов:
 - приоритизация по QoS bucket,

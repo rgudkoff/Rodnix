@@ -27,9 +27,9 @@ Use one section per import:
 
 ### `freebsd-queue-tree-2026-03-01`
 
-- Upstream: `https://github.com/freebsd/freebsd-src`
+- Upstream: official FreeBSD source tree snapshot
 - Upstream branch/tag: `main`
-- Upstream commit: `not pinned (local file snapshot from /Users/romangudkov/dev/bsd/sys/sys)`
+- Upstream commit: `not pinned (local file snapshot from local BSD mirror)`
 - Imported on: `2026-03-01`
 - Imported by: `codex`
 - License: `BSD-2-Clause/BSD-3-Clause (as declared in file headers)`
@@ -47,7 +47,7 @@ Use one section per import:
 
 ### `freebsd-posix-userland-base-2026-03-01`
 
-- Upstream: `https://github.com/freebsd/freebsd-src`
+- Upstream: official FreeBSD source tree snapshot
 - Upstream branch/tag: `main`
 - Upstream commit: `5ddfd1db271cc675997a942da599c342ccb53afa`
 - Imported on: `2026-03-01`

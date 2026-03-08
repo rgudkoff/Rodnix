@@ -28,7 +28,7 @@
 - bootstrap‑сервер в userland и сервисный запуск через IPC ещё в работе.
 
 POSIX syscall номера синхронизируются автоматически из
-`kernel/posix/syscalls.master` (в стиле XNU), генератор:
+`kernel/posix/syscalls.master` (через master-таблицу), генератор:
 `scripts/mkposixsyscalls.py`.
 
 Минимальный POSIX-совместимый заголовочный слой для userland находится в
@@ -39,18 +39,18 @@ POSIX syscall номера синхронизируются автоматиче
 - `sys/signal.h`, `sys/mman.h`, `sys/dirent.h`, `sys/termios.h`, `sys/time.h`
 
 Числовые значения ключевых `errno`/`fcntl`/`wait` констант выравниваются с
-FreeBSD-каноном (`third_party/bsd/freebsd-src/sys/sys/*`) и проверяются
+vendor BSD baseline (`third_party/bsd/*/sys/sys/*`) и проверяются
 автоматически в `make -C userland` через:
 - `scripts/check_bsd_abi_headers.py`
 
-Синхронизация ABI-заголовков с FreeBSD выполняется отдельной командой:
+Синхронизация ABI-заголовков с эталонным baseline выполняется отдельной командой:
 - `make sync-bsd-abi` (из корня репозитория), либо
 - `make -C userland sync-bsd-abi`
 
 После синхронизации рекомендуется запускать:
 - `make check-abi`
 
-Модель команд (принята как в FreeBSD):
+Модель команд (традиционный Unix shell-подход):
 - команды, меняющие состояние shell-процесса (например, `cd`) должны быть builtin;
 - файловые/системные утилиты (`ls`, `cat`, `echo`, и т.п.) развиваются как
   отдельные внешние программы.
