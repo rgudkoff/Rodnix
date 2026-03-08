@@ -36,6 +36,16 @@ static bool log_prefix_enabled = true;
 static bool log_at_line_start = true;
 static bool log_prefix_in_progress = false;
 
+typedef enum {
+    ANSI_STATE_NORMAL = 0,
+    ANSI_STATE_ESC,
+    ANSI_STATE_CSI
+} ansi_state_t;
+
+static ansi_state_t ansi_state = ANSI_STATE_NORMAL;
+static char ansi_csi_buf[16];
+static uint8_t ansi_csi_len = 0;
+
 static uint64_t console_get_uptime_us_internal(void)
 {
     extern bool apic_is_available(void);
@@ -228,6 +238,155 @@ static void update_cursor(uint8_t row, uint8_t col)
     __asm__ volatile ("outb %%al, %1" : : "a"(pos_high), "Nd"((uint16_t)0x3D5));
 }
 
+static void console_set_cursor(uint8_t row, uint8_t col)
+{
+    if (row >= VGA_HEIGHT) {
+        row = VGA_HEIGHT - 1;
+    }
+    if (col >= VGA_WIDTH) {
+        col = VGA_WIDTH - 1;
+    }
+    vga_row = row;
+    vga_col = col;
+    update_cursor(vga_row, vga_col);
+}
+
+static int ansi_parse_uint(const char* s, int* out)
+{
+    if (!s || !out) {
+        return -1;
+    }
+    int v = 0;
+    int has_digits = 0;
+    for (int i = 0; s[i] != '\0'; i++) {
+        char c = s[i];
+        if (c < '0' || c > '9') {
+            return -1;
+        }
+        has_digits = 1;
+        v = (v * 10) + (c - '0');
+    }
+    if (!has_digits) {
+        return -1;
+    }
+    *out = v;
+    return 0;
+}
+
+static int ansi_parse_row_col(const char* csi, int* out_row, int* out_col)
+{
+    if (!csi || !out_row || !out_col) {
+        return -1;
+    }
+
+    int sep = -1;
+    for (int i = 0; csi[i] != '\0'; i++) {
+        if (csi[i] == ';') {
+            sep = i;
+            break;
+        }
+    }
+
+    if (sep < 0) {
+        if (csi[0] == '\0') {
+            *out_row = 1;
+            *out_col = 1;
+            return 0;
+        }
+        if (ansi_parse_uint(csi, out_row) != 0) {
+            return -1;
+        }
+        *out_col = 1;
+        return 0;
+    }
+
+    char row_buf[8];
+    char col_buf[8];
+    int rlen = sep;
+    int clen = 0;
+
+    if (rlen < 0 || rlen >= (int)sizeof(row_buf)) {
+        return -1;
+    }
+    for (int i = 0; i < rlen; i++) {
+        row_buf[i] = csi[i];
+    }
+    row_buf[rlen] = '\0';
+
+    for (int i = sep + 1; csi[i] != '\0' && clen < (int)sizeof(col_buf) - 1; i++) {
+        col_buf[clen++] = csi[i];
+    }
+    col_buf[clen] = '\0';
+
+    if (row_buf[0] == '\0') {
+        *out_row = 1;
+    } else if (ansi_parse_uint(row_buf, out_row) != 0) {
+        return -1;
+    }
+    if (col_buf[0] == '\0') {
+        *out_col = 1;
+    } else if (ansi_parse_uint(col_buf, out_col) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static bool console_handle_ansi_char(char c)
+{
+    if (ansi_state == ANSI_STATE_NORMAL) {
+        if ((unsigned char)c == 0x1B) {
+            ansi_state = ANSI_STATE_ESC;
+            return true;
+        }
+        return false;
+    }
+
+    if (ansi_state == ANSI_STATE_ESC) {
+        if (c == '[') {
+            ansi_state = ANSI_STATE_CSI;
+            ansi_csi_len = 0;
+            ansi_csi_buf[0] = '\0';
+            return true;
+        }
+        ansi_state = ANSI_STATE_NORMAL;
+        return true;
+    }
+
+    if (ansi_state == ANSI_STATE_CSI) {
+        if ((c >= '0' && c <= '9') || c == ';') {
+            if ((size_t)(ansi_csi_len + 1) < sizeof(ansi_csi_buf)) {
+                ansi_csi_buf[ansi_csi_len++] = c;
+                ansi_csi_buf[ansi_csi_len] = '\0';
+            }
+            return true;
+        }
+
+        if (c == 'J') {
+            /* ESC[2J - clear entire screen and home cursor */
+            if (ansi_csi_buf[0] == '2' && ansi_csi_buf[1] == '\0') {
+                console_clear();
+            }
+        } else if (c == 'H' || c == 'f') {
+            /* ESC[row;colH - absolute cursor position (1-based) */
+            int row = 1;
+            int col = 1;
+            if (ansi_parse_row_col(ansi_csi_buf, &row, &col) == 0) {
+                if (row < 1) row = 1;
+                if (col < 1) col = 1;
+                console_set_cursor((uint8_t)(row - 1), (uint8_t)(col - 1));
+            }
+        }
+
+        ansi_state = ANSI_STATE_NORMAL;
+        ansi_csi_len = 0;
+        ansi_csi_buf[0] = '\0';
+        return true;
+    }
+
+    ansi_state = ANSI_STATE_NORMAL;
+    return false;
+}
+
 void console_init(void)
 {
     vga_row = 0;
@@ -293,6 +452,11 @@ static void scroll_screen(void)
 
 void kputc(char c)
 {
+    /* Allow minimal ANSI cursor/clear control for userspace shell UX. */
+    if (console_handle_ansi_char(c)) {
+        return;
+    }
+
     if (log_prefix_enabled && log_at_line_start && !log_prefix_in_progress) {
         log_prefix_in_progress = true;
         console_write_log_prefix();

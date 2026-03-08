@@ -41,6 +41,8 @@
 #define SHELL_MAX_LINE_LENGTH  256
 #define SHELL_MAX_ARGS         16
 #define SHELL_PROMPT           "  rodnix> "
+#define SHELL_ANSI_CLEAR       "\x1b[2J"
+#define SHELL_ANSI_BOTTOM      "\x1b[25;1H"
 
 typedef struct {
     char* path;
@@ -912,14 +914,16 @@ void shell_run(void)
     extern void input_flush(void);
     input_flush();
 
-    kputs("\nRodNIX Shell v0.2\n");
-    kputs("Type 'help' for available commands.\n\n");
+    /* Clean handoff from boot logs to interactive prompt. */
+    kputs(SHELL_ANSI_CLEAR);
+    kputs(SHELL_ANSI_BOTTOM);
     __asm__ volatile ("" ::: "memory");
     
     while (shell_state.running) {
         scheduler_reap_finished();
         interrupts_enable();
         interrupts_disable();
+        kputs(SHELL_ANSI_BOTTOM);
         kputs(SHELL_PROMPT);
         interrupts_enable();
         __asm__ volatile ("" ::: "memory"); /* Ensure prompt is flushed */
@@ -959,5 +963,6 @@ void shell_redraw_prompt(void)
     if (!shell_state.running) {
         return;
     }
+    kputs(SHELL_ANSI_BOTTOM);
     kputs(SHELL_PROMPT);
 }

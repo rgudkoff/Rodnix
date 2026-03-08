@@ -33,8 +33,9 @@
   - `/etc/motd` печатается `init` при старте;
   - `/etc/hostname` читается `init` и логируется;
   - `/etc/ttys` — минимальный конфиг-конвенция для console tty.
-- stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`),
-  привязанные к VFS-узлу `/dev/console`.
+- stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`);
+  в VFS созданы узлы `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.
+  На текущем этапе это виртуальные VFS-узлы (до выделения отдельного `devfs`).
 - `ttytest` используется для ручной проверки line discipline (`Ctrl-U`,
   `Ctrl-D`, backspace, canonical newline).
 - Таблица POSIX syscall-ов теперь ведётся в стиле XNU:

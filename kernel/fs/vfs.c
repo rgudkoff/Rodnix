@@ -318,18 +318,27 @@ static int vfs_setup_console_node(void)
         return -1;
     }
 
-    vfs_node_t* console = vfs_find_child(dev, "console");
-    if (!console) {
-        console = vfs_create_node(dev, "console", VFS_NODE_FILE);
-        if (!console) {
+    static const char* names[] = {
+        "console",
+        "stdin",
+        "stdout",
+        "stderr",
+    };
+
+    for (size_t i = 0; i < (sizeof(names) / sizeof(names[0])); i++) {
+        vfs_node_t* node = vfs_find_child(dev, names[i]);
+        if (!node) {
+            node = vfs_create_node(dev, names[i], VFS_NODE_FILE);
+            if (!node) {
+                return -1;
+            }
+        }
+        if (node->type != VFS_NODE_FILE || !node->inode) {
             return -1;
         }
-    }
-    if (console->type != VFS_NODE_FILE || !console->inode) {
-        return -1;
+        node->inode->flags |= VFS_INODE_CONSOLE;
     }
 
-    console->inode->flags |= VFS_INODE_CONSOLE;
     return 0;
 }
 
@@ -351,7 +360,14 @@ int vfs_mount_initrd_root(void)
     vfs_root_mount->root = new_root;
     vfs_root = new_root;
     vfs_cache_reset();
-    return vfs_import_initrd();
+    int ret = vfs_import_initrd();
+    if (ret != 0) {
+        return ret;
+    }
+    if (vfs_setup_console_node() != 0) {
+        return -1;
+    }
+    return 0;
 }
 int vfs_mount_ramfs(const char* path)
 {

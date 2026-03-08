@@ -15,6 +15,8 @@
 
 #define SH_LINE_MAX 128
 #define SH_ARG_MAX  16
+#define SH_ANSI_CLEAR  "\x1b[2J"
+#define SH_ANSI_BOTTOM "\x1b[25;1H"
 
 typedef struct {
     uint32_t abi_version;
@@ -344,10 +346,12 @@ int main(void)
     char line[SH_LINE_MAX];
     char* argv[SH_ARG_MAX + 1];
 
-    (void)write_str("Rodnix userspace shell (/bin/sh)\n");
-    (void)write_str("Type 'help' for commands.\n");
+    /* Clear boot logs and position prompt on the last line. */
+    (void)write_str(SH_ANSI_CLEAR);
+    (void)write_str(SH_ANSI_BOTTOM);
 
     for (;;) {
+        (void)write_str(SH_ANSI_BOTTOM);
         (void)write_str("sh> ");
         int len = read_line(line, (int)sizeof(line));
         if (len < 0) {
