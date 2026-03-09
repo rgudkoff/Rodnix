@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+typedef struct vm_object vm_object_t;
+
 typedef enum {
     VFS_NODE_FILE = 0,
     VFS_NODE_DIR  = 1
@@ -23,6 +25,7 @@ typedef struct vfs_inode {
     size_t size;
     size_t capacity;
     uint8_t* data;
+    vm_object_t* mmap_object;
 } vfs_inode_t;
 
 typedef struct vfs_node {

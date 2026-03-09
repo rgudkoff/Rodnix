@@ -1,4 +1,5 @@
 #include "net.h"
+#include "socket.h"
 #include "../fabric/service/net_service.h"
 #include "../fabric/spin.h"
 #include "../common/heap.h"
@@ -25,7 +26,7 @@ static fabric_netif_t loopback_iface = {0};
 static int net_loopback_tx_cb(fabric_netif_t* iface, const void* frame, uint32_t len)
 {
     (void)iface;
-    return net_loopback_frame_tx(frame, len);
+    return (net_ingress_frame(frame, len, NULL) == 0) ? RDNX_OK : RDNX_E_GENERIC;
 }
 
 static void net_register_loopback_iface_once(void)
@@ -53,6 +54,9 @@ static void net_register_loopback_iface_once(void)
     loopback_iface.mac[5] = 0x01;
     loopback_iface.mtu = NET_MAX_PACKET;
     loopback_iface.flags = FABRIC_NETIF_F_UP | FABRIC_NETIF_F_LOOPBACK;
+    loopback_iface.ipv4_addr = 0x7F000001u;     /* 127.0.0.1 */
+    loopback_iface.ipv4_netmask = 0xFF000000u;  /* 255.0.0.0 */
+    loopback_iface.ipv4_gateway = 0;
     loopback_iface.ops = &loopback_ops;
     loopback_iface.context = NULL;
 

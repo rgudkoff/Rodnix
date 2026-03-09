@@ -1,0 +1,3 @@
+#ifndef _RODNIX_COMPAT_VM_PMAP_H
+#define _RODNIX_COMPAT_VM_PMAP_H
+#endif

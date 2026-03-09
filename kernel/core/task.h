@@ -31,6 +31,11 @@ typedef enum {
     TASK_STATE_DEAD,           /* Удалена */
 } task_state_t;
 
+typedef enum {
+    TASK_ABI_NATIVE = 0,
+    TASK_ABI_LINUX = 1,
+} task_abi_t;
+
 /* ============================================================================
  * Состояние потока
  * ============================================================================ */
@@ -86,6 +91,7 @@ typedef struct task {
     uint32_t gid;              /* Реальный GID */
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
+    uint16_t umask;            /* process umask (POSIX bits) */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
     uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
     uint8_t fd_kind[TASK_MAX_FD];  /* Тип дескриптора (unix fd kind) */
@@ -101,6 +107,8 @@ typedef struct task {
     } sigaction[32];
     uint32_t sig_pending;
     uint8_t sig_in_handler;
+    uint8_t abi;               /* task_abi_t */
+    uint64_t tls_fs_base;      /* userspace FS base (arch_prctl/linux ABI) */
     struct {
         uint64_t rip;
         uint64_t rsp;
@@ -203,6 +211,8 @@ void task_set_current(task_t* task);
  * @param egid Эффективный GID
  */
 void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid);
+void task_set_abi(task_t* task, task_abi_t abi);
+task_abi_t task_get_abi(const task_t* task);
 
 /* ============================================================================
  * File descriptors helpers

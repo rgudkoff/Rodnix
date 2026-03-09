@@ -18,5 +18,6 @@ uint64_t posix_blockwrite(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, ui
 uint64_t posix_kmodls(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_kmodload(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_kmodunload(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_ping(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 
 #endif /* _RODNIX_POSIX_SYS_INFO_H */

@@ -15,7 +15,7 @@
 #define VFS_OPEN_READ 1
 #define VFS_OPEN_WRITE 2
 #define FD_STDOUT 1
-#define SYS_TEST_SLEEP 62
+#define SYS_TEST_SLEEP 120
 
 static long write_buf(const char* s, uint64_t len)
 {

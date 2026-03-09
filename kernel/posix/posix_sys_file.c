@@ -60,6 +60,67 @@ uint64_t posix_pipe2(uint64_t a1,
     return unix_fs_pipe2(a1, a2);
 }
 
+uint64_t posix_socket(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_socket(a1, a2, a3);
+}
+
+uint64_t posix_bind(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_bind(a1, a2);
+}
+
+uint64_t posix_connect(uint64_t a1,
+                              uint64_t a2,
+                              uint64_t a3,
+                              uint64_t a4,
+                              uint64_t a5,
+                              uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_connect(a1, a2);
+}
+
+uint64_t posix_sendto(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    return unix_fs_sendto(a1, a2, a3, a4, a5, a6);
+}
+
+uint64_t posix_recvfrom(uint64_t a1,
+                               uint64_t a2,
+                               uint64_t a3,
+                               uint64_t a4,
+                               uint64_t a5,
+                               uint64_t a6)
+{
+    return unix_fs_recvfrom(a1, a2, a3, a4, a5, a6);
+}
+
 uint64_t posix_poll(uint64_t a1,
                            uint64_t a2,
                            uint64_t a3,

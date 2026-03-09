@@ -8,6 +8,7 @@
 #include "../../../kernel/fabric/driver/driver.h"
 #include "../../../kernel/fabric/service/net_service.h"
 #include "../../../kernel/net/net.h"
+#include "../../../kernel/net/socket.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
@@ -31,8 +32,11 @@ static uint32_t g_next_index = 0;
 
 static int virtio_net_tx(fabric_netif_t* iface, const void* frame, uint32_t len)
 {
-    (void)iface;
-    return net_loopback_frame_tx(frame, len);
+    if (!iface || !frame || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    (void)fabric_netif_rx_submit(iface, frame, len);
+    return (net_ingress_frame(frame, len, iface->context) == 0) ? RDNX_OK : RDNX_E_GENERIC;
 }
 
 static bool virtio_net_probe(fabric_device_t* dev)

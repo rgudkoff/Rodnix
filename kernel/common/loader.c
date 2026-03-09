@@ -24,6 +24,8 @@
 #define LOADER_ENV_MAX 32
 #define LOADER_ARG_STR_MAX 128
 #define LOADER_ENV_STR_MAX 128
+#define ELFOSABI_SYSV 0
+#define ELFOSABI_LINUX 3
 
 static inline uint64_t align_down(uint64_t v, uint64_t align)
 {
@@ -281,7 +283,12 @@ static int loader_prepare_user_args(loader_image_t* img,
     }
 
     sp &= ~0x7ULL;
-    sp -= (uint64_t)(envc + 1) * sizeof(uint64_t);
+    uint64_t env_slots = (uint64_t)(envc + 1);
+    if (img->abi == TASK_ABI_LINUX) {
+        /* Linux initial stack expects an auxv list terminated by AT_NULL. */
+        env_slots += 2; /* AT_NULL, 0 */
+    }
+    sp -= env_slots * sizeof(uint64_t);
     if (sp < img->stack_bottom) {
         return RDNX_E_NOMEM;
     }
@@ -295,6 +302,16 @@ static int loader_prepare_user_args(loader_image_t* img,
     int wr = loader_stack_write(img, sp + (uint64_t)envc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
     if (wr != RDNX_OK) {
         return wr;
+    }
+    if (img->abi == TASK_ABI_LINUX) {
+        wr = loader_stack_write(img, sp + (uint64_t)(envc + 1) * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        wr = loader_stack_write(img, sp + (uint64_t)(envc + 2) * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
     }
     *out_envp_ptr = sp;
 
@@ -314,8 +331,23 @@ static int loader_prepare_user_args(loader_image_t* img,
         return wr;
     }
 
-    img->user_stack = sp & ~0xFULL;
-    *out_argv_ptr = sp;
+    if (img->abi == TASK_ABI_LINUX) {
+        sp &= ~0x7ULL;
+        if (sp < img->stack_bottom + sizeof(uint64_t)) {
+            return RDNX_E_NOMEM;
+        }
+        sp -= sizeof(uint64_t);
+        uint64_t argc_u64 = (uint64_t)(argc > 0 ? argc : 0);
+        wr = loader_stack_write(img, sp, &argc_u64, sizeof(argc_u64));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        img->user_stack = sp;
+        *out_argv_ptr = sp + sizeof(uint64_t);
+    } else {
+        img->user_stack = sp & ~0xFULL;
+        *out_argv_ptr = sp;
+    }
     return RDNX_OK;
 }
 
@@ -364,6 +396,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
 
     out->pml4_phys = pml4_phys;
     out->entry = eh->e_entry;
+    out->abi = (eh->e_osabi == ELFOSABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
     out->user_stack = 0;
     out->stack_bottom = 0;
     for (uint32_t i = 0; i < LOADER_USER_STACK_PAGES; i++) {
@@ -451,6 +484,10 @@ int loader_execve_ex(const char* path,
         }
         return ret;
     }
+    /* BusyBox prebuilt binaries usually use ELFOSABI_SYSV but expect Linux syscall ABI. */
+    if (path && strncmp(path, "/bin/busybox", 12) == 0) {
+        img.abi = TASK_ABI_LINUX;
+    }
 
     thread_t* cur = thread_get_current();
     uint64_t rsp0 = 0;
@@ -478,6 +515,7 @@ int loader_execve_ex(const char* path,
     usermode_set_pml4(img.pml4_phys);
     if (cur && cur->task) {
         cur->task->address_space = (void*)(uintptr_t)img.pml4_phys;
+        task_set_abi(cur->task, (task_abi_t)img.abi);
         if (vm_task_prepare_exec(cur->task, img.pml4_phys) == RDNX_OK) {
             for (uint32_t i = 0; i < img.seg_count; i++) {
                 const loader_segment_t* s = &img.segs[i];
