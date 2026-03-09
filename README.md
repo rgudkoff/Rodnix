@@ -173,12 +173,16 @@ Small, focused patches are strongly preferred.
 
 ## Repository Structure
 
-- `boot/` - boot code
-- `kernel/` - kernel core and subsystems
-- `drivers/` - hardware and Fabric drivers
-- `userland/` - userspace binaries and shell
-- `scripts/` - build and CI helpers
-- `docs/` - documentation
+- `boot/` - bootloader integration and early boot code
+- `kernel/` - kernel core, architecture code, and subsystems
+- `drivers/` - hardware drivers and Fabric-facing device support
+- `include/` - shared headers used across kernel and userland components
+- `userland/` - userspace binaries, runtime pieces, and shell
+- `scripts/` - build, CI, and development helper scripts
+- `docs/` - project documentation in English and Russian
+- `third_party/` - imported external code and vendor sources
+- `build/` - local build artifacts generated during compilation
+- `iso/` - files staged into the bootable ISO image
 
 ## Development
 
