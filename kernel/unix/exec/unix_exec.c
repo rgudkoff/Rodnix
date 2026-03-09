@@ -68,6 +68,7 @@ static void unix_spawn_thread(void* arg)
     }
     task_t* task = task_get_current();
     if (task) {
+        unix_proc_close_fds(task);
         task->exit_code = (ret == RDNX_OK) ? 0 : 127;
         task->exited = 1;
         task->state = TASK_STATE_ZOMBIE;
@@ -76,20 +77,61 @@ static void unix_spawn_thread(void* arg)
     scheduler_exit_current();
 }
 
-uint64_t unix_fs_exec(uint64_t user_path_ptr)
+uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr)
 {
     /* CT-003 target: exec preserves PID while replacing process image. */
+    const char* const* user_argv = (const char* const*)(uintptr_t)user_argv_ptr;
+    const char* const* user_envp = (const char* const*)(uintptr_t)user_envp_ptr;
     const char* user_path = (const char*)(uintptr_t)user_path_ptr;
     char path_buf[UNIX_PATH_MAX];
-    int rc = unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    const char* argv_local[UNIX_ARG_MAX + 1];
+    char argv_buf[UNIX_ARG_MAX][UNIX_PATH_MAX];
+    int argc_local = 0;
+    (void)user_envp;
+    int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
+    for (int i = 0; i < UNIX_ARG_MAX + 1; i++) {
+        argv_local[i] = NULL;
+    }
+    if (!user_argv || !unix_user_range_ok(user_argv, sizeof(uintptr_t))) {
+        argv_local[0] = path_buf;
+        argv_local[1] = NULL;
+        argc_local = 1;
+    } else {
+        int bad_argv = 0;
+        for (int i = 0; i < UNIX_ARG_MAX; i++) {
+            const void* slot = (const void*)(uintptr_t)((uintptr_t)user_argv + (uintptr_t)i * sizeof(uintptr_t));
+            if (!unix_user_range_ok(slot, sizeof(uintptr_t))) {
+                bad_argv = 1;
+                break;
+            }
+            const char* uptr = user_argv[i];
+            if (!uptr) {
+                break;
+            }
+            if (unix_copy_user_cstr(argv_buf[i], sizeof(argv_buf[i]), uptr) != RDNX_OK) {
+                bad_argv = 1;
+                break;
+            }
+            argv_local[i] = argv_buf[i];
+            argc_local++;
+        }
+        if (bad_argv || argc_local == 0) {
+            argv_local[0] = path_buf;
+            argv_local[1] = NULL;
+            argc_local = 1;
+        } else {
+            argv_local[argc_local] = NULL;
+        }
+    }
+
     task_t* self = task_get_current();
     if (self) {
         unix_apply_cloexec(self);
     }
-    int ret = loader_exec(path_buf);
+    int ret = loader_execve(path_buf, argc_local, argv_local);
     return (uint64_t)ret;
 }
 
@@ -104,7 +146,7 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
     const char* user_path = (const char*)(uintptr_t)user_path_ptr;
     const char* const* user_argv = (const char* const*)(uintptr_t)user_argv_ptr;
     char path_buf[UNIX_PATH_MAX];
-    int rc = unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -125,6 +167,8 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
 
     if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
         task_destroy(child);

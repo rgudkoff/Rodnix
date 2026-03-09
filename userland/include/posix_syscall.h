@@ -9,6 +9,32 @@
 #include <stdint.h>
 #include "syscall.h"
 #include "posix_sysnums.h"
+#include "scstat.h"
+
+#ifndef RDNX_STDIN_INT80_READ_WORKAROUND
+#define RDNX_STDIN_INT80_READ_WORKAROUND 1
+#endif
+
+static inline long posix_read_int80(int fd, void* buf, uint64_t len)
+{
+    long ret;
+    register long r10 __asm__("r10") = 0;
+    register long r8  __asm__("r8")  = 0;
+    register long r9  __asm__("r9")  = 0;
+    __asm__ volatile (
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(POSIX_SYS_READ),
+          "D"((long)fd),
+          "S"((long)(uintptr_t)buf),
+          "d"((long)len),
+          "r"(r10),
+          "r"(r8),
+          "r"(r9)
+        : "memory"
+    );
+    return ret;
+}
 
 static inline long posix_getpid(void)
 {
@@ -22,6 +48,11 @@ static inline long posix_write(int fd, const void* buf, uint64_t len)
 
 static inline long posix_read(int fd, void* buf, uint64_t len)
 {
+#if RDNX_STDIN_INT80_READ_WORKAROUND
+    if (fd == 0) {
+        return posix_read_int80(fd, buf, len);
+    }
+#endif
     return rdnx_syscall6(POSIX_SYS_READ, fd, (long)(uintptr_t)buf, (long)len, 0, 0, 0);
 }
 
@@ -35,9 +66,74 @@ static inline long posix_close(int fd)
     return rdnx_syscall1(POSIX_SYS_CLOSE, fd);
 }
 
+static inline long posix_pipe(int pipefd[2])
+{
+    return rdnx_syscall1(POSIX_SYS_PIPE, (long)(uintptr_t)pipefd);
+}
+
+static inline long posix_dup(int oldfd)
+{
+    return rdnx_syscall1(POSIX_SYS_DUP, (long)oldfd);
+}
+
+static inline long posix_dup2(int oldfd, int newfd)
+{
+    return rdnx_syscall2(POSIX_SYS_DUP2, (long)oldfd, (long)newfd);
+}
+
+static inline long posix_chdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_CHDIR, (long)(uintptr_t)path);
+}
+
+static inline long posix_getcwd(char* buf, uint64_t size)
+{
+    return rdnx_syscall2(POSIX_SYS_GETCWD, (long)(uintptr_t)buf, (long)size);
+}
+
+static inline long posix_mkdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_MKDIR, (long)(uintptr_t)path);
+}
+
+static inline long posix_unlink(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_UNLINK, (long)(uintptr_t)path);
+}
+
+static inline long posix_rmdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_RMDIR, (long)(uintptr_t)path);
+}
+
+static inline long posix_rename(const char* oldpath, const char* newpath)
+{
+    return rdnx_syscall2(POSIX_SYS_RENAME, (long)(uintptr_t)oldpath, (long)(uintptr_t)newpath);
+}
+
 static inline long posix_fcntl(int fd, int cmd, long arg)
 {
     return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
+}
+
+static inline long posix_ioctl(int fd, uint64_t request, void* argp)
+{
+    return rdnx_syscall6(POSIX_SYS_IOCTL, fd, (long)request, (long)(uintptr_t)argp, 0, 0, 0);
+}
+
+static inline long posix_stat(const char* path, void* st)
+{
+    return rdnx_syscall6(POSIX_SYS_STAT, (long)(uintptr_t)path, (long)(uintptr_t)st, 0, 0, 0, 0);
+}
+
+static inline long posix_fstat(int fd, void* st)
+{
+    return rdnx_syscall6(POSIX_SYS_FSTAT, fd, (long)(uintptr_t)st, 0, 0, 0, 0);
+}
+
+static inline long posix_lseek(int fd, long off, int whence)
+{
+    return rdnx_syscall6(POSIX_SYS_LSEEK, fd, off, whence, 0, 0, 0);
 }
 
 static inline long posix_uname(void* u)
@@ -50,9 +146,18 @@ static inline long posix_exit(int code)
     return rdnx_syscall1(POSIX_SYS_EXIT, code);
 }
 
+static inline long posix_execve(const char* path, const char* const argv[], const char* const envp[])
+{
+    return rdnx_syscall6(POSIX_SYS_EXEC,
+                         (long)(uintptr_t)path,
+                         (long)(uintptr_t)argv,
+                         (long)(uintptr_t)envp,
+                         0, 0, 0);
+}
+
 static inline long posix_exec(const char* path)
 {
-    return rdnx_syscall1(POSIX_SYS_EXEC, (long)(uintptr_t)path);
+    return posix_execve(path, (const char* const*)0, (const char* const*)0);
 }
 
 static inline long posix_spawn(const char* path, const char* const argv[])
@@ -139,6 +244,44 @@ static inline long posix_brk(void* new_break)
 static inline long posix_fork(void)
 {
     return rdnx_syscall0(POSIX_SYS_FORK);
+}
+
+static inline long posix_clock_gettime(int clock_id, void* tp)
+{
+    return rdnx_syscall2(POSIX_SYS_CLOCK_GETTIME, (long)clock_id, (long)(uintptr_t)tp);
+}
+
+static inline long posix_nanosleep(const void* req, void* rem)
+{
+    return rdnx_syscall2(POSIX_SYS_NANOSLEEP, (long)(uintptr_t)req, (long)(uintptr_t)rem);
+}
+
+static inline long posix_kill(long pid, int signum)
+{
+    return rdnx_syscall2(POSIX_SYS_KILL, pid, (long)signum);
+}
+
+static inline long posix_sigaction(int signum, const void* act, void* oldact)
+{
+    return rdnx_syscall6(POSIX_SYS_SIGACTION,
+                         (long)signum,
+                         (long)(uintptr_t)act,
+                         (long)(uintptr_t)oldact,
+                         0, 0, 0);
+}
+
+static inline long posix_sigreturn(void)
+{
+    return rdnx_syscall0(POSIX_SYS_SIGRETURN);
+}
+
+static inline long posix_scstat(rodnix_scstat_entry_t* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_SCSTAT,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

@@ -3,6 +3,7 @@
 #include "../core/cpu.h"
 #include "../core/memory.h"
 #include "../common/security.h"
+#include "../common/syscall.h"
 #include "../fabric/fabric.h"
 #include "../fabric/device/device.h"
 #include "../fabric/bus/pci.h"
@@ -247,6 +248,138 @@ static uint64_t posix_close(uint64_t a1,
     return unix_fs_close(a1);
 }
 
+static uint64_t posix_pipe(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_pipe(a1);
+}
+
+static uint64_t posix_dup(uint64_t a1,
+                          uint64_t a2,
+                          uint64_t a3,
+                          uint64_t a4,
+                          uint64_t a5,
+                          uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_dup(a1);
+}
+
+static uint64_t posix_dup2(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_dup2(a1, a2);
+}
+
+static uint64_t posix_chdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_chdir(a1);
+}
+
+static uint64_t posix_getcwd(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_getcwd(a1, a2);
+}
+
+static uint64_t posix_mkdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_mkdir(a1);
+}
+
+static uint64_t posix_unlink(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_unlink(a1);
+}
+
+static uint64_t posix_rmdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_rmdir(a1);
+}
+
+static uint64_t posix_rename(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_rename(a1, a2);
+}
+
 static uint64_t posix_fcntl(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,
@@ -258,6 +391,60 @@ static uint64_t posix_fcntl(uint64_t a1,
     (void)a5;
     (void)a6;
     return unix_fs_fcntl(a1, a2, a3);
+}
+
+static uint64_t posix_ioctl(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_ioctl(a1, a2, a3);
+}
+
+static uint64_t posix_stat(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_stat(a1, a2);
+}
+
+static uint64_t posix_fstat(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_fstat(a1, a2);
+}
+
+static uint64_t posix_lseek(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_lseek(a1, a2, a3);
 }
 
 static uint64_t posix_read(uint64_t a1,
@@ -295,12 +482,10 @@ static uint64_t posix_exec(uint64_t a1,
                            uint64_t a5,
                            uint64_t a6)
 {
-    (void)a2;
-    (void)a3;
     (void)a4;
     (void)a5;
     (void)a6;
-    return unix_fs_exec(a1);
+    return unix_fs_exec(a1, a2, a3);
 }
 
 static uint64_t posix_spawn(uint64_t a1,
@@ -483,7 +668,23 @@ typedef struct rodnix_sysinfo {
     uint8_t ioapic_available;
     uint8_t reserved0;
     uint8_t reserved1;
+
+    uint64_t syscall_int80_count;
+    uint64_t syscall_fast_count;
 } rodnix_sysinfo_t;
+
+typedef struct rdnx_timespec {
+    int64_t tv_sec;
+    int64_t tv_nsec;
+} rdnx_timespec_t;
+
+typedef struct rodnix_scstat_entry {
+    uint32_t syscall_no;
+    uint32_t reserved0;
+    uint64_t int80_count;
+    uint64_t fast_count;
+    uint64_t total_count;
+} rodnix_scstat_entry_t;
 
 static uint64_t posix_hwlist(uint64_t a1,
                              uint64_t a2,
@@ -710,8 +911,103 @@ static uint64_t posix_sysinfo(uint64_t a1,
     extern bool ioapic_is_available(void);
     out->apic_available = apic_is_available() ? 1u : 0u;
     out->ioapic_available = ioapic_is_available() ? 1u : 0u;
+    out->syscall_int80_count = syscall_get_int80_count();
+    out->syscall_fast_count = syscall_get_fast_count();
 
     return (uint64_t)RDNX_OK;
+}
+
+static uint64_t posix_scstat(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    rodnix_scstat_entry_t* user_entries = (rodnix_scstat_entry_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+    uint32_t total = (uint32_t)(POSIX_SYS_LAST + 1u);
+    uint32_t n = (max_entries < total) ? max_entries : total;
+
+    if (max_entries == 0 || !user_entries) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(*user_entries))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t int80 = syscall_get_int80_count_for_num(i);
+        uint64_t fast = syscall_get_fast_count_for_num(i);
+        rodnix_scstat_entry_t e;
+        e.syscall_no = i;
+        e.reserved0 = 0;
+        e.int80_count = int80;
+        e.fast_count = fast;
+        e.total_count = int80 + fast;
+        user_entries[i] = e;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_clock_gettime(uint64_t a1,
+                                    uint64_t a2,
+                                    uint64_t a3,
+                                    uint64_t a4,
+                                    uint64_t a5,
+                                    uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    enum {
+        CLOCK_REALTIME = 0,
+        CLOCK_MONOTONIC = 4,
+        CLOCK_MONOTONIC_ALT = 1
+    };
+    int clock_id = (int)a1;
+    rdnx_timespec_t* out = (rdnx_timespec_t*)(uintptr_t)a2;
+    if (!unix_user_range_ok(out, sizeof(*out))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    uint64_t us = 0;
+    if (clock_id == CLOCK_MONOTONIC || clock_id == CLOCK_MONOTONIC_ALT) {
+        us = console_get_uptime_us();
+    } else if (clock_id == CLOCK_REALTIME) {
+        us = console_get_realtime_us();
+    } else {
+        /* Be permissive for early userland ABI drift: treat unknown clocks as monotonic. */
+        us = console_get_uptime_us();
+    }
+    out->tv_sec = (int64_t)(us / 1000000ULL);
+    out->tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
+    return (uint64_t)RDNX_OK;
+}
+
+static uint64_t posix_nanosleep(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_time_nanosleep(a1, a2);
 }
 
 static uint64_t posix_mmap(uint64_t a1,
@@ -771,6 +1067,9 @@ static uint64_t posix_mmap(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     int fd = (int)a5;
+    if (fd < 0 || fd >= TASK_MAX_FD || task->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     uint64_t off = a6;
     vfs_file_t* file = (vfs_file_t*)task_fd_get(task, fd);
     if (!file || !file->node || !file->node->inode || file->node->type != VFS_NODE_FILE) {
@@ -838,6 +1137,49 @@ static uint64_t posix_fork(uint64_t a1,
     return unix_proc_fork();
 }
 
+static uint64_t posix_kill(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_kill(a1, a2);
+}
+
+static uint64_t posix_sigaction(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_sigaction(a1, a2, a3);
+}
+
+static uint64_t posix_sigreturn(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a1;
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_sigreturn();
+}
+
 void posix_syscall_init(void)
 {
     for (uint32_t i = 0; i < POSIX_SYSCALL_MAX; i++) {
@@ -868,5 +1210,9 @@ uint64_t posix_syscall_dispatch(uint64_t num,
     if (num >= POSIX_SYSCALL_MAX || !posix_table[num]) {
         return (uint64_t)RDNX_E_UNSUPPORTED;
     }
-    return posix_table[num](a1, a2, a3, a4, a5, a6);
+    uint64_t ret = posix_table[num](a1, a2, a3, a4, a5, a6);
+    if (num != POSIX_SYS_SIGRETURN) {
+        unix_proc_signal_checkpoint();
+    }
+    return ret;
 }

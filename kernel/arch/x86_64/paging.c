@@ -46,6 +46,9 @@ static bool physmap_ready = false;
 #define PTE_SIZE_1GB    0x080   /* Page size bit (1GB page) */
 #define PTE_NX          0x8000000000000000ULL  /* No Execute bit */
 
+#define PTE_ADDR_MASK_4KB 0x000FFFFFFFFFF000ULL
+#define PTE_ADDR_MASK_2MB 0x000FFFFFFFE00000ULL
+
 /* Page table structure sizes */
 #define PML4_ENTRIES    512     /* 512 entries per PML4 */
 #define PDPT_ENTRIES    512     /* 512 entries per PDPT */
@@ -233,6 +236,8 @@ static uint64_t* paging_get_pdpt_for(uint64_t* pml4, uint64_t pml4_entry)
     return (uint64_t*)(pdpt_phys + X86_64_KERNEL_VIRT_BASE);
 }
 
+static void paging_flush_tlb(void* virt);
+
 static uint64_t* paging_get_pd_for(uint64_t pdpt_entry)
 {
     if (!(pdpt_entry & PTE_PRESENT)) {
@@ -310,6 +315,9 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
 
     uint64_t entry = phys | (flags & (PTE_PRESENT | PTE_RW | PTE_USER | PTE_NX));
     pt[pt_idx] = entry;
+    if (current_pml4_phys == pml4_phys) {
+        paging_flush_tlb((void*)virt);
+    }
     return 0;
 }
 
@@ -954,7 +962,7 @@ uint64_t paging_get_physical(uint64_t virt)
     
     /* Check if this is a 2MB page */
     if (pd_entry & PTE_SIZE_2MB) {
-        uint64_t phys = (pd_entry & ~0x1FFFFF) | (virt & 0x1FFFFF);
+        uint64_t phys = (pd_entry & PTE_ADDR_MASK_2MB) | (virt & 0x1FFFFF);
         return phys;
     }
     
@@ -965,7 +973,7 @@ uint64_t paging_get_physical(uint64_t virt)
         return 0;
     }
     
-    uint64_t phys = (pte & ~PAGE_OFFSET_MASK) | (virt & PAGE_OFFSET_MASK);
+    uint64_t phys = (pte & PTE_ADDR_MASK_4KB) | (virt & PAGE_OFFSET_MASK);
     return phys;
 }
 

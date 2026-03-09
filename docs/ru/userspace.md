@@ -26,9 +26,16 @@
 - Userspace разделён на 2 программы:
   - `/bin/init` — launcher: smoke + `exec("/bin/sh")`;
   - `/bin/sh` — интерактивный shell (`help`, `pid`, `hostname`, `cd [path]`,
-    `motd`, `uname`, `cat`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
+    `motd`, `uname`, `smoke`, `ttytest`, `run <path>`, `exec <path>`, `exit`).
   - shell умеет запускать внешние программы напрямую:
     `<program> [args...]` (по умолчанию как `/bin/<program>`, либо абсолютный путь).
+  - shell поддерживает базовый Unix-синтаксис конвейеров и редиректов:
+    - `cmd1 | cmd2`
+    - `cmd > file`, `cmd >> file`
+    - `cmd < file`
+    - `cmd 2> file`, `cmd 2>> file`
+    - при `exit != 0` shell не считает команду "не найденной";
+      сообщение `command not found or failed` используется для реальной ошибки spawn/exec.
   - принята традиционная Unix-модель команд shell:
     - stateful-команды (минимум `cd`) остаются builtin в `sh`;
     - утилиты (`ls`, `cat`, `echo`, и др.) развиваются как отдельные
@@ -41,8 +48,26 @@
 - stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`);
   в VFS созданы узлы `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.
   На текущем этапе это виртуальные VFS-узлы (до выделения отдельного `devfs`).
-- `ttytest` используется для ручной проверки line discipline (`Ctrl-U`,
-  `Ctrl-D`, backspace, canonical newline).
+- `ttytest` используется для ручной проверки line discipline
+  (backspace, canonical newline).
+- Добавлен минимальный TTY control-plane через `ioctl`:
+  - `isatty(fd)` через `RDNX_TTY_IOCTL_ISATTY`;
+  - `tcgetattr/tcsetattr(TCSANOW)` через `RDNX_TTY_IOCTL_GETATTR/SETATTR`
+    (termios-lite: `ECHO`, `ECHOCTL`, `ISIG`, `ICANON`, `IEXTEN` + `c_cc[]`).
+  - Поддержано базовое control-char поведение через `c_cc`:
+    `VINTR`, `VERASE`, `VKILL`, `VEOF`.
+- В POSIX ABI добавлены `rename` и `nanosleep`.
+- В POSIX ABI добавлены базовые сигналы:
+  - `kill`
+  - `sigaction`
+  - `sigreturn`
+  (MVP: базовый handler/restorer путь, без process-groups и расширенной mask-логики).
+- Добавлена userspace-утилита `/bin/sleep` (`sleep <seconds>`).
+- Добавлена userspace-утилита `/bin/sigtest` для проверки сигналов.
+- Добавлена userspace-утилита `/bin/stty` для управления termios-lite:
+  - профили `raw` (безопасный raw-lite), `-raw`/`cooked`, `sane`;
+  - флаги `echo/-echo`, `isig/-isig`, `icanon/-icanon`, `iexten/-iexten`, `echoctl/-echoctl`;
+  - control chars `intr`, `erase`, `kill`, `eof` (например `stty intr ^C`).
 - Добавлена утилита `/bin/ifconfig` (userspace), работающая через syscall
   `netiflist` и Fabric net-service.
 - Для CI есть авто-сценарий `/etc/smoke.ifconfig.auto`:
@@ -65,6 +90,10 @@
   - `spawn/waitpid` (shell-команда `run <path>`)
   - передача `argc/argv` в userspace для запуска внешних программ из shell
   - `exit` (возврат управления в shell)
+  - `rename` (переименование/перемещение в VFS)
+  - `ioctl` (минимум для console TTY)
+  - `nanosleep` (таймауты в userspace)
+  - `kill/sigaction/sigreturn` (базовый signal path)
 
 ## Инварианты
 

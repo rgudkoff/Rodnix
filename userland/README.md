@@ -3,7 +3,9 @@
 Этот каталог содержит заготовки пользовательских компонентов RodNIX.
 Минимальный запуск userland уже доступен по умолчанию при boot:
 ядро загружает `/bin/init` (ELF64), переключает поток в ring3 и использует
-`int 0x80` для базовых POSIX-вызовов (`read/write/exit` и др.).
+базовые POSIX-вызовы (`read/write/exit` и др.).
+В userland по умолчанию используется fast entry `syscall/sysret`;
+legacy entry `int 0x80` сохранён как fallback.
 
 Текущая схема запуска:
 - `/bin/init` — launcher (smoke + `exec("/bin/sh")`).
@@ -23,7 +25,6 @@
   - `/etc/ttys` — задел под описание терминалов.
 
 Ограничения текущего состояния:
-- это минимальный путь без полноценной process model (`fork/wait`);
 - ABI и набор syscalls пока неполные;
 - bootstrap‑сервер в userland и сервисный запуск через IPC ещё в работе.
 
@@ -37,6 +38,14 @@ POSIX syscall номера синхронизируются автоматиче
 - `dirent.h`, `termios.h`, `time.h`, `pwd.h`, `grp.h`, `limits.h`
 - `sys/types.h`, `sys/fcntl.h`, `sys/wait.h`, `sys/stat.h`, `sys/errno.h`
 - `sys/signal.h`, `sys/mman.h`, `sys/dirent.h`, `sys/termios.h`, `sys/time.h`
+
+В `userland/libc` подключен `libc-lite` (минимальный runtime-слой):
+- `errno` storage;
+- базовые `string`/`ctype`/`stdlib`/`stdio` функции;
+- handle-based `dirent` API (`opendir/readdir/closedir`);
+- базовый file-path API (`stat/fstat/lseek`);
+- POSIX-обертки в `unistd.h` возвращают `-1` и выставляют `errno`
+  для отрицательных кодов ядра.
 
 Числовые значения ключевых `errno`/`fcntl`/`wait` констант выравниваются с
 vendor BSD baseline (`third_party/bsd/*/sys/sys/*`) и проверяются

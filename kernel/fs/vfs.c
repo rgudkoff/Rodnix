@@ -631,6 +631,71 @@ int vfs_unlink(const char* path)
     return RDNX_OK;
 }
 
+static int vfs_is_ancestor_dir(const vfs_node_t* ancestor, const vfs_node_t* node)
+{
+    const vfs_node_t* cur = node;
+    while (cur) {
+        if (cur == ancestor) {
+            return 1;
+        }
+        cur = cur->parent;
+    }
+    return 0;
+}
+
+int vfs_rename(const char* old_path, const char* new_path)
+{
+    if (!old_path || !new_path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    if (strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0) {
+        return RDNX_E_DENIED;
+    }
+    if (strcmp(old_path, new_path) == 0) {
+        return RDNX_OK;
+    }
+
+    char old_leaf[32];
+    char new_leaf[32];
+    vfs_node_t* old_parent = vfs_resolve_parent(old_path, old_leaf, sizeof(old_leaf));
+    vfs_node_t* new_parent = vfs_resolve_parent(new_path, new_leaf, sizeof(new_leaf));
+    if (!old_parent || !new_parent || old_leaf[0] == '\0' || new_leaf[0] == '\0') {
+        return RDNX_E_NOTFOUND;
+    }
+
+    vfs_node_t* node = vfs_find_child(old_parent, old_leaf);
+    if (!node) {
+        return RDNX_E_NOTFOUND;
+    }
+    if (vfs_find_child(new_parent, new_leaf)) {
+        return RDNX_E_BUSY;
+    }
+    if (node->type == VFS_NODE_DIR && vfs_is_ancestor_dir(node, new_parent)) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_node_t* prev = NULL;
+    for (vfs_node_t* it = old_parent->children; it; it = it->sibling) {
+        if (it == node) {
+            if (prev) {
+                prev->sibling = it->sibling;
+            } else {
+                old_parent->children = it->sibling;
+            }
+            break;
+        }
+        prev = it;
+    }
+
+    node->sibling = new_parent->children;
+    new_parent->children = node;
+    node->parent = new_parent;
+    strncpy(node->name, new_leaf, sizeof(node->name) - 1);
+    node->name[sizeof(node->name) - 1] = '\0';
+    vfs_cache_reset();
+    return RDNX_OK;
+}
+
 int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx)
 {
     if (!path || !cb || !vfs_ready) {
@@ -728,6 +793,74 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
         inode->size = end;
     }
     return (int)size;
+}
+
+int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos)
+{
+    uint64_t base;
+    uint64_t end;
+    int64_t next;
+
+    if (!file || !file->node || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+    if (file->node->inode->flags & VFS_INODE_CONSOLE) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    base = 0;
+    end = (uint64_t)file->node->inode->size;
+    switch (whence) {
+        case 0: /* SEEK_SET */
+            base = 0;
+            break;
+        case 1: /* SEEK_CUR */
+            base = (uint64_t)file->pos;
+            break;
+        case 2: /* SEEK_END */
+            base = end;
+            break;
+        default:
+            return RDNX_E_INVALID;
+    }
+
+    next = (int64_t)base + off;
+    if (next < 0) {
+        return RDNX_E_INVALID;
+    }
+    file->pos = (size_t)next;
+    if (out_pos) {
+        *out_pos = (uint64_t)file->pos;
+    }
+    return RDNX_OK;
+}
+
+int vfs_stat(const char* path, vfs_stat_t* out_stat)
+{
+    vfs_node_t* node;
+    if (!path || !out_stat || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    node = vfs_lookup(path);
+    if (!node || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    memset(out_stat, 0, sizeof(*out_stat));
+    out_stat->mode = (node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->size = (uint64_t)node->inode->size;
+    return RDNX_OK;
+}
+
+int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat)
+{
+    if (!file || !file->node || !file->node->inode || !out_stat) {
+        return RDNX_E_INVALID;
+    }
+    memset(out_stat, 0, sizeof(*out_stat));
+    out_stat->mode = (file->node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->size = (uint64_t)file->node->inode->size;
+    return RDNX_OK;
 }
 
 vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type)

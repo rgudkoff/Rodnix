@@ -6,6 +6,10 @@
 #include <stddef.h>
 
 static syscall_fn_t syscall_table[SYSCALL_MAX];
+static volatile uint64_t g_syscall_int80_count = 0;
+static volatile uint64_t g_syscall_fast_count = 0;
+static volatile uint64_t g_syscall_int80_by_num[POSIX_SYS_LAST + 1];
+static volatile uint64_t g_syscall_fast_by_num[POSIX_SYS_LAST + 1];
 _Static_assert(SYS_WRITE > POSIX_SYS_LAST, "legacy SYS_* ids must not overlap POSIX ids");
 
 static uint64_t sys_nop(uint64_t a1,
@@ -75,6 +79,10 @@ void syscall_init(void)
     for (uint32_t i = 0; i < SYSCALL_MAX; i++) {
         syscall_table[i] = NULL;
     }
+    for (uint32_t i = 0; i <= POSIX_SYS_LAST; i++) {
+        g_syscall_int80_by_num[i] = 0;
+        g_syscall_fast_by_num[i] = 0;
+    }
 
     syscall_register(SYS_NOP, sys_nop);
     syscall_register(SYS_TEST_SLEEP, sys_test_sleep);
@@ -123,4 +131,56 @@ uint64_t syscall_dispatch(uint64_t num,
     }
 
     return (uint64_t)RDNX_E_UNSUPPORTED;
+}
+
+void syscall_account_int80(void)
+{
+    g_syscall_int80_count++;
+}
+
+void syscall_account_fast(void)
+{
+    g_syscall_fast_count++;
+}
+
+void syscall_account_entry(uint64_t num, int fast_entry)
+{
+    if (fast_entry) {
+        syscall_account_fast();
+        if (num <= POSIX_SYS_LAST) {
+            g_syscall_fast_by_num[num]++;
+        }
+        return;
+    }
+
+    syscall_account_int80();
+    if (num <= POSIX_SYS_LAST) {
+        g_syscall_int80_by_num[num]++;
+    }
+}
+
+uint64_t syscall_get_int80_count(void)
+{
+    return g_syscall_int80_count;
+}
+
+uint64_t syscall_get_fast_count(void)
+{
+    return g_syscall_fast_count;
+}
+
+uint64_t syscall_get_int80_count_for_num(uint64_t num)
+{
+    if (num > POSIX_SYS_LAST) {
+        return 0;
+    }
+    return g_syscall_int80_by_num[num];
+}
+
+uint64_t syscall_get_fast_count_for_num(uint64_t num)
+{
+    if (num > POSIX_SYS_LAST) {
+        return 0;
+    }
+    return g_syscall_fast_by_num[num];
 }

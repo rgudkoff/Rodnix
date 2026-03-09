@@ -45,11 +45,8 @@ typedef enum {
 static ansi_state_t ansi_state = ANSI_STATE_NORMAL;
 static char ansi_csi_buf[16];
 static uint8_t ansi_csi_len = 0;
-static bool tsc_uptime_base_set = false;
-static uint64_t tsc_uptime_base = 0;
-static bool rtc_uptime_base_set = false;
-static uint64_t rtc_uptime_base_sec = 0;
 static const char* uptime_source_name = "unknown";
+static uint64_t uptime_last_us = 0;
 
 static inline void outb(uint16_t port, uint8_t value)
 {
@@ -177,92 +174,50 @@ static uint64_t rtc_unix_seconds(uint32_t y, uint32_t mo, uint32_t d,
 
 static uint64_t console_get_uptime_us_internal(void)
 {
-    extern bool apic_is_available(void);
+    extern const char* kernel_timer_source_name(void);
     extern uint32_t apic_timer_get_ticks(void);
     extern uint32_t apic_timer_get_frequency(void);
     extern uint64_t pit_get_uptime_us(void);
     extern uint32_t pit_get_frequency(void);
     extern uint64_t scheduler_get_ticks(void);
-    extern uint64_t cpu_get_time(void);
-    extern uint64_t cpu_get_frequency(void);
+    const char* timer_src = kernel_timer_source_name();
 
-    uint64_t apic_us = 0;
-    uint64_t pit_us = 0;
-    uint64_t sched_us = 0;
-    uint64_t tsc_us = 0;
-    uint64_t rtc_us = 0;
+    uint64_t now_us = 0;
 
-    if (apic_is_available()) {
-        uint32_t af = apic_timer_get_frequency();
-        if (af > 0) {
-            apic_us = ((uint64_t)apic_timer_get_ticks() * 1000000ULL) / (uint64_t)af;
+    if (timer_src && timer_src[0] == 'l') {
+        uint32_t hz = apic_timer_get_frequency();
+        if (hz > 0) {
+            uptime_source_name = "lapic";
+            now_us = ((uint64_t)apic_timer_get_ticks() * 1000000ULL) / (uint64_t)hz;
+            goto done;
         }
     }
 
-    pit_us = pit_get_uptime_us();
+    {
+        uint64_t pit_us = pit_get_uptime_us();
+        if (pit_us > 0) {
+            uptime_source_name = "pit";
+            now_us = pit_us;
+            goto done;
+        }
+    }
 
     {
-        uint32_t hz = 0;
-        if (apic_is_available()) {
-            hz = apic_timer_get_frequency();
-        }
-        if (hz == 0) {
-            hz = pit_get_frequency();
-        }
+        uint32_t hz = pit_get_frequency();
         if (hz == 0) {
             hz = 100;
         }
-        sched_us = (scheduler_get_ticks() * 1000000ULL) / (uint64_t)hz;
+        uptime_source_name = "scheduler";
+        now_us = (scheduler_get_ticks() * 1000000ULL) / (uint64_t)hz;
     }
 
-    {
-        uint64_t tsc_freq = cpu_get_frequency();
-        if (tsc_freq > 0) {
-            uint64_t now = cpu_get_time();
-            if (!tsc_uptime_base_set) {
-                tsc_uptime_base = now;
-                tsc_uptime_base_set = true;
-            }
-            if (now >= tsc_uptime_base) {
-                tsc_us = ((now - tsc_uptime_base) * 1000000ULL) / tsc_freq;
-            }
-        }
+done:
+    if (now_us < uptime_last_us) {
+        now_us = uptime_last_us;
+    } else {
+        uptime_last_us = now_us;
     }
-
-    {
-        uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-        if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
-            uint64_t now_sec = rtc_unix_seconds(y, mo, d, h, mi, s);
-            if (!rtc_uptime_base_set) {
-                rtc_uptime_base_sec = now_sec;
-                rtc_uptime_base_set = true;
-            }
-            if (now_sec >= rtc_uptime_base_sec) {
-                rtc_us = (now_sec - rtc_uptime_base_sec) * 1000000ULL;
-            }
-        }
-    }
-
-    uint64_t best = apic_us;
-    const char* best_name = "apic";
-    if (pit_us > best) {
-        best = pit_us;
-        best_name = "pit";
-    }
-    if (sched_us > best) {
-        best = sched_us;
-        best_name = "scheduler";
-    }
-    if (tsc_us > best) {
-        best = tsc_us;
-        best_name = "tsc";
-    }
-    if (rtc_us > best) {
-        best = rtc_us;
-        best_name = "bios-rtc";
-    }
-    uptime_source_name = best_name;
-    return best;
+    return now_us;
 }
 uint64_t console_get_uptime_us(void)
 {
@@ -272,6 +227,17 @@ uint64_t console_get_uptime_us(void)
 const char* console_get_uptime_source(void)
 {
     return uptime_source_name;
+}
+
+uint64_t console_get_realtime_us(void)
+{
+    uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+    if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
+        uint64_t sec = rtc_unix_seconds(y, mo, d, h, mi, s);
+        uint64_t sub = console_get_uptime_us_internal() % 1000000ULL;
+        return sec * 1000000ULL + sub;
+    }
+    return console_get_uptime_us_internal();
 }
 
 static void console_write_dec_fixed(uint64_t value, int width)
@@ -579,6 +545,7 @@ void console_init(void)
     vga_row = 0;
     vga_col = 0;
     vga_color = 0x0F;
+
     serial_init();
     /* Initialize cursor position */
     update_cursor(vga_row, vga_col);

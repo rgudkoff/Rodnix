@@ -43,7 +43,6 @@ static void unix_readdir_cb(const vfs_node_t* node, void* ctx)
 
 uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint64_t user_len)
 {
-    const char* user_path = (const char*)(uintptr_t)user_path_ptr;
     void* user_buf = (void*)(uintptr_t)user_entries_ptr;
     size_t n = (size_t)user_len;
     char path_buf[UNIX_PATH_MAX];
@@ -54,7 +53,7 @@ uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint
     if (!unix_user_range_ok(user_buf, n)) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if (unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path) != RDNX_OK) {
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
 

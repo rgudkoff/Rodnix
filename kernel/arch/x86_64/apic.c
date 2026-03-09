@@ -15,6 +15,8 @@
 #include "config.h"
 #include "paging.h"
 #include "pic.h"
+#include "lapic_regs.h"
+#include "lapic_access.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
@@ -30,46 +32,13 @@
  * APIC Register Definitions
  * ============================================================================ */
 
-/* Local APIC Base Address (MSR 0x1B) */
-#define APIC_BASE_MSR        0x1B
-#define APIC_BASE_ENABLE     (1UL << 11)
-#define APIC_BASE_BSP        (1UL << 8)
-
-/* Local APIC Registers (memory-mapped, offset from base) */
-#define APIC_ID              0x020    /* Local APIC ID */
-#define APIC_VERSION         0x030    /* Local APIC Version */
-#define APIC_TPR             0x080    /* Task Priority Register */
-#define APIC_APR             0x090    /* Arbitration Priority Register */
-#define APIC_PPR             0x0A0    /* Processor Priority Register */
-#define APIC_EOI             0x0B0    /* End of Interrupt */
-#define APIC_SVR             0x0F0    /* Spurious Interrupt Vector Register */
-#define APIC_ESR             0x280    /* Error Status Register */
-#define APIC_ICR_LOW         0x300    /* Interrupt Command Register (low) */
-#define APIC_ICR_HIGH        0x310    /* Interrupt Command Register (high) */
-#define APIC_LVT_TIMER       0x320    /* Local Vector Table - Timer */
-#define APIC_LVT_THERMAL     0x330    /* Local Vector Table - Thermal */
-#define APIC_LVT_PERF        0x340    /* Local Vector Table - Performance */
-#define APIC_LVT_LINT0       0x350    /* Local Vector Table - LINT0 */
-#define APIC_LVT_LINT1       0x360    /* Local Vector Table - LINT1 */
-#define APIC_LVT_ERROR       0x370    /* Local Vector Table - Error */
-#define APIC_TIMER_INITCNT   0x380    /* Timer Initial Count */
-#define APIC_TIMER_CURRCNT   0x390    /* Timer Current Count */
-#define APIC_TIMER_DIV       0x3E0    /* Timer Divide Configuration */
-
-/* APIC SVR flags */
-#define APIC_SVR_ENABLE      (1 << 8)
-#define APIC_SVR_SPURIOUS_VECTOR  0xFF
-
-/* APIC LVT flags */
-#define APIC_LVT_MASKED      (1 << 16)
-#define APIC_LVT_TIMER_PERIODIC   (1 << 17)
-
 /* ============================================================================
  * I/O APIC Register Definitions
  * ============================================================================ */
 
 /* I/O APIC Base Address (default, will be overridden from ACPI MADT if available) */
 #define IOAPIC_BASE_ADDR_DEFAULT   0xFEC00000
+#define IOAPIC_MMIO_VIRT           0xFFFFFFFFFEC00000ULL
 
 /* ACPI table signatures */
 #define ACPI_SIG_RSDP     "RSD PTR "
@@ -143,8 +112,6 @@ struct madt_ioapic {
  * APIC State
  * ============================================================================ */
 
-static volatile uint32_t* apic_base = NULL;
-static uint64_t apic_base_phys_global = 0;
 static bool apic_initialized = false;
 static bool apic_available = false;
 
@@ -360,20 +327,6 @@ static uint64_t apic_read_msr(uint32_t msr)
 }
 
 /**
- * @function apic_write_msr
- * @brief Write Model-Specific Register (MSR)
- * 
- * @param msr MSR number
- * @param value Value to write
- */
-static void apic_write_msr(uint32_t msr, uint64_t value)
-{
-    uint32_t low = (uint32_t)(value & 0xFFFFFFFF);
-    uint32_t high = (uint32_t)(value >> 32);
-    __asm__ volatile ("wrmsr" : : "a" (low), "d" (high), "c" (msr));
-}
-
-/**
  * @function apic_read_register
  * @brief Read APIC register
  * 
@@ -382,73 +335,7 @@ static void apic_write_msr(uint32_t msr, uint64_t value)
  */
 static uint32_t apic_read_register(uint32_t offset)
 {
-    extern void kputs(const char* str);
-    extern void kprint_hex(uint64_t value);
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-1] Check base\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    if (!apic_base) {
-        #if APIC_DEBUG
-        kputs("[APIC-REG-1.1] Base is NULL\n");
-        __asm__ volatile ("" ::: "memory");
-        #endif
-        return 0;
-    }
-    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
-        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
-        uint64_t phys = msr & 0xFFFFF000;
-        if (phys) {
-            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
-        }
-        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
-            return 0;
-        }
-    }
-    __asm__ volatile ("" ::: "memory");
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-2] Calculate index\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    uint32_t index = offset / sizeof(uint32_t);
-    __asm__ volatile ("" ::: "memory");
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-3] Get pointer\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    volatile uint32_t* reg_ptr = &apic_base[index];
-    __asm__ volatile ("" ::: "memory");
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-4] Read register\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    /* APIC registers are memory-mapped I/O - need careful access */
-    /* Use simple volatile pointer dereference (compiler will handle it) */
-    #if APIC_DEBUG
-    kputs("[APIC-REG-4.1] Before read\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    /* Simple volatile read - compiler will generate appropriate instructions */
-    /* APIC registers must be accessed as 32-bit aligned */
-    uint32_t value = *reg_ptr;
-    __asm__ volatile ("" ::: "memory");
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-4.2] After read\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    #if APIC_DEBUG
-    kputs("[APIC-REG-5] Return\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    return value;
+    return lapic_access_read(offset);
 }
 
 /**
@@ -460,27 +347,12 @@ static uint32_t apic_read_register(uint32_t offset)
  */
 static void apic_write_register(uint32_t offset, uint32_t value)
 {
-    if (!apic_base) {
-        return;
-    }
-    if ((uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
-        uint64_t msr = apic_read_msr(APIC_BASE_MSR);
-        uint64_t phys = msr & 0xFFFFF000;
-        if (phys) {
-            apic_base = (volatile uint32_t*)X86_64_PHYS_TO_VIRT(phys);
-        }
-        if (!phys || (uint64_t)(uintptr_t)apic_base < X86_64_KERNEL_VIRT_BASE) {
-            return;
-        }
-    }
-    /* APIC registers are 32-bit aligned, so divide by 4 using bit shift */
-    apic_base[offset >> 2] = value;
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+    lapic_access_write(offset, value);
 }
 
 static void apic_reset_local(void)
 {
-    if (!apic_base) {
+    if (!lapic_access_ready()) {
         return;
     }
     /* Mask all LVT entries before enabling APIC */
@@ -613,67 +485,33 @@ int apic_init(void)
     
     kputs("[APIC-3] Read MSR\n");
     __asm__ volatile ("" ::: "memory");
-    /* Read APIC base address from MSR */
     uint64_t apic_base_msr = apic_read_msr(APIC_BASE_MSR);
     __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-4] Extract base\n");
     __asm__ volatile ("" ::: "memory");
-    /* Extract physical base address (bits 12-35) */
     uint64_t apic_base_phys = apic_base_msr & 0xFFFFF000;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-5] Enable in MSR\n");
+    kputs("[APIC-5] Setup LAPIC access backend\n");
     __asm__ volatile ("" ::: "memory");
-    /* Enable APIC in MSR if not already enabled */
-    if (!(apic_base_msr & APIC_BASE_ENABLE)) {
-        apic_write_msr(APIC_BASE_MSR, apic_base_msr | APIC_BASE_ENABLE);
-    }
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[APIC-6] Map registers\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Map APIC registers to virtual memory with MMIO flags (PCD) */
-    /* APIC base is typically at 0xFEE00000, which needs uncached access */
     extern void kprint_hex(uint64_t value);
-    kputs("[APIC-6.1] Base phys = ");
+    kputs("[APIC-5.1] Base phys = ");
     kprint_hex(apic_base_phys);
     kputs("\n");
     __asm__ volatile ("" ::: "memory");
-    
-    /* APIC registers need to be mapped with PCD (Page Cache Disable) flag */
-    /* This ensures uncached access for MMIO registers */
-    /* Use identity mapping with PCD flag */
-    extern int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t flags);
-    extern int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
-    
-    /* APIC region is 4KB, map it with PCD flag for uncached access */
-    apic_base_phys_global = apic_base_phys;
-    uint64_t apic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(apic_base_phys);
-    uint64_t mmio_flags = 0x001 | 0x002 | 0x010; /* PRESENT | RW | PCD (uncached) */
-    
-    kputs("[APIC-6.2] Map APIC with PCD flag\n");
-    __asm__ volatile ("" ::: "memory");
-    if (paging_map_page_4kb(apic_virt, apic_base_phys, mmio_flags) != 0) {
-        kputs("[APIC-6.2.1] Failed to map APIC\n");
+
+    if (lapic_access_init(apic_base_phys, true) != 0) {
+        kputs("[APIC-5.2] Failed to initialize LAPIC access backend\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
-    __asm__ volatile ("" ::: "memory");
-    
+
     apic_available = true;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[APIC-6.3] APIC mapped\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    apic_base = (volatile uint32_t*)apic_virt;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[APIC-6.4] Base assigned\n");
+    kprintf("[APIC-5.3] LAPIC access mode: %s\n", lapic_access_mode_name());
     __asm__ volatile ("" ::: "memory");
 
-    kputs("[APIC-6.5] Reset LAPIC state\n");
+    kputs("[APIC-6] Reset LAPIC state\n");
     __asm__ volatile ("" ::: "memory");
     apic_reset_local();
     __asm__ volatile ("" ::: "memory");
@@ -690,6 +528,11 @@ int apic_init(void)
     __asm__ volatile ("" ::: "memory");
     kputs("[APIC-7.2] After read SVR\n");
     __asm__ volatile ("" ::: "memory");
+
+    {
+        uint32_t ver = apic_read_register(APIC_VERSION);
+        kprintf("[APIC-7.3] LAPIC version=%x svr=%x\n", ver, svr);
+    }
     
     kputs("[APIC-8] Configure SVR\n");
     __asm__ volatile ("" ::: "memory");
@@ -878,7 +721,7 @@ int ioapic_init(void)
     /* Map I/O APIC registers (4KB, uncached MMIO) */
     /* Use address found from MADT or default */
     uint64_t ioapic_phys = ioapic_base_addr;
-    uint64_t ioapic_virt = (uint64_t)(uintptr_t)X86_64_PHYS_TO_VIRT(ioapic_phys);
+    uint64_t ioapic_virt = IOAPIC_MMIO_VIRT;
     uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
     
     #if APIC_DEBUG
@@ -1230,6 +1073,14 @@ int apic_timer_init(uint32_t frequency)
     if (!apic_initialized) {
         return -1;
     }
+
+    {
+        uint32_t ver = apic_read_register(APIC_VERSION);
+        if (ver == 0 || ver == 0xFFFFFFFFu) {
+            kprintf("[APIC-TIMER-INIT] LAPIC MMIO unavailable (version=%x)\n", ver);
+            return -1;
+        }
+    }
     
     apic_timer_frequency = frequency;
     scheduler_set_tick_rate(frequency);
@@ -1245,6 +1096,27 @@ int apic_timer_init(uint32_t frequency)
     if (interrupt_register(32, apic_timer_handler) != 0) {
         return -1;
     }
+
+    /* Verify timer registers are writable/readable before selecting LAPIC path. */
+    apic_write_register(APIC_TIMER_DIV, 0b0011);
+    apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED | 32u);
+    apic_write_register(APIC_TIMER_INITCNT, 0x1000u);
+    {
+        uint32_t div = apic_read_register(APIC_TIMER_DIV);
+        uint32_t lvt = apic_read_register(APIC_LVT_TIMER);
+        uint32_t init = apic_read_register(APIC_TIMER_INITCNT);
+        if (lvt == 0 || init == 0) {
+            kprintf("[APIC-TIMER-INIT] LAPIC timer regs unavailable div=%x lvt=%x init=%u\n",
+                    div, lvt, init);
+            return -1;
+        }
+    }
+
+    kprintf("[APIC-TIMER-INIT] hz=%u ticks_per_ms=%u div=%x lvt=%x\n",
+            apic_timer_frequency,
+            apic_timer_ticks_per_ms,
+            apic_read_register(APIC_TIMER_DIV),
+            apic_read_register(APIC_LVT_TIMER));
     
     return 0;
 }
@@ -1285,6 +1157,13 @@ void apic_timer_start(void)
     
     /* Set initial count to start timer */
     apic_write_register(APIC_TIMER_INITCNT, initial_count);
+    __asm__ volatile ("" ::: "memory");
+
+    kprintf("[APIC-TIMER-START] init=%u lvt=%x div=%x cur=%u\n",
+            initial_count,
+            apic_read_register(APIC_LVT_TIMER),
+            apic_read_register(APIC_TIMER_DIV),
+            apic_read_register(APIC_TIMER_CURRCNT));
 }
 
 /**
@@ -1325,4 +1204,28 @@ uint32_t apic_timer_get_ticks(void)
 uint32_t apic_timer_get_frequency(void)
 {
     return apic_timer_frequency;
+}
+
+uint32_t apic_timer_get_lvt_raw(void)
+{
+    if (!apic_initialized) {
+        return 0;
+    }
+    return apic_read_register(APIC_LVT_TIMER);
+}
+
+uint32_t apic_timer_get_initial_count(void)
+{
+    if (!apic_initialized) {
+        return 0;
+    }
+    return apic_read_register(APIC_TIMER_INITCNT);
+}
+
+uint32_t apic_timer_get_current_count(void)
+{
+    if (!apic_initialized) {
+        return 0;
+    }
+    return apic_read_register(APIC_TIMER_CURRCNT);
 }

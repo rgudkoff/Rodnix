@@ -688,16 +688,12 @@ int fabric_driver_register(fabric_driver_t *driver)
             if (driver->attach && driver->attach(dev) == 0) {
                 fabric_log("[fabric] Attach successful, will mark device as attached\n");
                 /* Mark device as attached - need to reacquire lock first */
-                extern void kputs(const char* str);
-                kputs("[FABRIC] Reacquiring lock to mark device as attached...\n");
                 spinlock_lock(&fabric_lock);
-                kputs("[FABRIC] Lock reacquired, marking device as attached...\n");
                 dev->driver_state = driver; /* Mark as attached */
                 fabric_node_set_driver_locked(dev, driver->name);
                 char node_path[FABRIC_NODE_PATH_MAX];
                 fabric_node_path_for_provider_locked(dev, node_path, sizeof(node_path));
                 spinlock_unlock(&fabric_lock);
-                kputs("[FABRIC] Device marked as attached, lock released\n");
                 fabric_log("[fabric] driver attached: %s -> %s\n", 
                          driver->name, dev->name);
                 fabric_event_emit(FABRIC_EVENT_DRIVER_ATTACHED,
@@ -716,9 +712,7 @@ int fabric_driver_register(fabric_driver_t *driver)
         }
         
         /* Reacquire lock for next iteration */
-        kputs("[FABRIC] Reacquiring lock for next iteration...\n");
         spinlock_lock(&fabric_lock);
-        kputs("[FABRIC] Lock reacquired for next iteration\n");
     }
     spinlock_unlock(&fabric_lock);
     
@@ -834,10 +828,6 @@ int fabric_device_publish(fabric_device_t *device)
 /* Publish a service */
 int fabric_service_publish(fabric_service_t *service)
 {
-    extern void kputs(const char* str);
-    
-    kputs("[FABRIC-SVC] fabric_service_publish() called\n");
-    
     if (!service || !service->name) {
         kputs("[FABRIC-SVC] ERROR: Invalid service or name\n");
         return RDNX_E_INVALID;
@@ -857,14 +847,8 @@ int fabric_service_publish(fabric_service_t *service)
         }
     }
     
-    kputs("[FABRIC-SVC] Service name: ");
-    kputs(service->name);
-    kputs("\n");
-    
     fabric_log("[fabric] Publishing service: %s\n", service->name);
-    kputs("[FABRIC-SVC] Acquiring lock...\n");
     spinlock_lock(&fabric_lock);
-    kputs("[FABRIC-SVC] Lock acquired\n");
     
     if (service_count >= MAX_SERVICES) {
         spinlock_unlock(&fabric_lock);
@@ -873,9 +857,7 @@ int fabric_service_publish(fabric_service_t *service)
         return -1;
     }
     
-    kputs("[FABRIC-SVC] Adding service to registry...\n");
     service_registry[service_count++] = service;
-    kputs("[FABRIC-SVC] Service added to registry\n");
 
     char path[FABRIC_NODE_PATH_MAX];
     int32_t parent_idx = -1;
@@ -910,7 +892,6 @@ int fabric_service_publish(fabric_service_t *service)
                                  NULL);
     
     spinlock_unlock(&fabric_lock);
-    kputs("[FABRIC-SVC] Lock released\n");
     fabric_event_emit(FABRIC_EVENT_SERVICE_PUBLISHED,
                      path,
                      service->name,
@@ -918,7 +899,6 @@ int fabric_service_publish(fabric_service_t *service)
                      node_flags);
     
     fabric_log("[fabric] service published: %s (count=%u)\n", service->name, service_count);
-    kputs("[FABRIC-SVC] fabric_service_publish() returning 0\n");
     
     return 0;
 }

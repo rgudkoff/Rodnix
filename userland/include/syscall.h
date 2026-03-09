@@ -8,6 +8,10 @@
 
 #include <stdint.h>
 
+#ifndef RDNX_USE_FAST_SYSCALL
+#define RDNX_USE_FAST_SYSCALL 1
+#endif
+
 static inline long rdnx_syscall6(long n,
                                  long a1,
                                  long a2,
@@ -17,6 +21,17 @@ static inline long rdnx_syscall6(long n,
                                  long a6)
 {
     long ret;
+#if RDNX_USE_FAST_SYSCALL
+    register long r10 __asm__("r10") = a4;
+    register long r8  __asm__("r8")  = a5;
+    register long r9  __asm__("r9")  = a6;
+    __asm__ volatile (
+        "syscall"
+        : "=a"(ret)
+        : "a"(n), "D"(a1), "S"(a2), "d"(a3), "r"(r10), "r"(r8), "r"(r9)
+        : "rcx", "r11", "cc", "memory"
+    );
+#else
     register long r10 __asm__("r10") = a4;
     register long r8  __asm__("r8")  = a5;
     register long r9  __asm__("r9")  = a6;
@@ -26,6 +41,7 @@ static inline long rdnx_syscall6(long n,
         : "a"(n), "D"(a1), "S"(a2), "d"(a3), "r"(r10), "r"(r8), "r"(r9)
         : "memory"
     );
+#endif
     return ret;
 }
 

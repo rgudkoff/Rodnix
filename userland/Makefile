@@ -23,7 +23,7 @@ ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
 INIT_SRCS = init/init.c
-SH_SRCS = shell/shell.c
+SH_SRCS = shell/main.c shell/io.c shell/parser.c shell/exec.c shell/builtins.c
 ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
 CAT_SRCS = bin/cat.c
@@ -33,31 +33,64 @@ HWLIST_SRCS = bin/hwlist.c
 FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
 FABRICNETCHECK_SRCS = bin/fabricnetcheck.c
-SYSINFO_SRCS = bin/sysinfo.c
+HOSTINFO_SRCS = bin/hostinfo.c
+SLEEP_SRCS = bin/sleep.c
+SIGTEST_SRCS = bin/sigtest.c
+STTY_SRCS = bin/stty.c
+TIMECHECK_SRCS = bin/timecheck.c
+SYSCALLTEST_SRCS = bin/syscalltest.c
+TTYREADTEST_SRCS = bin/ttyreadtest.c
+SCSTAT_SRCS = bin/scstat.c
+PIPETEST_SRCS = bin/pipetest.c
+FSAPITEST_SRCS = bin/fsapitest.c
+FORKTEST_SRCS = bin/forktest.c
+EXECVETEST_SRCS = bin/execvetest.c
 CONTRACT_FD_SRCS = bin/contract_fd.c
 CONTRACT_FD_INHERIT_SRCS = bin/contract_fd_inherit.c
 CONTRACT_SPAWN_WAIT_SRCS = bin/contract_spawn_wait.c
 CONTRACT_EXEC_PROBE_SRCS = bin/contract_exec_probe.c
 CONTRACT_EXEC_AFTER_SRCS = bin/contract_exec_after.c
+CONTRACT_HEAP_SRCS = bin/contract_heap.c
+CONTRACT_DIRENT_SRCS = bin/contract_dirent.c
+CONTRACT_FSIO_SRCS = bin/contract_fsio.c
+CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ)
-SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ)
-ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ)
-LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ)
-CAT_OBJS = $(addprefix $(BUILD_DIR)/, $(CAT_SRCS:.c=.o)) $(CRT0_OBJ)
-TRUE_OBJS = $(addprefix $(BUILD_DIR)/, $(TRUE_SRCS:.c=.o)) $(CRT0_OBJ)
-IFCONFIG_OBJS = $(addprefix $(BUILD_DIR)/, $(IFCONFIG_SRCS:.c=.o)) $(CRT0_OBJ)
-HWLIST_OBJS = $(addprefix $(BUILD_DIR)/, $(HWLIST_SRCS:.c=.o)) $(CRT0_OBJ)
-FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ)
-FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ)
-FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ)
-SYSINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSINFO_SRCS:.c=.o)) $(CRT0_OBJ)
-CONTRACT_FD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_SRCS:.c=.o)) $(CRT0_OBJ)
-CONTRACT_FD_INHERIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_INHERIT_SRCS:.c=.o)) $(CRT0_OBJ)
-CONTRACT_SPAWN_WAIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_SPAWN_WAIT_SRCS:.c=.o)) $(CRT0_OBJ)
-CONTRACT_EXEC_PROBE_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_PROBE_SRCS:.c=.o)) $(CRT0_OBJ)
-CONTRACT_EXEC_AFTER_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_AFTER_SRCS:.c=.o)) $(CRT0_OBJ)
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c
+LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o))
+
+INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CAT_OBJS = $(addprefix $(BUILD_DIR)/, $(CAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TRUE_OBJS = $(addprefix $(BUILD_DIR)/, $(TRUE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+IFCONFIG_OBJS = $(addprefix $(BUILD_DIR)/, $(IFCONFIG_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+HWLIST_OBJS = $(addprefix $(BUILD_DIR)/, $(HWLIST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+HOSTINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(HOSTINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SYSCALLTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSCALLTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TTYREADTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TTYREADTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SCSTAT_OBJS = $(addprefix $(BUILD_DIR)/, $(SCSTAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+PIPETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(PIPETEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FSAPITEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FSAPITEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FORKTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FORKTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+EXECVETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(EXECVETEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_FD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_FD_INHERIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FD_INHERIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_SPAWN_WAIT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_SPAWN_WAIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_EXEC_PROBE_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_PROBE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_EXEC_AFTER_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_EXEC_AFTER_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_HEAP_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_HEAP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_DIRENT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_DIRENT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_FSIO_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FSIO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CONTRACT_WAIT_NONCHILD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_WAIT_NONCHILD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
@@ -70,12 +103,27 @@ HWLIST_ELF = $(BUILD_DIR)/hwlist.elf
 FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
 FABRICNETCHECK_ELF = $(BUILD_DIR)/fabricnetcheck.elf
-SYSINFO_ELF = $(BUILD_DIR)/sysinfo.elf
+HOSTINFO_ELF = $(BUILD_DIR)/hostinfo.elf
+SLEEP_ELF = $(BUILD_DIR)/sleep.elf
+SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
+STTY_ELF = $(BUILD_DIR)/stty.elf
+TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
+SYSCALLTEST_ELF = $(BUILD_DIR)/syscalltest.elf
+TTYREADTEST_ELF = $(BUILD_DIR)/ttyreadtest.elf
+SCSTAT_ELF = $(BUILD_DIR)/scstat.elf
+PIPETEST_ELF = $(BUILD_DIR)/pipetest.elf
+FSAPITEST_ELF = $(BUILD_DIR)/fsapitest.elf
+FORKTEST_ELF = $(BUILD_DIR)/forktest.elf
+EXECVETEST_ELF = $(BUILD_DIR)/execvetest.elf
 CONTRACT_FD_ELF = $(BUILD_DIR)/contract_fd.elf
 CONTRACT_FD_INHERIT_ELF = $(BUILD_DIR)/contract_fd_inherit.elf
 CONTRACT_SPAWN_WAIT_ELF = $(BUILD_DIR)/contract_spawn_wait.elf
 CONTRACT_EXEC_PROBE_ELF = $(BUILD_DIR)/contract_exec_probe.elf
 CONTRACT_EXEC_AFTER_ELF = $(BUILD_DIR)/contract_exec_after.elf
+CONTRACT_HEAP_ELF = $(BUILD_DIR)/contract_heap.elf
+CONTRACT_DIRENT_ELF = $(BUILD_DIR)/contract_dirent.elf
+CONTRACT_FSIO_ELF = $(BUILD_DIR)/contract_fsio.elf
+CONTRACT_WAIT_NONCHILD_ELF = $(BUILD_DIR)/contract_wait_nonchild.elf
 INIT_BIN = $(BIN_DIR)/init
 SH_BIN = $(BIN_DIR)/sh
 ECHO_BIN = $(BIN_DIR)/echo
@@ -87,16 +135,31 @@ HWLIST_BIN = $(BIN_DIR)/hwlist
 FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
 FABRICNETCHECK_BIN = $(BIN_DIR)/fabricnetcheck
-SYSINFO_BIN = $(BIN_DIR)/sysinfo
+HOSTINFO_BIN = $(BIN_DIR)/hostinfo
+SLEEP_BIN = $(BIN_DIR)/sleep
+SIGTEST_BIN = $(BIN_DIR)/sigtest
+STTY_BIN = $(BIN_DIR)/stty
+TIMECHECK_BIN = $(BIN_DIR)/timecheck
+SYSCALLTEST_BIN = $(BIN_DIR)/syscalltest
+TTYREADTEST_BIN = $(BIN_DIR)/ttyreadtest
+SCSTAT_BIN = $(BIN_DIR)/scstat
+PIPETEST_BIN = $(BIN_DIR)/pipetest
+FSAPITEST_BIN = $(BIN_DIR)/fsapitest
+FORKTEST_BIN = $(BIN_DIR)/forktest
+EXECVETEST_BIN = $(BIN_DIR)/execvetest
 CONTRACT_FD_BIN = $(BIN_DIR)/contract_fd
 CONTRACT_FD_INHERIT_BIN = $(BIN_DIR)/contract_fd_inherit
 CONTRACT_SPAWN_WAIT_BIN = $(BIN_DIR)/contract_spawn_wait
 CONTRACT_EXEC_PROBE_BIN = $(BIN_DIR)/contract_exec_probe
 CONTRACT_EXEC_AFTER_BIN = $(BIN_DIR)/contract_exec_after
+CONTRACT_HEAP_BIN = $(BIN_DIR)/contract_heap
+CONTRACT_DIRENT_BIN = $(BIN_DIR)/contract_dirent
+CONTRACT_FSIO_BIN = $(BIN_DIR)/contract_fsio
+CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(SYSINFO_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -111,6 +174,11 @@ $(BUILD_DIR)/crt0.o: crt0.S
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+
+# Auto-generated header dependencies from -MMD -MP.
+DEPFILES := $(shell find $(BUILD_DIR) -name '*.d' 2>/dev/null)
+-include $(DEPFILES)
 
 $(INIT_ELF): $(INIT_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -156,9 +224,53 @@ $(FABRICNETCHECK_ELF): $(FABRICNETCHECK_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(FABRICNETCHECK_OBJS)
 
-$(SYSINFO_ELF): $(SYSINFO_OBJS) link.ld
+$(HOSTINFO_ELF): $(HOSTINFO_OBJS) link.ld
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(SYSINFO_OBJS)
+	$(LD) $(LDFLAGS) -o $@ $(HOSTINFO_OBJS)
+
+$(SLEEP_ELF): $(SLEEP_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SLEEP_OBJS)
+
+$(SIGTEST_ELF): $(SIGTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SIGTEST_OBJS)
+
+$(STTY_ELF): $(STTY_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(STTY_OBJS)
+
+$(TIMECHECK_ELF): $(TIMECHECK_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(TIMECHECK_OBJS)
+
+$(SYSCALLTEST_ELF): $(SYSCALLTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SYSCALLTEST_OBJS)
+
+$(TTYREADTEST_ELF): $(TTYREADTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(TTYREADTEST_OBJS)
+
+$(SCSTAT_ELF): $(SCSTAT_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SCSTAT_OBJS)
+
+$(PIPETEST_ELF): $(PIPETEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(PIPETEST_OBJS)
+
+$(FSAPITEST_ELF): $(FSAPITEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(FSAPITEST_OBJS)
+
+$(FORKTEST_ELF): $(FORKTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(FORKTEST_OBJS)
+
+$(EXECVETEST_ELF): $(EXECVETEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(EXECVETEST_OBJS)
 
 $(CONTRACT_FD_ELF): $(CONTRACT_FD_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -179,6 +291,22 @@ $(CONTRACT_EXEC_PROBE_ELF): $(CONTRACT_EXEC_PROBE_OBJS) link.ld
 $(CONTRACT_EXEC_AFTER_ELF): $(CONTRACT_EXEC_AFTER_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_EXEC_AFTER_OBJS)
+
+$(CONTRACT_HEAP_ELF): $(CONTRACT_HEAP_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_HEAP_OBJS)
+
+$(CONTRACT_DIRENT_ELF): $(CONTRACT_DIRENT_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_DIRENT_OBJS)
+
+$(CONTRACT_FSIO_ELF): $(CONTRACT_FSIO_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_FSIO_OBJS)
+
+$(CONTRACT_WAIT_NONCHILD_ELF): $(CONTRACT_WAIT_NONCHILD_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_WAIT_NONCHILD_OBJS)
 
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
@@ -224,7 +352,51 @@ $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
-$(SYSINFO_BIN): $(SYSINFO_ELF)
+$(HOSTINFO_BIN): $(HOSTINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SLEEP_BIN): $(SLEEP_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SIGTEST_BIN): $(SIGTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(STTY_BIN): $(STTY_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(TIMECHECK_BIN): $(TIMECHECK_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SYSCALLTEST_BIN): $(SYSCALLTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(TTYREADTEST_BIN): $(TTYREADTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SCSTAT_BIN): $(SCSTAT_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(PIPETEST_BIN): $(PIPETEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(FSAPITEST_BIN): $(FSAPITEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(FORKTEST_BIN): $(FORKTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(EXECVETEST_BIN): $(EXECVETEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
@@ -245,6 +417,22 @@ $(CONTRACT_EXEC_PROBE_BIN): $(CONTRACT_EXEC_PROBE_ELF)
 	cp $< $@
 
 $(CONTRACT_EXEC_AFTER_BIN): $(CONTRACT_EXEC_AFTER_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CONTRACT_HEAP_BIN): $(CONTRACT_HEAP_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CONTRACT_DIRENT_BIN): $(CONTRACT_DIRENT_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CONTRACT_FSIO_BIN): $(CONTRACT_FSIO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CONTRACT_WAIT_NONCHILD_BIN): $(CONTRACT_WAIT_NONCHILD_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

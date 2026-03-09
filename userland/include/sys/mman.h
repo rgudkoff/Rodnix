@@ -3,7 +3,7 @@
 
 /*
  * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
- * Source: third_party/bsd/freebsd-src/sys/sys/mman.h
+ * Source: third_party/bsd/sys/sys/mman.h
  */
 #define PROT_NONE   0x0000
 #define PROT_READ   0x0001
@@ -19,5 +19,7 @@
 #define MS_SYNC       0x0000
 #define MS_ASYNC      0x0001
 #define MS_INVALIDATE 0x0002
+
+#define MAP_FAILED ((void*)-1)
 
 #endif /* _RODNIX_USERLAND_SYS_MMAN_H */

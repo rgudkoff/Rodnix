@@ -3,7 +3,7 @@
 
 /*
  * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
- * Source: third_party/bsd/freebsd-src/sys/sys/fcntl.h
+ * Source: third_party/bsd/sys/sys/fcntl.h
  */
 #define O_RDONLY  0x0000
 #define O_WRONLY  0x0001

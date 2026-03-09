@@ -4,9 +4,12 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include "syscall.h"
 #include "posix_syscall.h"
 #include "unistd.h"
+#include "sys/wait.h"
+#include "time.h"
 
 #define VFS_OPEN_READ 1
 #define FD_STDOUT 1
@@ -167,7 +170,6 @@ static void run_ifconfig_smoke_if_enabled(void)
         return;
     }
 
-    int status = -1;
     const char* av[2];
     av[0] = "/bin/ifconfig";
     av[1] = 0;
@@ -178,12 +180,45 @@ static void run_ifconfig_smoke_if_enabled(void)
         (void)write_str("[SMK] IFCONFIG FAIL spawn\n");
         return;
     }
+    (void)write_str("[SMK] IFCONFIG WAIT (WNOHANG)\n");
 
-    long wr = waitpid((pid_t)pid, &status, 0);
-    if (wr == pid && status == 0) {
-        (void)write_str("[SMK] IFCONFIG PASS\n");
-    } else {
-        (void)write_str("[SMK] IFCONFIG FAIL wait/status\n");
+    {
+        struct timespec t0;
+        struct timespec t1;
+        const int64_t timeout_ns = 2LL * 1000LL * 1000LL * 1000LL;
+        int status = -1;
+
+        if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+            (void)write_str("[SMK] IFCONFIG FAIL clock\n");
+            return;
+        }
+
+        for (;;) {
+            pid_t wr = waitpid((pid_t)pid, &status, WNOHANG);
+            if (wr == (pid_t)pid) {
+                if (status == 0) {
+                    (void)write_str("[SMK] IFCONFIG PASS\n");
+                } else {
+                    (void)write_str("[SMK] IFCONFIG FAIL wait/status\n");
+                }
+                return;
+            }
+            if (wr < 0) {
+                (void)write_str("[SMK] IFCONFIG FAIL wait\n");
+                return;
+            }
+
+            if (clock_gettime(CLOCK_MONOTONIC, &t1) == 0) {
+                int64_t dt_ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL +
+                                (int64_t)(t1.tv_nsec - t0.tv_nsec);
+                if (dt_ns >= timeout_ns) {
+                    (void)write_str("[SMK] IFCONFIG TIMEOUT\n");
+                    return;
+                }
+            }
+
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+        }
     }
 }
 
@@ -229,6 +264,49 @@ static void run_contract_mode_if_enabled(void)
             ct_log("CT-DBG", "PASS", "blocking syscall probe returned");
         } else {
             ct_log("CT-DBG", "FAIL", "blocking syscall probe failed");
+        }
+    }
+
+    {
+        struct timespec m0, m1, r0, r1;
+        int time_ok = 1;
+        if (clock_gettime(CLOCK_MONOTONIC, &m0) != 0 ||
+            clock_gettime(CLOCK_REALTIME, &r0) != 0) {
+            ct_log("CT-016", "FAIL", "clock_gettime initial failed");
+            ct_log("CT-017", "FAIL", "clock_gettime initial failed");
+            ok = 0;
+            time_ok = 0;
+        }
+        if (time_ok) {
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+            if (clock_gettime(CLOCK_MONOTONIC, &m1) != 0) {
+                ct_log("CT-016", "FAIL", "clock_gettime monotonic failed");
+                ok = 0;
+                time_ok = 0;
+            }
+            if (clock_gettime(CLOCK_REALTIME, &r1) != 0) {
+                ct_log("CT-017", "FAIL", "clock_gettime realtime failed");
+                ok = 0;
+                time_ok = 0;
+            }
+        }
+        if (time_ok) {
+            uint64_t mu0 = (uint64_t)m0.tv_sec * 1000000ULL + (uint64_t)m0.tv_nsec / 1000ULL;
+            uint64_t mu1 = (uint64_t)m1.tv_sec * 1000000ULL + (uint64_t)m1.tv_nsec / 1000ULL;
+            uint64_t ru0 = (uint64_t)r0.tv_sec * 1000000ULL + (uint64_t)r0.tv_nsec / 1000ULL;
+            uint64_t ru1 = (uint64_t)r1.tv_sec * 1000000ULL + (uint64_t)r1.tv_nsec / 1000ULL;
+            if (mu1 >= mu0) {
+                ct_log("CT-016", "PASS", "CLOCK_MONOTONIC is non-decreasing");
+            } else {
+                ct_log("CT-016", "FAIL", "CLOCK_MONOTONIC went backwards");
+                ok = 0;
+            }
+            if (ru1 >= ru0) {
+                ct_log("CT-017", "PASS", "CLOCK_REALTIME is non-decreasing");
+            } else {
+                ct_log("CT-017", "FAIL", "CLOCK_REALTIME went backwards");
+                ok = 0;
+            }
         }
     }
 
@@ -372,6 +450,107 @@ static void run_contract_mode_if_enabled(void)
                     ct_log("CT-011", "FAIL", "exec image-specific state leaked");
                     ok = 0;
                 }
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_heap", 0);
+        if (pid <= 0) {
+            ct_log("CT-018", "FAIL", "heap probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-018", "PASS", "heap probe child passed");
+            } else {
+                ct_log("CT-018", "FAIL", "heap probe child failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        uint8_t* p = (uint8_t*)malloc(64);
+        uint8_t* q = (uint8_t*)calloc(16, 8);
+        int local_ok = 1;
+        if (!p || !q) {
+            local_ok = 0;
+        }
+        if (local_ok) {
+            for (int i = 0; i < 64; i++) {
+                p[i] = (uint8_t)(0xA0 + i);
+            }
+            p = (uint8_t*)realloc(p, 256);
+            if (!p) {
+                local_ok = 0;
+            } else {
+                for (int i = 0; i < 64; i++) {
+                    if (p[i] != (uint8_t)(0xA0 + i)) {
+                        local_ok = 0;
+                        break;
+                    }
+                }
+            }
+        }
+        free(p);
+        free(q);
+        if (local_ok) {
+            ct_log("CT-019", "PASS", "parent heap alloc/realloc/free sequence");
+        } else {
+            ct_log("CT-019", "FAIL", "parent heap sequence failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_dirent", 0);
+        if (pid <= 0) {
+            ct_log("CT-020", "FAIL", "dirent probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-020", "PASS", "dirent handle API probe passed");
+            } else {
+                ct_log("CT-020", "FAIL", "dirent handle API probe failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_fsio", 0);
+        if (pid <= 0) {
+            ct_log("CT-021", "FAIL", "fsio probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-021", "PASS", "stat/fstat/lseek probe passed");
+            } else {
+                ct_log("CT-021", "FAIL", "stat/fstat/lseek probe failed");
+                ok = 0;
+            }
+        }
+    }
+
+    {
+        int status = -1;
+        long pid = posix_spawn("/bin/contract_wait_nonchild", 0);
+        if (pid <= 0) {
+            ct_log("CT-004", "FAIL", "wait-nonchild probe spawn failed");
+            ok = 0;
+        } else {
+            long wr = waitpid((pid_t)pid, &status, 0);
+            if (wr == pid && status == 0) {
+                ct_log("CT-004", "PASS", "waitpid on non-child is denied");
+            } else {
+                ct_log("CT-004", "FAIL", "waitpid non-child contract failed");
+                ok = 0;
             }
         }
     }

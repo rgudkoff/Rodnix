@@ -11,5 +11,6 @@
 
 void gdt_init(void);
 void tss_set_rsp0(uint64_t rsp0);
+extern uint64_t g_tss_rsp0_shadow;
 
 #endif /* _RODNIX_ARCH_X86_64_GDT_H */

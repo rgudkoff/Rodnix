@@ -57,6 +57,7 @@ typedef enum {
  * ============================================================================ */
 
 #define TASK_MAX_FD 32
+#define TASK_CWD_MAX 256
 
 /* ============================================================================
  * Scheduling class
@@ -87,9 +88,39 @@ typedef struct task {
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
     uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
+    uint8_t fd_kind[TASK_MAX_FD];  /* Тип дескриптора (unix fd kind) */
+    char cwd[TASK_CWD_MAX];     /* Текущая рабочая директория */
     int32_t exit_code;         /* Код завершения процесса */
     uint8_t exited;            /* Процесс завершен через posix_exit */
     uint8_t waited;            /* Статус уже забран waitpid */
+    struct {
+        uint64_t handler;
+        uint64_t flags;
+        uint64_t restorer;
+        uint64_t mask;
+    } sigaction[32];
+    uint32_t sig_pending;
+    uint8_t sig_in_handler;
+    struct {
+        uint64_t rip;
+        uint64_t rsp;
+        uint64_t rflags;
+        uint64_t rax;
+        uint64_t rbx;
+        uint64_t rcx;
+        uint64_t rdx;
+        uint64_t rsi;
+        uint64_t rdi;
+        uint64_t rbp;
+        uint64_t r8;
+        uint64_t r9;
+        uint64_t r10;
+        uint64_t r11;
+        uint64_t r12;
+        uint64_t r13;
+        uint64_t r14;
+        uint64_t r15;
+    } sig_saved;
     struct thread* main_thread;/* Основной поток процесса */
     uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */

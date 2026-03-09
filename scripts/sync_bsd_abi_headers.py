@@ -3,7 +3,7 @@
 Sync selected userland ABI headers from FreeBSD vendor headers.
 
 This keeps numeric POSIX ABI constants aligned with:
-  third_party/bsd/freebsd-src/{include,sys/sys}/*
+  third_party/bsd/{include,sys/sys}/*
 """
 
 from __future__ import annotations
@@ -103,7 +103,7 @@ def render_errno(vals: dict[str, int]) -> str:
         "",
         "/*",
         " * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.",
-        " * Source: third_party/bsd/freebsd-src/sys/sys/errno.h",
+        " * Source: third_party/bsd/sys/sys/errno.h",
         " */",
     ]
     for n in names:
@@ -119,7 +119,7 @@ def render_fcntl(vals: dict[str, int]) -> str:
         "",
         "/*",
         " * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.",
-        " * Source: third_party/bsd/freebsd-src/sys/sys/fcntl.h",
+        " * Source: third_party/bsd/sys/sys/fcntl.h",
         " */",
         f"#define O_RDONLY  {fmt_hex(vals['O_RDONLY'])}",
         f"#define O_WRONLY  {fmt_hex(vals['O_WRONLY'])}",
@@ -190,7 +190,7 @@ def render_signal(vals: dict[str, int]) -> str:
         "",
         "/*",
         " * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.",
-        " * Source: third_party/bsd/freebsd-src/include/signal.h",
+        " * Source: third_party/bsd/include/signal.h",
         " */",
         f"#define SIG2STR_MAX {vals['SIG2STR_MAX']}",
         "",
@@ -232,7 +232,7 @@ def render_mman(vals: dict[str, int]) -> str:
         "",
         "/*",
         " * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.",
-        " * Source: third_party/bsd/freebsd-src/sys/sys/mman.h",
+        " * Source: third_party/bsd/sys/sys/mman.h",
         " */",
         f"#define PROT_NONE   {fmt_hex(vals['PROT_NONE'])}",
         f"#define PROT_READ   {fmt_hex(vals['PROT_READ'])}",
@@ -257,12 +257,12 @@ def render_mman(vals: dict[str, int]) -> str:
 
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
-    upstream_errno = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/errno.h")
-    upstream_fcntl = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/fcntl.h")
-    upstream_wait = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/wait.h")
-    upstream_signal = parse_defines(root / "third_party/bsd/freebsd-src/include/signal.h")
-    upstream_stat = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/stat.h")
-    upstream_mman = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/mman.h")
+    upstream_errno = parse_defines(root / "third_party/bsd/sys/sys/errno.h")
+    upstream_fcntl = parse_defines(root / "third_party/bsd/sys/sys/fcntl.h")
+    upstream_wait = parse_defines(root / "third_party/bsd/sys/sys/wait.h")
+    upstream_signal = parse_defines(root / "third_party/bsd/include/signal.h")
+    upstream_stat = parse_defines(root / "third_party/bsd/sys/sys/stat.h")
+    upstream_mman = parse_defines(root / "third_party/bsd/sys/sys/mman.h")
 
     errno_names = [
         "EPERM", "ENOENT", "ESRCH", "EINTR", "EIO", "ENXIO", "E2BIG", "ENOEXEC", "EBADF",

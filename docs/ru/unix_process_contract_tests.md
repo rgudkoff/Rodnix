@@ -30,7 +30,7 @@
 | CT-001 | EXEC/CORE | `spawn` создаёт новый PID | contract mode в `userland/init/init.c` | AUTO |
 | CT-002 | EXEC | `spawn` не заменяет текущий процесс | после `spawn` родитель продолжает выполнять следующий код | MANUAL |
 | CT-003 | EXEC | `exec` сохраняет PID | contract mode в `userland/init/init.c` + `contract_exec_probe/after` | AUTO |
-| CT-004 | LIFECYCLE | `waitpid` только для дочернего процесса | ожидание не-дочернего `pid` возвращает `RDNX_E_DENIED` | PLANNED |
+| CT-004 | LIFECYCLE | `waitpid` только для дочернего процесса | contract mode + `/bin/contract_wait_nonchild` | AUTO |
 | CT-005 | LIFECYCLE | `exit` переводит в lifecycle ожидания (`ZOMBIE`/collect) | contract mode в `userland/init/init.c` | AUTO |
 | CT-006 | LIFECYCLE | `waitpid` собирает статус и завершает lifecycle | contract mode: второй `waitpid` по тому же PID -> ошибка (включая fast-exit race) | AUTO |
 | CT-007 | FD/CORE | `close(fd)` инвалидирует fd | contract mode в `userland/init/init.c` | AUTO |
@@ -42,6 +42,10 @@
 | CT-013 | CORE | context switch переключает address space процесса | contract mode: parent stack canary survives child run/wait | AUTO |
 | CT-014 | FD | `spawn` наследует открытые `fd` в child image | contract mode: `/bin/contract_fd_inherit` читает inherited `fd=3` | AUTO |
 | CT-015 | FD | `FD_CLOEXEC` закрывает `fd` при `spawn+exec` | contract mode: `fcntl(F_SETFD, FD_CLOEXEC)` + probe child | AUTO |
+| CT-018 | CORE | базовый heap lifecycle (`malloc/calloc/realloc/free`) стабилен в дочернем процессе | contract mode + `/bin/contract_heap` | AUTO |
+| CT-019 | CORE | базовый heap lifecycle стабилен в родительском процессе | contract mode в `userland/init/init.c` | AUTO |
+| CT-020 | CORE | handle-based `opendir/readdir/closedir` корректен | contract mode + `/bin/contract_dirent` | AUTO |
+| CT-021 | CORE | file-path API `stat/fstat/lseek` согласован по size/offset | contract mode + `/bin/contract_fsio` | AUTO |
 
 ## 3. Формат CI-маркеров
 
@@ -74,13 +78,20 @@
 7. `CT-009` частично покрыт обычным boot/userland smoke.
 8. `CT-014/CT-015` переведены в `AUTO` через `fcntl(F_GETFD/F_SETFD)` и
    probe-бинарник `/bin/contract_fd_inherit`.
+9. `CT-018/CT-019` переведены в `AUTO` для heap lifecycle (child + parent).
+10. `CT-020` переведён в `AUTO` для handle-based `dirent` API через
+    `/bin/contract_dirent`.
+11. `CT-021` переведён в `AUTO` для `stat/fstat/lseek` через
+    `/bin/contract_fsio`.
+12. `CT-004` переведён в `AUTO` через sibling-проверку
+    `/bin/contract_wait_nonchild`.
 
 ## 5. Минимальный план автоматизации (следующий шаг)
 
 1. Добавить race-вариант для `CT-003/CT-011` (fast exec path).
-2. Автоматизировать `CT-004` (ожидание не-дочернего PID).
+2. Добавить race-вариант `CT-004` (non-child уже завершён/удалён).
 3. Добавить `CT-012` (cooperative progress через `SYS_NOP` в polling-loop).
-4. Перевести `readdir` на handle-based модель и добавить контракт для нового API.
+4. Расширить проверку `dirent` на расширенные сценарии (`.`/`..`, EOF/rewind).
 5. Добавить parser/summary отчёт по `[CT]` маркерам.
 
 ## 5.1 Исторический критерий разморозки CT-005 (выполнен)

@@ -87,12 +87,12 @@ def check_group(group: str, tracked: list[str], upstream: dict[str, str], local:
 def main() -> int:
     root = Path(__file__).resolve().parent.parent
 
-    upstream_errno = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/errno.h")
-    upstream_fcntl = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/fcntl.h")
-    upstream_wait = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/wait.h")
-    upstream_signal = parse_defines(root / "third_party/bsd/freebsd-src/include/signal.h")
-    upstream_stat = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/stat.h")
-    upstream_mman = parse_defines(root / "third_party/bsd/freebsd-src/sys/sys/mman.h")
+    upstream_errno = parse_defines(root / "third_party/bsd/sys/sys/errno.h")
+    upstream_fcntl = parse_defines(root / "third_party/bsd/sys/sys/fcntl.h")
+    upstream_wait = parse_defines(root / "third_party/bsd/sys/sys/wait.h")
+    upstream_signal = parse_defines(root / "third_party/bsd/include/signal.h")
+    upstream_stat = parse_defines(root / "third_party/bsd/sys/sys/stat.h")
+    upstream_mman = parse_defines(root / "third_party/bsd/sys/sys/mman.h")
 
     local_errno = parse_defines(root / "userland/include/sys/errno.h")
     local_fcntl = parse_defines(root / "userland/include/sys/fcntl.h")

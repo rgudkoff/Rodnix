@@ -10,6 +10,7 @@
 #include "../arch/x86_64/interrupt_frame.h"
 #include "../core/interrupts.h"
 #include "../fs/vfs.h"
+#include "../unix/unix_layer.h"
 #include "../../include/error.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -214,10 +215,27 @@ task_t* task_create(void)
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
         task->fd_flags[i] = 0;
+        task->fd_kind[i] = 0;
     }
+    task->cwd[0] = '/';
+    task->cwd[1] = '\0';
     task->exit_code = 0;
     task->exited = 0;
     task->waited = 0;
+    for (uint32_t i = 0; i < 32; i++) {
+        task->sigaction[i].handler = 0;
+        task->sigaction[i].flags = 0;
+        task->sigaction[i].restorer = 0;
+        task->sigaction[i].mask = 0;
+    }
+    task->sig_pending = 0;
+    task->sig_in_handler = 0;
+    {
+        uint64_t* p = (uint64_t*)&task->sig_saved;
+        for (size_t i = 0; i < sizeof(task->sig_saved) / sizeof(uint64_t); i++) {
+            p[i] = 0;
+        }
+    }
     task->main_thread = NULL;
     task->thread_count = 0;
     task->ref_count = 1;
@@ -251,13 +269,9 @@ void task_destroy(task_t* task)
     (void)RB_REMOVE(task_id_index, &all_tasks_by_id, task);
     task_registry_unlock(old);
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
-        vfs_file_t* file = (vfs_file_t*)task->fd_table[i];
-        if (file) {
-            vfs_close(file);
-            kfree(file);
-            task->fd_table[i] = NULL;
+        if (task->fd_table[i]) {
+            unix_fd_release(task, (int)i);
         }
-        task->fd_flags[i] = 0;
     }
     vm_task_destroy(task);
     kfree(task);
@@ -311,6 +325,7 @@ int task_fd_alloc(task_t* task, void* handle)
         if (!task->fd_table[i]) {
             task->fd_table[i] = handle;
             task->fd_flags[i] = 0;
+            task->fd_kind[i] = 0;
             return i;
         }
     }
@@ -335,6 +350,7 @@ int task_fd_close(task_t* task, int fd)
     }
     task->fd_table[fd] = NULL;
     task->fd_flags[fd] = 0;
+    task->fd_kind[fd] = 0;
     return RDNX_OK;
 }
 

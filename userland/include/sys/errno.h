@@ -3,7 +3,7 @@
 
 /*
  * Generated from FreeBSD headers by scripts/sync_bsd_abi_headers.py.
- * Source: third_party/bsd/freebsd-src/sys/sys/errno.h
+ * Source: third_party/bsd/sys/sys/errno.h
  */
 #define EPERM   1
 #define ENOENT  2

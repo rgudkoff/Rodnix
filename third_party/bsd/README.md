@@ -8,14 +8,13 @@
   - Canonical import registry: upstream URL, commit, paths, local modifications.
 - `third_party/bsd/IMPORT_TEMPLATE.md`
   - Template for adding new import entries.
-- `third_party/bsd/freebsd-src/`
+- `third_party/bsd/`
   - Verbatim upstream snapshot files used as local reference/vendor baseline.
 
 Current snapshot includes:
 
-- `third_party/bsd/freebsd-src/bin/sh/*`
-- `third_party/bsd/freebsd-src/include/*` (selected POSIX headers)
-- `third_party/bsd/freebsd-src/sys/sys/*` (selected kernel/user ABI headers)
+- `third_party/bsd/include/*` (selected POSIX headers)
+- `third_party/bsd/sys/sys/*` (selected kernel/user ABI headers)
 
 ## Usage Rules
 
@@ -28,7 +27,7 @@ Current snapshot includes:
 
 - Build `userland` compatibility headers from vetted BSD constants/types.
 - Introduce minimal libc/syscall shim to run external userland programs.
-- Keep `third_party/bsd/freebsd-src` as immutable reference baseline.
+- Keep `third_party/bsd/{include,sys}` as immutable reference baseline.
 
 ## ABI Sync Workflow
 

@@ -7,7 +7,7 @@
 #include "../../include/error.h"
 
 #define VM_USER_MIN      0x0000000000001000ULL
-#define VM_USER_MAX      0x00007FFFFFFFF000ULL
+#define VM_USER_MAX      0x0000000080000000ULL
 #define VM_DEFAULT_MMAP  0x0000000060000000ULL
 
 static inline uint64_t vm_align_down(uint64_t v)
