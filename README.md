@@ -117,7 +117,7 @@ make run
 Verbose boot output:
 
 ```bash
-make run -v
+make run-verbose
 ```
 
 ## Useful Shell Commands
