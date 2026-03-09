@@ -35,7 +35,14 @@ static int task_id_cmp(task_t* lhs, task_t* rhs)
     return 0;
 }
 RB_PROTOTYPE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 RB_GENERATE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
 
 static inline irql_t task_registry_lock(void)
