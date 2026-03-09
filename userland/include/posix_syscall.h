@@ -125,6 +125,14 @@ static inline long posix_recvfrom(int fd,
                          (long)timeout_ms);
 }
 
+static inline long posix_ping(uint32_t dst_ip_host_order, uint32_t timeout_ms, uint32_t* out_rtt_ms)
+{
+    return rdnx_syscall3(POSIX_SYS_PING,
+                         (long)dst_ip_host_order,
+                         (long)timeout_ms,
+                         (long)(uintptr_t)out_rtt_ms);
+}
+
 static inline long posix_poll(void* fds, uint64_t nfds, int timeout_ms)
 {
     return rdnx_syscall3(POSIX_SYS_POLL, (long)(uintptr_t)fds, (long)nfds, (long)timeout_ms);

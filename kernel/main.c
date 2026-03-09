@@ -23,6 +23,7 @@
 #include "common/idl_demo.h"
 #include "core/boot.h"
 #include "arch/x86_64/config.h"
+#include "arch/x86_64/acpi.h"
 #include "arch/x86_64/syscall_fast.h"
 #include "../include/common.h"
 
@@ -211,6 +212,16 @@ static int sysinit_apic(void)
             kputs("[INIT-5.3] LAPIC available, I/O APIC not - PIC fallback for external IRQ\n");
             kputs("[DEGRADED] External IRQ routing stays on PIC fallback path\n");
         }
+    }
+    return RDNX_OK;
+}
+
+static int sysinit_acpi(void)
+{
+    if (acpi_init() == 0) {
+        kputs("[INIT-4.5] ACPI tables discovered\n");
+    } else {
+        kputs("[INIT-4.5] ACPI unavailable, continue with legacy fallbacks\n");
     }
     return RDNX_OK;
 }
@@ -423,7 +434,10 @@ void kmain(uint32_t magic, void* mbi)
     if (run_sysinit_step(SI_SUB_VM, SI_ORDER_FIRST, "memory_init", sysinit_memory) != 0) {
         panic("Memory init failed");
     }
-    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_SECOND, "apic_init", sysinit_apic) != 0) {
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_SECOND, "acpi_init", sysinit_acpi) != 0) {
+        panic("ACPI init failed");
+    }
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_THIRD, "apic_init", sysinit_apic) != 0) {
         panic("APIC init failed");
     }
     if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_FIRST, "timer_init", sysinit_timer) != 0) {

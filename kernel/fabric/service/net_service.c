@@ -222,6 +222,9 @@ int fabric_netif_get_info(uint32_t index, fabric_netif_info_t* out)
     memcpy(out->mac, iface->mac, sizeof(out->mac));
     out->mtu = iface->mtu;
     out->flags = iface->flags;
+    out->ipv4_addr = iface->ipv4_addr;
+    out->ipv4_netmask = iface->ipv4_netmask;
+    out->ipv4_gateway = iface->ipv4_gateway;
     out->stats = iface->stats;
     return RDNX_OK;
 }

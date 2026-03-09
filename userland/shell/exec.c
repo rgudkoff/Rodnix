@@ -211,6 +211,39 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
     }
 
     long pid = posix_spawn(spawn_path, spawn_argv);
+    if (pid < 0 && path[0] == '/') {
+        char norm[SH_PATH_MAX];
+        char bin_fallback[SH_PATH_MAX];
+        const char* base = path;
+        resolve_path(path, norm, (int)sizeof(norm));
+
+        if (!str_eq(norm, spawn_path)) {
+            spawn_argv[0] = norm;
+            pid = posix_spawn(norm, spawn_argv);
+        }
+
+        if (pid < 0) {
+            for (int i = 0; norm[i] != '\0'; i++) {
+                if (norm[i] == '/' && norm[i + 1] != '\0') {
+                    base = &norm[i + 1];
+                }
+            }
+            if (base && base[0] != '\0') {
+                int p = 0;
+                const char* prefix = "/bin/";
+                while (prefix[p] != '\0' && p + 1 < (int)sizeof(bin_fallback)) {
+                    bin_fallback[p] = prefix[p];
+                    p++;
+                }
+                for (int i = 0; base[i] != '\0' && p + 1 < (int)sizeof(bin_fallback); i++) {
+                    bin_fallback[p++] = base[i];
+                }
+                bin_fallback[p] = '\0';
+                spawn_argv[0] = bin_fallback;
+                pid = posix_spawn(bin_fallback, spawn_argv);
+            }
+        }
+    }
     if (pid < 0) {
         return -1;
     }
@@ -541,8 +574,7 @@ int cmd_autorun(int argc, char** argv)
     if (cmd_spawn_autorun(argc, argv, &pid) != 0) {
         return -1;
     }
-    {
-        int wr = cmd_wait_pid(pid, 0);
-        return (wr == -2) ? -1 : 0;
-    }
+    /* Spawn succeeded: do not misreport wait-path issues as "not found". */
+    (void)cmd_wait_pid(pid, 0);
+    return 0;
 }

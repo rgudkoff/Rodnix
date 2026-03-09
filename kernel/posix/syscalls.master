@@ -75,3 +75,4 @@
 65 connect
 66 sendto
 67 recvfrom
+68 ping

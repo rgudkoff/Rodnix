@@ -7,6 +7,8 @@
 #include "unistd.h"
 #include "posix_syscall.h"
 #include "netif.h"
+#include <arpa/inet.h>
+#include <netinet/in.h>
 
 #define FD_STDOUT 1
 #define NETIF_MAX_QUERY 16
@@ -37,10 +39,12 @@ static void write_u64(uint64_t v)
         buf[i++] = (char)('0' + (v % 10u));
         v /= 10u;
     }
-    while (i > 0) {
-        i--;
-        (void)write_buf(&buf[i], 1);
+    for (int l = 0, r = i - 1; l < r; l++, r--) {
+        char t = buf[l];
+        buf[l] = buf[r];
+        buf[r] = t;
     }
+    (void)write_buf(buf, (uint64_t)i);
 }
 
 static void write_hex_byte(uint8_t b)
@@ -60,6 +64,26 @@ static void write_mac(const uint8_t mac[6])
             (void)write_buf(":", 1);
         }
     }
+}
+
+static void write_ipv4(uint32_t ip_host_order)
+{
+    char buf[18];
+    struct in_addr addr;
+    addr.s_addr = htonl(ip_host_order);
+    if (inet_ntop(AF_INET, &addr, buf, (socklen_t)sizeof(buf)) != NULL) {
+        (void)write_str(buf);
+        return;
+    }
+
+    /* Defensive fallback keeps utility usable if libc inet path fails. */
+    write_u64((uint64_t)((ip_host_order >> 24) & 0xFFu));
+    (void)write_buf(".", 1);
+    write_u64((uint64_t)((ip_host_order >> 16) & 0xFFu));
+    (void)write_buf(".", 1);
+    write_u64((uint64_t)((ip_host_order >> 8) & 0xFFu));
+    (void)write_buf(".", 1);
+    write_u64((uint64_t)(ip_host_order & 0xFFu));
 }
 
 int main(void)
@@ -85,6 +109,16 @@ int main(void)
         write_hex_byte((uint8_t)(ifs[i].flags & 0xFF));
         (void)write_str("\n  ether ");
         write_mac(ifs[i].mac);
+        if (ifs[i].ipv4_addr != 0) {
+            (void)write_str("\n  inet ");
+            write_ipv4(ifs[i].ipv4_addr);
+            (void)write_str(" netmask ");
+            write_ipv4(ifs[i].ipv4_netmask);
+            if (ifs[i].ipv4_gateway != 0) {
+                (void)write_str(" gateway ");
+                write_ipv4(ifs[i].ipv4_gateway);
+            }
+        }
         (void)write_str("\n  rx=");
         write_u64(ifs[i].stats.rx_frames);
         (void)write_str(" tx=");

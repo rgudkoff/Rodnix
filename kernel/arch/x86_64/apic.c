@@ -17,6 +17,7 @@
 #include "pic.h"
 #include "lapic_regs.h"
 #include "lapic_access.h"
+#include "acpi.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
 #include "../../common/scheduler.h"
@@ -39,43 +40,6 @@
 /* I/O APIC Base Address (default, will be overridden from ACPI MADT if available) */
 #define IOAPIC_BASE_ADDR_DEFAULT   0xFEC00000
 #define IOAPIC_MMIO_VIRT           0xFFFFFFFFFEC00000ULL
-
-/* ACPI table signatures */
-#define ACPI_SIG_RSDP     "RSD PTR "
-#define ACPI_SIG_MADT     "APIC"
-
-/* ACPI MADT structure */
-struct acpi_madt {
-    uint32_t signature;      /* "APIC" */
-    uint32_t length;
-    uint8_t  revision;
-    uint8_t  checksum;
-    char     oem_id[6];
-    char     oem_table_id[8];
-    uint32_t oem_revision;
-    uint32_t creator_id;
-    uint32_t creator_revision;
-    uint32_t lapic_addr;     /* Local APIC address */
-    uint32_t flags;
-    /* Variable entries follow */
-} __attribute__((packed));
-
-/* MADT entry header */
-struct madt_entry {
-    uint8_t type;
-    uint8_t length;
-    /* Variable data follows */
-} __attribute__((packed));
-
-/* MADT I/O APIC entry (type 1) */
-struct madt_ioapic {
-    uint8_t  type;           /* 1 */
-    uint8_t  length;         /* 12 */
-    uint8_t  ioapic_id;
-    uint8_t  reserved;
-    uint32_t ioapic_addr;    /* I/O APIC base address */
-    uint32_t gsi_base;       /* Global System Interrupt base */
-} __attribute__((packed));
 
 /* I/O APIC Registers (memory-mapped) */
 #define IOAPIC_REGSEL         0x00    /* Register Select */
@@ -137,157 +101,98 @@ static volatile uint32_t apic_timer_ticks = 0; /* System tick counter */
 static int ioapic_init(void);
 uint8_t apic_get_lapic_id(void);
 
+static uint32_t ioapic_polarity_from_iso_flags(uint16_t flags)
+{
+    uint16_t pol = (uint16_t)(flags & 0x3u);
+    if (pol == 0x3u) {
+        return IOAPIC_RTE_POLARITY_LOW;
+    }
+    return IOAPIC_RTE_POLARITY_HIGH;
+}
+
+static uint32_t ioapic_trigger_from_iso_flags(uint16_t flags)
+{
+    uint16_t trg = (uint16_t)((flags >> 2) & 0x3u);
+    if (trg == 0x3u) {
+        return IOAPIC_RTE_TRIGGER_LEVEL;
+    }
+    return IOAPIC_RTE_TRIGGER_EDGE;
+}
+
+static int ioapic_route_for_legacy_irq(uint8_t irq,
+                                       uint8_t* out_gsi,
+                                       uint32_t* out_polarity_flag,
+                                       uint32_t* out_trigger_flag)
+{
+    if (!out_gsi) {
+        return -1;
+    }
+
+    *out_gsi = irq;
+    if (out_polarity_flag) {
+        *out_polarity_flag = IOAPIC_RTE_POLARITY_HIGH;
+    }
+    if (out_trigger_flag) {
+        *out_trigger_flag = IOAPIC_RTE_TRIGGER_EDGE;
+    }
+
+    struct acpi_madt_iso_info iso;
+    if (acpi_madt_get_iso_for_source(irq, &iso) == 0) {
+        if (iso.gsi <= 0xFFu) {
+            *out_gsi = (uint8_t)iso.gsi;
+            if (out_polarity_flag) {
+                *out_polarity_flag = ioapic_polarity_from_iso_flags(iso.flags);
+            }
+            if (out_trigger_flag) {
+                *out_trigger_flag = ioapic_trigger_from_iso_flags(iso.flags);
+            }
+            return 0;
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+#if APIC_DEBUG
+static const char* ioapic_polarity_name(uint32_t polarity)
+{
+    return polarity == IOAPIC_RTE_POLARITY_LOW ? "low" : "high";
+}
+
+static const char* ioapic_trigger_name(uint32_t trigger)
+{
+    return trigger == IOAPIC_RTE_TRIGGER_LEVEL ? "level" : "edge";
+}
+
+static void ioapic_log_iso_routes(void)
+{
+    for (uint8_t irq = 0; irq < 16; irq++) {
+        struct acpi_madt_iso_info iso;
+        if (acpi_madt_get_iso_for_source(irq, &iso) != 0) {
+            continue;
+        }
+
+        uint32_t pol = ioapic_polarity_from_iso_flags(iso.flags);
+        uint32_t trg = ioapic_trigger_from_iso_flags(iso.flags);
+        kprintf("[IOAPIC-ISO] IRQ%u -> GSI%u bus=%u flags=0x%x (%s,%s)\n",
+                (unsigned)irq,
+                (unsigned)iso.gsi,
+                (unsigned)iso.bus,
+                (unsigned)iso.flags,
+                ioapic_polarity_name(pol),
+                ioapic_trigger_name(trg));
+    }
+}
+#endif
+
 /* Find I/O APIC address from ACPI MADT */
 static uint64_t find_ioapic_from_madt(void)
 {
-    extern void kputs(const char* str);
-    extern void kprintf(const char* fmt, ...);
-    extern void kprint_hex(uint64_t value);
-    
-    #if APIC_DEBUG
-    kputs("[MADT-1] Searching for ACPI MADT table...\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    /* Search for RSDP in BIOS memory area (0xE0000-0xFFFFF) */
-    /* RSDP signature: "RSD PTR " (8 bytes) */
-    uint64_t rsdp_addr = 0;
-    
-    /* Search in EBDA and BIOS ROM area */
-    for (uint64_t addr = 0xE0000; addr < 0x100000; addr += 16) {
-        const char* sig = (const char*)X86_64_PHYS_TO_VIRT(addr);
-        if (sig[0] == 'R' && sig[1] == 'S' && sig[2] == 'D' && 
-            sig[3] == ' ' && sig[4] == 'P' && sig[5] == 'T' && 
-            sig[6] == 'R' && sig[7] == ' ') {
-            rsdp_addr = addr;
-            #if APIC_DEBUG
-            kprintf("[MADT-1.1] Found RSDP at %llX\n", (unsigned long long)addr);
-            #endif
-            break;
-        }
+    struct acpi_madt_ioapic_info info;
+    if (acpi_madt_get_ioapic(0, &info) == 0) {
+        return (uint64_t)info.address;
     }
-    
-    if (rsdp_addr == 0) {
-        #if APIC_DEBUG
-        kputs("[MADT-1.2] RSDP not found in BIOS area, trying Multiboot2...\n");
-        #endif
-        /* TODO: Try to get RSDP from Multiboot2 ACPI tag */
-        /* For now, return 0 to use default address */
-        return 0;
-    }
-    
-    /* Read RSDT/XSDT address from RSDP */
-    /* RSDP structure: signature(8), checksum(1), oem_id(6), revision(1), 
-     *                  rsdt_addr(4 for v1) or xsdt_addr(8 for v2) */
-    uint8_t revision = *((uint8_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 15));
-    uint64_t table_addr = 0;
-    
-    if (revision >= 2) {
-        /* XSDT (64-bit addresses) */
-        table_addr = *((uint64_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 24));
-        #if APIC_DEBUG
-        kputs("[MADT-1.3] Using XSDT (ACPI 2.0+)\n");
-        #endif
-    } else {
-        /* RSDT (32-bit addresses) */
-        table_addr = (uint64_t)*((uint32_t*)X86_64_PHYS_TO_VIRT(rsdp_addr + 16));
-        #if APIC_DEBUG
-        kputs("[MADT-1.4] Using RSDT (ACPI 1.0)\n");
-        #endif
-    }
-    
-    if (table_addr == 0) {
-        #if APIC_DEBUG
-        kputs("[MADT-1.5] RSDT/XSDT address is NULL\n");
-        #endif
-        return 0;
-    }
-    
-    #if APIC_DEBUG
-    kprintf("[MADT-2] RSDT/XSDT at %llX, searching for MADT...\n", 
-            (unsigned long long)table_addr);
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    /* Read table header to get entry count */
-    uint32_t* header = (uint32_t*)X86_64_PHYS_TO_VIRT(table_addr);
-    uint32_t signature = header[0];  /* Should be "RSDT" or "XSDT" */
-    (void)signature;
-    uint32_t length = header[1];
-    
-    /* Calculate number of entries */
-    uint32_t entry_count = (length - 36) / (revision >= 2 ? 8 : 4);
-    #if APIC_DEBUG
-    kprintf("[MADT-2.1] Found %u entries in RSDT/XSDT\n", entry_count);
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    /* Search for MADT table */
-    uint64_t madt_addr = 0;
-    for (uint32_t i = 0; i < entry_count && i < 32; i++) {  /* Limit to 32 entries */
-        uint64_t entry_addr;
-        if (revision >= 2) {
-            uint64_t* xsdt = (uint64_t*)X86_64_PHYS_TO_VIRT(table_addr);
-            entry_addr = xsdt[9 + i];  /* Skip header (9 qwords) */
-        } else {
-            uint32_t* rsdt = (uint32_t*)X86_64_PHYS_TO_VIRT(table_addr);
-            entry_addr = (uint64_t)rsdt[9 + i];  /* Skip header (9 dwords) */
-        }
-        
-        /* Check signature */
-        uint32_t* entry_sig = (uint32_t*)X86_64_PHYS_TO_VIRT(entry_addr);
-        if (entry_sig[0] == 0x43495041) {  /* "APIC" in little-endian */
-            madt_addr = entry_addr;
-            #if APIC_DEBUG
-            kprintf("[MADT-2.2] Found MADT at %llX\n", (unsigned long long)entry_addr);
-            #endif
-            break;
-        }
-    }
-    
-    if (madt_addr == 0) {
-        #if APIC_DEBUG
-        kputs("[MADT-2.3] MADT table not found in RSDT/XSDT\n");
-        #endif
-        return 0;
-    }
-    
-    /* Parse MADT to find I/O APIC entry */
-    struct acpi_madt* madt = (struct acpi_madt*)X86_64_PHYS_TO_VIRT(madt_addr);
-    uint32_t madt_length = madt->length;
-    uint8_t* madt_data = (uint8_t*)X86_64_PHYS_TO_VIRT(madt_addr);
-    uint32_t offset = sizeof(struct acpi_madt);
-    
-    #if APIC_DEBUG
-    kputs("[MADT-3] Parsing MADT entries for I/O APIC...\n");
-    __asm__ volatile ("" ::: "memory");
-    #endif
-    
-    while (offset < madt_length) {
-        struct madt_entry* entry = (struct madt_entry*)(madt_data + offset);
-        
-        if (entry->type == 1) {  /* I/O APIC entry */
-            struct madt_ioapic* ioapic_entry = (struct madt_ioapic*)entry;
-            uint64_t ioapic_addr = (uint64_t)ioapic_entry->ioapic_addr;
-            #if APIC_DEBUG
-            kprintf("[MADT-3.1] Found I/O APIC entry: ID=%x, addr=%llX, GSI_base=%u\n",
-                    ioapic_entry->ioapic_id, 
-                    (unsigned long long)ioapic_addr,
-                    ioapic_entry->gsi_base);
-            __asm__ volatile ("" ::: "memory");
-            #endif
-            return ioapic_addr;
-        }
-        
-        offset += entry->length;
-        if (entry->length == 0) {
-            break;  /* Prevent infinite loop */
-        }
-    }
-    
-    #if APIC_DEBUG
-    kputs("[MADT-3.2] I/O APIC entry not found in MADT\n");
-    #endif
     return 0;
 }
 
@@ -491,6 +396,18 @@ int apic_init(void)
     kputs("[APIC-4] Extract base\n");
     __asm__ volatile ("" ::: "memory");
     uint64_t apic_base_phys = apic_base_msr & 0xFFFFF000;
+    uint32_t madt_lapic_addr = 0;
+    if (acpi_madt_get_lapic_addr(&madt_lapic_addr) == 0 && madt_lapic_addr != 0) {
+        uint64_t madt_base = ((uint64_t)madt_lapic_addr) & 0xFFFFF000ULL;
+        if (madt_base != apic_base_phys) {
+            kprintf("[APIC-4.1] MADT LAPIC base=%llX differs from MSR=%llX (using MSR)\n",
+                    (unsigned long long)madt_base,
+                    (unsigned long long)apic_base_phys);
+        } else {
+            kprintf("[APIC-4.1] MADT LAPIC base matches MSR=%llX\n",
+                    (unsigned long long)apic_base_phys);
+        }
+    }
     __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-5] Setup LAPIC access backend\n");
@@ -846,6 +763,33 @@ int ioapic_init(void)
         ioapic_write_register(IOAPIC_REDIR_TBL(i), rte_low);
         ioapic_write_register(IOAPIC_REDIR_TBL_H(i), rte_high);
     }
+
+    /* Apply ACPI ISO routing for legacy IRQ lines (still masked at this stage). */
+    for (uint8_t irq = 0; irq < 16; irq++) {
+        uint8_t gsi = irq;
+        uint32_t polarity = IOAPIC_RTE_POLARITY_HIGH;
+        uint32_t trigger = IOAPIC_RTE_TRIGGER_EDGE;
+        if (ioapic_route_for_legacy_irq(irq, &gsi, &polarity, &trigger) != 0) {
+            continue;
+        }
+        if (gsi >= ioapic_max_redir) {
+            continue;
+        }
+
+        uint32_t rte_low = IOAPIC_RTE_VECTOR(32 + irq)
+                         | IOAPIC_RTE_DELIVERY_FIXED
+                         | polarity
+                         | trigger
+                         | IOAPIC_RTE_DEST_MODE_PHYS
+                         | IOAPIC_RTE_MASKED;
+        uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID(bsp_lapic_id);
+        ioapic_write_register(IOAPIC_REDIR_TBL(gsi), rte_low);
+        ioapic_write_register(IOAPIC_REDIR_TBL_H(gsi), rte_high);
+    }
+
+    #if APIC_DEBUG
+    ioapic_log_iso_routes();
+    #endif
     
     ioapic_initialized = true;
     ioapic_available = true;
@@ -894,6 +838,16 @@ void apic_enable_irq(uint8_t irq)
     if (!ioapic_available || irq >= IOAPIC_MAX_REDIR) {
         return;
     }
+
+    uint8_t gsi = irq;
+    uint32_t polarity = IOAPIC_RTE_POLARITY_HIGH;
+    uint32_t trigger = IOAPIC_RTE_TRIGGER_EDGE;
+    if (ioapic_route_for_legacy_irq(irq, &gsi, &polarity, &trigger) != 0) {
+        return;
+    }
+    if (gsi >= ioapic_max_redir) {
+        return;
+    }
     
     /* Calculate interrupt vector (IRQ 0 -> vector 32, IRQ 1 -> vector 33, etc.) */
     uint8_t vector = irq + 32;
@@ -912,8 +866,8 @@ void apic_enable_irq(uint8_t irq)
      */
     uint32_t rte_low = vector 
                      | IOAPIC_RTE_DELIVERY_FIXED 
-                     | IOAPIC_RTE_POLARITY_HIGH 
-                     | IOAPIC_RTE_TRIGGER_EDGE
+                     | polarity
+                     | trigger
                      | IOAPIC_RTE_DEST_MODE_PHYS;
     rte_low &= ~IOAPIC_RTE_MASKED; /* Unmask */
     
@@ -921,8 +875,8 @@ void apic_enable_irq(uint8_t irq)
     uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID(dest_lapic_id);
     
     /* Write RTE */
-    ioapic_write_register(IOAPIC_REDIR_TBL(irq), rte_low);
-    ioapic_write_register(IOAPIC_REDIR_TBL_H(irq), rte_high);
+    ioapic_write_register(IOAPIC_REDIR_TBL(gsi), rte_low);
+    ioapic_write_register(IOAPIC_REDIR_TBL_H(gsi), rte_high);
 }
 
 /**
@@ -936,15 +890,23 @@ void apic_disable_irq(uint8_t irq)
     if (!ioapic_available || irq >= IOAPIC_MAX_REDIR) {
         return;
     }
+
+    uint8_t gsi = irq;
+    if (ioapic_route_for_legacy_irq(irq, &gsi, NULL, NULL) != 0) {
+        return;
+    }
+    if (gsi >= ioapic_max_redir) {
+        return;
+    }
     
     /* Read current RTE */
-    uint32_t rte_low = ioapic_read_register(IOAPIC_REDIR_TBL(irq));
+    uint32_t rte_low = ioapic_read_register(IOAPIC_REDIR_TBL(gsi));
     
     /* Mask interrupt */
     rte_low |= IOAPIC_RTE_MASKED;
     
     /* Write RTE */
-    ioapic_write_register(IOAPIC_REDIR_TBL(irq), rte_low);
+    ioapic_write_register(IOAPIC_REDIR_TBL(gsi), rte_low);
 }
 
 /* ============================================================================

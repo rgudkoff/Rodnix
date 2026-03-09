@@ -1,6 +1,6 @@
 /*
  * udptest.c
- * Minimal UDP loopback smoke test via POSIX socket syscalls.
+ * Minimal UDP smoke test via net0 path (10.0.2.15).
  */
 
 #include <stdint.h>
@@ -9,7 +9,7 @@
 #define FD_STDOUT 1
 #define AF_INET 2
 #define SOCK_DGRAM 2
-#define NET_LOOPBACK_ADDR 0x7F000001u
+#define NET_NET0_ADDR 0x0A00020Fu
 
 typedef struct sockaddr_in {
     uint16_t sin_family;
@@ -33,7 +33,7 @@ static long write_str(const char* s)
 
 int main(void)
 {
-    const char* payload = "udp-loopback-ok";
+    const char* payload = "udp-net0-path-ok";
     char rx[64];
     sockaddr_in_t dst = {0};
     sockaddr_in_t src = {0};
@@ -47,7 +47,7 @@ int main(void)
 
     dst.sin_family = AF_INET;
     dst.sin_port = 100;
-    dst.sin_addr = NET_LOOPBACK_ADDR;
+    dst.sin_addr = NET_NET0_ADDR;
     if (posix_bind((int)srv, &dst) < 0) {
         (void)write_str("udptest: bind failed\n");
         (void)posix_close((int)srv);
@@ -55,8 +55,8 @@ int main(void)
         return 1;
     }
 
-    long wr = posix_sendto((int)cli, payload, 15, 0, &dst, sizeof(dst));
-    if (wr != 15) {
+    long wr = posix_sendto((int)cli, payload, 16, 0, &dst, sizeof(dst));
+    if (wr != 16) {
         (void)write_str("udptest: sendto failed\n");
         (void)posix_close((int)srv);
         (void)posix_close((int)cli);
@@ -64,14 +64,14 @@ int main(void)
     }
 
     long rd = posix_recvfrom((int)srv, rx, sizeof(rx), 0, &src, 500);
-    if (rd != 15) {
+    if (rd != 16) {
         (void)write_str("udptest: recvfrom failed\n");
         (void)posix_close((int)srv);
         (void)posix_close((int)cli);
         return 1;
     }
 
-    rx[15] = '\0';
+    rx[16] = '\0';
     if (rx[0] != 'u' || rx[1] != 'd' || rx[2] != 'p') {
         (void)write_str("udptest: payload mismatch\n");
         (void)posix_close((int)srv);

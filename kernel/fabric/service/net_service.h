@@ -7,6 +7,7 @@
 #define _RODNIX_FABRIC_NET_SERVICE_H
 
 #include "../../../include/abi.h"
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -39,8 +40,17 @@ typedef struct fabric_netif_info {
     uint8_t mac[6];
     uint32_t mtu;
     uint32_t flags;
+    uint32_t ipv4_addr;
+    uint32_t ipv4_netmask;
+    uint32_t ipv4_gateway;
     fabric_netif_stats_t stats;
 } fabric_netif_info_t;
+
+_Static_assert(sizeof(fabric_netif_info_t) == 88, "fabric_netif_info_t ABI size mismatch");
+_Static_assert(offsetof(fabric_netif_info_t, mtu) == 24, "fabric_netif_info_t.mtu ABI mismatch");
+_Static_assert(offsetof(fabric_netif_info_t, flags) == 28, "fabric_netif_info_t.flags ABI mismatch");
+_Static_assert(offsetof(fabric_netif_info_t, ipv4_addr) == 32, "fabric_netif_info_t.ipv4_addr ABI mismatch");
+_Static_assert(offsetof(fabric_netif_info_t, stats) == 48, "fabric_netif_info_t.stats ABI mismatch");
 
 struct fabric_netif {
     rdnx_abi_header_t hdr;
@@ -48,6 +58,9 @@ struct fabric_netif {
     uint8_t mac[6];
     uint32_t mtu;
     uint32_t flags;
+    uint32_t ipv4_addr;
+    uint32_t ipv4_netmask;
+    uint32_t ipv4_gateway;
     const fabric_netif_ops_t* ops;
     void* context;
     fabric_netif_stats_t stats;

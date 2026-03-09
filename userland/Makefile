@@ -29,6 +29,7 @@ LS_SRCS = bin/ls.c
 CAT_SRCS = bin/cat.c
 TRUE_SRCS = bin/true.c
 IFCONFIG_SRCS = bin/ifconfig.c
+PING_SRCS = bin/ping.c
 HWLIST_SRCS = bin/hwlist.c
 FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
@@ -62,7 +63,7 @@ CONTRACT_FSIO_SRCS = bin/contract_fsio.c
 CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o))
 
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -72,6 +73,7 @@ LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CAT_OBJS = $(addprefix $(BUILD_DIR)/, $(CAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TRUE_OBJS = $(addprefix $(BUILD_DIR)/, $(TRUE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 IFCONFIG_OBJS = $(addprefix $(BUILD_DIR)/, $(IFCONFIG_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+PING_OBJS = $(addprefix $(BUILD_DIR)/, $(PING_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HWLIST_OBJS = $(addprefix $(BUILD_DIR)/, $(HWLIST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -111,6 +113,7 @@ LS_ELF = $(BUILD_DIR)/ls.elf
 CAT_ELF = $(BUILD_DIR)/cat.elf
 TRUE_ELF = $(BUILD_DIR)/true.elf
 IFCONFIG_ELF = $(BUILD_DIR)/ifconfig.elf
+PING_ELF = $(BUILD_DIR)/ping.elf
 HWLIST_ELF = $(BUILD_DIR)/hwlist.elf
 FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
@@ -149,6 +152,7 @@ LS_BIN = $(BIN_DIR)/ls
 CAT_BIN = $(BIN_DIR)/cat
 TRUE_BIN = $(BIN_DIR)/true
 IFCONFIG_BIN = $(BIN_DIR)/ifconfig
+PING_BIN = $(BIN_DIR)/ping
 HWLIST_BIN = $(BIN_DIR)/hwlist
 FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
@@ -187,7 +191,7 @@ CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -235,6 +239,10 @@ $(TRUE_ELF): $(TRUE_OBJS) link.ld
 $(IFCONFIG_ELF): $(IFCONFIG_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(IFCONFIG_OBJS)
+
+$(PING_ELF): $(PING_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(PING_OBJS)
 
 $(HWLIST_ELF): $(HWLIST_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -385,6 +393,10 @@ $(TRUE_BIN): $(TRUE_ELF)
 	cp $< $@
 
 $(IFCONFIG_BIN): $(IFCONFIG_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(PING_BIN): $(PING_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

@@ -57,9 +57,15 @@ KERNEL_C_SRCS += \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
+	kernel/arch/x86_64/acpi.c \
 	kernel/arch/x86_64/syscall_fast.c \
 	kernel/arch/x86_64/usermode.c \
 	kernel/net/net.c \
+	kernel/net/bsd_inet.c \
+	kernel/net/bsd_ether.c \
+	kernel/net/bsd_mbuf.c \
+	kernel/net/bsd_ifnet.c \
+	kernel/net/bsd_netisr.c \
 	kernel/net/socket.c \
 	kernel/linux/linux_errno.c \
 	kernel/linux/linux_compat.c \

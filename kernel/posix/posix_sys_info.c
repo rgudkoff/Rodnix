@@ -9,6 +9,7 @@
 #include "../fabric/device/device.h"
 #include "../fabric/service/net_service.h"
 #include "../fabric/service/block_service.h"
+#include "../net/socket.h"
 #include "../unix/unix_layer.h"
 #include "../../include/error.h"
 #include "../../include/version.h"
@@ -75,7 +76,16 @@ uint64_t posix_netiflist(uint64_t a1,
         if (fabric_netif_get_info(i, &info) != RDNX_OK) {
             break;
         }
-        user_entries[i] = info;
+        /* Fill explicit fields to keep user ABI stable across padding/layout changes. */
+        memset(&user_entries[i], 0, sizeof(user_entries[i]));
+        strncpy(user_entries[i].name, info.name, sizeof(user_entries[i].name) - 1);
+        memcpy(user_entries[i].mac, info.mac, sizeof(user_entries[i].mac));
+        user_entries[i].mtu = info.mtu;
+        user_entries[i].flags = info.flags;
+        user_entries[i].ipv4_addr = info.ipv4_addr;
+        user_entries[i].ipv4_netmask = info.ipv4_netmask;
+        user_entries[i].ipv4_gateway = info.ipv4_gateway;
+        user_entries[i].stats = info.stats;
     }
     if (user_count) {
         *user_count = total;
@@ -615,4 +625,34 @@ uint64_t posix_nanosleep(uint64_t a1,
     (void)a5;
     (void)a6;
     return unix_time_nanosleep(a1, a2);
+}
+
+uint64_t posix_ping(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    uint32_t dst_ip = (uint32_t)a1;
+    uint32_t timeout_ms = (uint32_t)a2;
+    uint32_t* user_rtt_ms = (uint32_t*)(uintptr_t)a3;
+    uint32_t rtt_ms = 0;
+
+    if (user_rtt_ms && !unix_user_range_ok(user_rtt_ms, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int rc = net_ping_ipv4(dst_ip, timeout_ms, &rtt_ms);
+    if (rc != 0) {
+        return (uint64_t)RDNX_E_TIMEOUT;
+    }
+
+    if (user_rtt_ms) {
+        *user_rtt_ms = rtt_ms;
+    }
+    return (uint64_t)RDNX_OK;
 }
