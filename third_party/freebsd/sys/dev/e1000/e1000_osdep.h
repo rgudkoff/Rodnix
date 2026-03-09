@@ -152,9 +152,7 @@ struct e1000_osdep
 {
 	bus_space_tag_t    mem_bus_space_tag;
 	bus_space_handle_t mem_bus_space_handle;
-#ifdef INVARIANTS
 	bus_size_t	   mem_bus_space_size;
-#endif
 	bus_space_tag_t    io_bus_space_tag;
 	bus_space_handle_t io_bus_space_handle;
 	bus_space_tag_t    flash_bus_space_tag;
@@ -277,4 +275,3 @@ e1000_wr32(struct e1000_osdep *osdep, uint32_t reg, uint32_t value)
 #endif
 
 #endif  /* _FREEBSD_OS_H_ */
-

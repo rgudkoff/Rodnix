@@ -8,6 +8,10 @@
 /* Minimal iflib compatibility skeleton for incremental porting. */
 typedef void* if_ctx_t;
 typedef void* if_softc_ctx_t;
+typedef uint16_t qidx_t;
+
+struct if_irq { int dummy; };
+struct grouptask { int dummy; };
 
 struct if_shared_ctx {
     uint32_t isc_magic;
@@ -22,6 +26,11 @@ typedef struct if_shared_ctx* if_shared_ctx_t;
 #define IFLIB_MAGIC 0x49464c42u
 
 static inline if_ctx_t iflib_get_ifp(if_ctx_t ctx)
+{
+    return ctx;
+}
+
+static inline void* iflib_ctx_lock_get(if_ctx_t ctx)
 {
     return ctx;
 }

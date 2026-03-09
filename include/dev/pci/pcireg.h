@@ -13,5 +13,11 @@
 #define PCIS_BRIDGE_ISA  0x01
 
 #define PCIR_COMMAND 0x04
+#define PCIR_STATUS  0x06
+#define PCIR_CAP_PTR 0x34
+
+#define PCI_STATUS_CAP_LIST 0x0010
+
+#define PCIY_EXPRESS 0x10
 
 #endif /* _RODNIX_COMPAT_DEV_PCI_PCIREG_H */

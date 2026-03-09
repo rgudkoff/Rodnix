@@ -1,5 +1,7 @@
 # RodNIX
 
+RodNIX — какая могла бы быть Unix, если бы её начали проектировать сегодня.
+
 RodNIX is a practical hobby OS for x86_64 with a clear goal:
 build a small, debuggable Unix-like system with clean subsystem boundaries.
 

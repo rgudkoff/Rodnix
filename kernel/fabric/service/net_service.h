@@ -25,6 +25,7 @@ typedef struct fabric_netif fabric_netif_t;
 typedef struct fabric_netif_ops {
     rdnx_abi_header_t hdr;
     int (*tx)(fabric_netif_t* iface, const void* frame, uint32_t len);
+    int (*poll)(fabric_netif_t* iface);
 } fabric_netif_ops_t;
 
 typedef struct fabric_netif_stats {
@@ -73,5 +74,6 @@ fabric_netif_t* fabric_netif_get(uint32_t index);
 int fabric_netif_tx(fabric_netif_t* iface, const void* frame, uint32_t len);
 int fabric_netif_rx_submit(fabric_netif_t* iface, const void* frame, uint32_t len);
 int fabric_netif_get_info(uint32_t index, fabric_netif_info_t* out);
+void fabric_netif_poll_all(void);
 
 #endif /* _RODNIX_FABRIC_NET_SERVICE_H */

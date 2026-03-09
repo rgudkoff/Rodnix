@@ -171,6 +171,7 @@ static int net_resolve_arp(fabric_netif_t* iface, uint32_t target_ip, uint8_t ma
         if (bsd_arp_lookup(target_ip, mac_out) == 0) {
             return 0;
         }
+        fabric_netif_poll_all();
         scheduler_yield();
     }
 
@@ -856,6 +857,7 @@ int net_socket_recvfrom(net_socket_t* sock, void* buf, size_t len, sockaddr_in_t
         if (deadline && scheduler_get_ticks() >= deadline) {
             return -1;
         }
+        fabric_netif_poll_all();
         scheduler_yield();
     }
 }
@@ -1000,6 +1002,7 @@ int net_ping_ipv4(uint32_t dst_host, uint32_t timeout_ms, uint32_t* out_rtt_ms)
             return -1;
         }
 
+        fabric_netif_poll_all();
         scheduler_yield();
     }
 }

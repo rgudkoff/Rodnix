@@ -228,3 +228,22 @@ int fabric_netif_get_info(uint32_t index, fabric_netif_info_t* out)
     out->stats = iface->stats;
     return RDNX_OK;
 }
+
+void fabric_netif_poll_all(void)
+{
+    spinlock_lock(&g_net_lock);
+    uint32_t n = g_iface_count;
+    fabric_netif_t* ifaces[FABRIC_NETIF_MAX];
+    for (uint32_t i = 0; i < n && i < FABRIC_NETIF_MAX; i++) {
+        ifaces[i] = g_ifaces[i];
+    }
+    spinlock_unlock(&g_net_lock);
+
+    for (uint32_t i = 0; i < n && i < FABRIC_NETIF_MAX; i++) {
+        fabric_netif_t* iface = ifaces[i];
+        if (!iface || !iface->ops || !iface->ops->poll) {
+            continue;
+        }
+        (void)iface->ops->poll(iface);
+    }
+}
