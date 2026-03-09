@@ -8,6 +8,7 @@
 #include "syscall.h"
 #include "posix_syscall.h"
 #include "unistd.h"
+#include "sys/wait.h"
 #include "time.h"
 
 #define VFS_OPEN_READ 1
@@ -169,7 +170,6 @@ static void run_ifconfig_smoke_if_enabled(void)
         return;
     }
 
-    int status = -1;
     const char* av[2];
     av[0] = "/bin/ifconfig";
     av[1] = 0;
@@ -180,12 +180,45 @@ static void run_ifconfig_smoke_if_enabled(void)
         (void)write_str("[SMK] IFCONFIG FAIL spawn\n");
         return;
     }
+    (void)write_str("[SMK] IFCONFIG WAIT (WNOHANG)\n");
 
-    long wr = waitpid((pid_t)pid, &status, 0);
-    if (wr == pid && status == 0) {
-        (void)write_str("[SMK] IFCONFIG PASS\n");
-    } else {
-        (void)write_str("[SMK] IFCONFIG FAIL wait/status\n");
+    {
+        struct timespec t0;
+        struct timespec t1;
+        const int64_t timeout_ns = 2LL * 1000LL * 1000LL * 1000LL;
+        int status = -1;
+
+        if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+            (void)write_str("[SMK] IFCONFIG FAIL clock\n");
+            return;
+        }
+
+        for (;;) {
+            pid_t wr = waitpid((pid_t)pid, &status, WNOHANG);
+            if (wr == (pid_t)pid) {
+                if (status == 0) {
+                    (void)write_str("[SMK] IFCONFIG PASS\n");
+                } else {
+                    (void)write_str("[SMK] IFCONFIG FAIL wait/status\n");
+                }
+                return;
+            }
+            if (wr < 0) {
+                (void)write_str("[SMK] IFCONFIG FAIL wait\n");
+                return;
+            }
+
+            if (clock_gettime(CLOCK_MONOTONIC, &t1) == 0) {
+                int64_t dt_ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL +
+                                (int64_t)(t1.tv_nsec - t0.tv_nsec);
+                if (dt_ns >= timeout_ns) {
+                    (void)write_str("[SMK] IFCONFIG TIMEOUT\n");
+                    return;
+                }
+            }
+
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+        }
     }
 }
 

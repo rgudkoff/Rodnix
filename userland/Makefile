@@ -23,7 +23,7 @@ ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
 INIT_SRCS = init/init.c
-SH_SRCS = shell/shell.c
+SH_SRCS = shell/main.c shell/io.c shell/parser.c shell/exec.c shell/builtins.c
 ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
 CAT_SRCS = bin/cat.c

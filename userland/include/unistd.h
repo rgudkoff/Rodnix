@@ -6,6 +6,7 @@
 #include <sys/fcntl.h>
 #include <sys/mman.h>
 #include <errno.h>
+#include <sys/wait.h>
 #include "posix_syscall.h"
 
 #ifdef __cplusplus
@@ -145,13 +146,21 @@ static inline pid_t spawnv(const char* path, char* const argv[])
 static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
     enum { RDNX_E_BUSY = -5 };
-    long wr = (long)RDNX_E_BUSY;
-    (void)options;
-    while (wr == (long)RDNX_E_BUSY) {
-        wr = posix_waitpid((long)pid, status);
+    long wr = posix_waitpid((long)pid, status);
+    if ((options & WNOHANG) != 0) {
         if (wr == (long)RDNX_E_BUSY) {
-            (void)rdnx_syscall0(0);
+            return 0;
         }
+        if (wr < 0) {
+            errno = (int)(-wr);
+            return (pid_t)-1;
+        }
+        return (pid_t)wr;
+    }
+
+    while (wr == (long)RDNX_E_BUSY) {
+        (void)rdnx_syscall0(0);
+        wr = posix_waitpid((long)pid, status);
     }
     if (wr < 0) {
         errno = (int)(-wr);
