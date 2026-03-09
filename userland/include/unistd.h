@@ -227,6 +227,7 @@ static inline pid_t spawnv(const char* path, char* const argv[])
 static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
     enum { RDNX_E_BUSY = -5 };
+    enum { SYS_TEST_SLEEP = 62 };
     long wr = posix_waitpid((long)pid, status);
     if ((options & WNOHANG) != 0) {
         if (wr == (long)RDNX_E_BUSY) {
@@ -240,7 +241,7 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
     }
 
     while (wr == (long)RDNX_E_BUSY) {
-        (void)rdnx_syscall0(0);
+        (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
         wr = posix_waitpid((long)pid, status);
     }
     if (wr < 0) {

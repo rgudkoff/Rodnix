@@ -1,7 +1,6 @@
 #include "../unix_layer.h"
 #include "../../common/bootlog.h"
 #include "../../common/scheduler.h"
-#include "../../common/waitq.h"
 #include "../../core/interrupts.h"
 #include "../../arch/x86_64/interrupt_frame.h"
 #include "../../arch/x86_64/paging.h"
@@ -9,27 +8,6 @@
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
-
-static waitq_t unix_child_waitq;
-static int unix_child_waitq_inited = 0;
-
-static inline void unix_child_waitq_init_once(void)
-{
-    if (!unix_child_waitq_inited) {
-        waitq_init(&unix_child_waitq, "unix_child_exit");
-        unix_child_waitq_inited = 1;
-    }
-}
-
-static inline irql_t unix_wait_lock(void)
-{
-    return set_irql(IRQL_HIGH);
-}
-
-static inline void unix_wait_unlock(irql_t old)
-{
-    (void)set_irql(old);
-}
 
 static int unix_frame_on_thread_stack(const thread_t* t, const interrupt_frame_t* frame)
 {
@@ -45,10 +23,6 @@ static int unix_frame_on_thread_stack(const thread_t* t, const interrupt_frame_t
 void unix_proc_notify_waiters(uint64_t parent_task_id)
 {
     (void)parent_task_id;
-    unix_child_waitq_init_once();
-    irql_t old = unix_wait_lock();
-    (void)waitq_wake_all(&unix_child_waitq);
-    unix_wait_unlock(old);
 }
 
 uint64_t unix_proc_exit(uint64_t status)
@@ -71,73 +45,45 @@ uint64_t unix_proc_exit(uint64_t status)
 
 uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
 {
-    /*
-     * CT-004/CT-005/CT-006 contract point.
-     * FreeBSD/XNU-style pattern:
-     *   check under lock -> sleep on child-exit wait channel -> recheck
-     */
+    /* CT-004/CT-005/CT-006 contract point. */
     task_t* self = task_get_current();
     if (!self || pid == 0) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    thread_t* self_thread = thread_get_current();
-    if (!self_thread) {
-        return (uint64_t)RDNX_E_INVALID;
-    }
-    unix_child_waitq_init_once();
 
     int* user_status = (int*)(uintptr_t)user_status_ptr;
     if (user_status && !unix_user_range_ok(user_status, sizeof(int))) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    for (;;) {
-        irql_t old = unix_wait_lock();
-        task_t* child = task_find_by_id(pid);
-        if (!child) {
-            unix_wait_unlock(old);
-            return (uint64_t)RDNX_E_NOTFOUND;
-        }
-        if (child->parent_task_id != self->task_id) {
-            unix_wait_unlock(old);
-            return (uint64_t)RDNX_E_DENIED;
-        }
-
-        bool child_exited = child->exited ||
-                            (child->state == TASK_STATE_ZOMBIE) ||
-                            (child->state == TASK_STATE_DEAD);
-        if (child_exited) {
-            if (child->waited) {
-                unix_wait_unlock(old);
-                return (uint64_t)RDNX_E_NOTFOUND;
-            }
-
-            child->waited = 1;
-            if (user_status) {
-                *user_status = child->exit_code;
-            }
-            bool destroy_now = (child->thread_count == 0);
-            if (destroy_now) {
-                child->state = TASK_STATE_DEAD;
-            }
-            unix_wait_unlock(old);
-            if (destroy_now) {
-                task_destroy(child);
-            }
-            return pid;
-        }
-
-        if (!waitq_contains(&unix_child_waitq, self_thread)) {
-            int qret = waitq_enqueue(&unix_child_waitq, self_thread);
-            if (qret != RDNX_OK && qret != RDNX_E_BUSY) {
-                unix_wait_unlock(old);
-                return (uint64_t)qret;
-            }
-        }
-        unix_wait_unlock(old);
-
-        (void)waitq_wait(&unix_child_waitq, 0);
+    task_t* child = task_find_by_id(pid);
+    if (!child) {
+        return (uint64_t)RDNX_E_NOTFOUND;
     }
+    if (child->parent_task_id != self->task_id) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+
+    bool child_exited = child->exited ||
+                        (child->state == TASK_STATE_ZOMBIE) ||
+                        (child->state == TASK_STATE_DEAD);
+    if (!child_exited) {
+        return (uint64_t)RDNX_E_BUSY;
+    }
+    if (child->waited) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+
+    child->waited = 1;
+    if (user_status) {
+        *user_status = child->exit_code;
+    }
+    bool destroy_now = (child->thread_count == 0);
+    if (destroy_now) {
+        child->state = TASK_STATE_DEAD;
+        task_destroy(child);
+    }
+    return pid;
 }
 
 uint64_t unix_proc_fork(void)
