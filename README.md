@@ -1,12 +1,22 @@
 # RodNIX
 
-RodNIX — какая могла бы быть Unix, если бы её начали проектировать сегодня.
+RodNIX is what Unix might look like if it were designed from scratch today.
 
-RodNIX is a practical hobby OS for x86_64 with a clear goal:
-build a small, debuggable Unix-like system with clean subsystem boundaries.
+The project keeps the Unix model that still matters: small tools, clear
+interfaces, process isolation, and a system you can understand end to end.
+What it does not inherit by default is decades of accidental complexity,
+historical layering, and interfaces that survived mainly because they were
+already there.
 
-If you like kernel work, low-level debugging, and architecture that stays
-readable as the project grows, you will fit well here.
+RodNIX is a practical x86_64 operating system project focused on building a
+small, debuggable, Unix-like system with explicit subsystem boundaries. The
+goal is not to imitate an existing kernel line by line. The goal is to keep
+the parts of Unix that aged well, and redesign the parts that would be done
+more cleanly with today's constraints, hardware, and engineering standards in
+mind.
+
+If you care about kernel work, low-level debugging, and architecture that
+stays readable as the project grows, this repository should feel familiar.
 
 ## Why Contribute
 
