@@ -87,6 +87,7 @@ typedef struct task {
     uint32_t egid;             /* Эффективный GID */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
     uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
+    uint8_t fd_kind[TASK_MAX_FD];  /* Тип дескриптора (unix fd kind) */
     int32_t exit_code;         /* Код завершения процесса */
     uint8_t exited;            /* Процесс завершен через posix_exit */
     uint8_t waited;            /* Статус уже забран waitpid */

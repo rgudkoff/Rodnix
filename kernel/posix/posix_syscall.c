@@ -248,6 +248,21 @@ static uint64_t posix_close(uint64_t a1,
     return unix_fs_close(a1);
 }
 
+static uint64_t posix_pipe(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_pipe(a1);
+}
+
 static uint64_t posix_fcntl(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,
@@ -908,6 +923,9 @@ static uint64_t posix_mmap(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     int fd = (int)a5;
+    if (fd < 0 || fd >= TASK_MAX_FD || task->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     uint64_t off = a6;
     vfs_file_t* file = (vfs_file_t*)task_fd_get(task, fd);
     if (!file || !file->node || !file->node->inode || file->node->type != VFS_NODE_FILE) {

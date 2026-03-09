@@ -51,7 +51,7 @@ static const char* syscall_name(uint32_t n)
         "read", "write", "uname", "exit", "exec", "spawn", "waitpid",
         "readdir", "fcntl", "netiflist", "mmap", "munmap", "brk", "fork",
         "hwlist", "fabricls", "fabricevents", "sysinfo", "clock_gettime",
-        "stat", "fstat", "lseek", "scstat"
+        "stat", "fstat", "lseek", "scstat", "pipe"
     };
     if (n < (uint32_t)(sizeof(kNames) / sizeof(kNames[0]))) {
         return kNames[n];

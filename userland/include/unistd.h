@@ -88,6 +88,16 @@ static inline int close(int fd)
     return (int)r;
 }
 
+static inline int pipe(int pipefd[2])
+{
+    long r = posix_pipe(pipefd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
 static inline off_t lseek(int fd, off_t off, int whence)
 {
     long r = posix_lseek(fd, (long)off, whence);

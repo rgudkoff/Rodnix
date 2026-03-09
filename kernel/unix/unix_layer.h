@@ -19,12 +19,20 @@
 #define UNIX_ARG_MAX 16
 #define UNIX_DIRENT_NAME_MAX 255
 
+enum {
+    UNIX_FD_KIND_NONE = 0,
+    UNIX_FD_KIND_VFS = 1,
+    UNIX_FD_KIND_PIPE_R = 2,
+    UNIX_FD_KIND_PIPE_W = 3
+};
+
 bool unix_user_range_ok(const void* ptr, size_t len);
 int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src);
 
 int unix_bind_stdio_to_console(task_t* task);
 int unix_clone_fds_for_spawn(const task_t* parent, task_t* child);
 void unix_apply_cloexec(task_t* task);
+void unix_fd_release(task_t* task, int fd);
 
 typedef struct {
     uint64_t d_fileno;
@@ -48,6 +56,7 @@ uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence);
 uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
+uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr);
 /* CT-003 target */
 uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr);
 uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint64_t user_len);

@@ -42,3 +42,4 @@
 32 fstat
 33 lseek
 34 scstat
+35 pipe

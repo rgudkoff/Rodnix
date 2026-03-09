@@ -66,6 +66,11 @@ static inline long posix_close(int fd)
     return rdnx_syscall1(POSIX_SYS_CLOSE, fd);
 }
 
+static inline long posix_pipe(int pipefd[2])
+{
+    return rdnx_syscall1(POSIX_SYS_PIPE, (long)(uintptr_t)pipefd);
+}
+
 static inline long posix_fcntl(int fd, int cmd, long arg)
 {
     return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
