@@ -7,6 +7,7 @@
 #include "../fabric.h"
 #include "../spin.h"
 #include "service.h"
+#include "../../fs/devfs.h"
 #include "../../../include/common.h"
 #include "../../../include/error.h"
 
@@ -109,6 +110,7 @@ int fabric_blockdev_register(fabric_blockdev_t* dev)
     }
     g_blockdevs[g_blockdev_count++] = dev;
     spinlock_unlock(&g_block_lock);
+    (void)devfs_register_blockdev(dev->name);
     fabric_log("[fabric-block] device registered: %s sectors=%llu size=%u\n",
                dev->name,
                (unsigned long long)dev->sector_count,

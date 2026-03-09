@@ -440,6 +440,13 @@ void kmain(uint32_t magic, void* mbi)
     } else {
         bootlog_mark("vfs", "done");
         kputs("[INIT-9.6] VFS ready\n");
+        (void)vfs_mkdir("/mnt");
+        int mrc = vfs_mount("ext2", "disk0", "/mnt");
+        if (mrc == 0) {
+            kputs("[INIT-9.6a] Mounted ext2 disk0 at /mnt\n");
+        } else {
+            kprintf("[INIT-9.6a] ext2 mount skipped rc=%d\n", mrc);
+        }
     }
     __asm__ volatile ("" ::: "memory");
 

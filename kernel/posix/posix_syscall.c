@@ -446,7 +446,10 @@ static uint64_t posix_lseek(uint64_t a1,
     (void)a4;
     (void)a5;
     (void)a6;
-    return unix_fs_lseek(a1, a2, a3);
+    if (a3 > 2u) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return unix_fs_lseek(a1, (uint64_t)(int64_t)a2, a3);
 }
 
 static uint64_t posix_read(uint64_t a1,
@@ -1064,6 +1067,45 @@ static uint64_t posix_blockread(uint64_t a1,
         return (uint64_t)rc;
     }
     memcpy(out, bounce, dev->sector_size);
+    return (uint64_t)dev->sector_size;
+}
+
+static uint64_t posix_blockwrite(uint64_t a1,
+                                 uint64_t a2,
+                                 uint64_t a3,
+                                 uint64_t a4,
+                                 uint64_t a5,
+                                 uint64_t a6)
+{
+    (void)a5;
+    (void)a6;
+
+    const char* name = (const char*)(uintptr_t)a1;
+    uint64_t lba = a2;
+    const void* in = (const void*)(uintptr_t)a3;
+    uint64_t in_len = a4;
+
+    if (!name || !in || in_len == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(name, 1) || !unix_user_range_ok(in, (size_t)in_len)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    fabric_blockdev_t* dev = fabric_blockdev_find(name);
+    if (!dev) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+    if (dev->sector_size == 0 || dev->sector_size > in_len || dev->sector_size > 4096u) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint8_t bounce[4096];
+    memcpy(bounce, in, dev->sector_size);
+    int rc = fabric_blockdev_write(dev, lba, 1, bounce);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
+    }
     return (uint64_t)dev->sector_size;
 }
 

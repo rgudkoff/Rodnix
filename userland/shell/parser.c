@@ -1,6 +1,7 @@
 #include "shell_internal.h"
 
 char shell_cwd[SH_PATH_MAX] = "/";
+char shell_ps1[SH_PS1_MAX] = "";
 
 int parse_line(char* line, char** argv, int max_args)
 {
@@ -129,4 +130,47 @@ void resolve_path(const char* in, char* out, int out_sz)
     }
     tmp[p] = '\0';
     path_normalize(tmp, out, out_sz);
+}
+
+static void shell_ps1_copy(const char* src)
+{
+    int i = 0;
+    if (!src) {
+        shell_ps1[0] = '\0';
+        return;
+    }
+    while (src[i] != '\0' && i + 1 < SH_PS1_MAX) {
+        shell_ps1[i] = src[i];
+        i++;
+    }
+    shell_ps1[i] = '\0';
+}
+
+int shell_set_ps1_from_args(int argc, char** argv, int start_idx)
+{
+    char buf[SH_PS1_MAX];
+    int p = 0;
+    if (!argv || start_idx < 0 || start_idx >= argc) {
+        return -1;
+    }
+
+    for (int i = start_idx; i < argc && p + 1 < SH_PS1_MAX; i++) {
+        if (i > start_idx && p + 1 < SH_PS1_MAX) {
+            buf[p++] = ' ';
+        }
+        for (int j = 0; argv[i][j] != '\0' && p + 1 < SH_PS1_MAX; j++) {
+            buf[p++] = argv[i][j];
+        }
+    }
+    buf[p] = '\0';
+
+    if (p >= 2 && ((buf[0] == '"' && buf[p - 1] == '"') ||
+                   (buf[0] == '\'' && buf[p - 1] == '\''))) {
+        buf[p - 1] = '\0';
+        shell_ps1_copy(&buf[1]);
+        return 0;
+    }
+
+    shell_ps1_copy(buf);
+    return 0;
 }

@@ -10,10 +10,10 @@ int main(void)
 
     for (;;) {
         (void)write_str(SH_ANSI_BOTTOM);
-        (void)write_str("sh> ");
+        shell_print_prompt();
         int len = read_line(line, (int)sizeof(line));
         if (len < 0) {
-            (void)write_str("read error\n");
+            (void)write_str("sh: read error\n");
             continue;
         }
         if (len == 0) {
@@ -21,7 +21,7 @@ int main(void)
         }
         if (line_has_meta(line)) {
             if (cmd_exec_meta_line(line) < 0) {
-                (void)write_str("command not found or failed\n");
+                (void)write_str("sh: command not found or failed\n");
             }
             continue;
         }
@@ -47,6 +47,21 @@ int main(void)
             }
         } else if (str_eq(argv[0], "hostname")) {
             cmd_hostname();
+        } else if (str_eq(argv[0], "set")) {
+            if (argc == 1) {
+                (void)write_str("PS1=");
+                (void)write_str(shell_ps1);
+                (void)write_str("\n");
+            } else if (str_eq(argv[1], "PS1") && argc >= 3) {
+                (void)shell_set_ps1_from_args(argc, argv, 2);
+            } else if (str_starts(argv[1], "PS1=")) {
+                char* fake[2];
+                fake[0] = argv[0];
+                fake[1] = argv[1] + 4;
+                (void)shell_set_ps1_from_args(2, fake, 1);
+            } else {
+                (void)write_str("sh: set: usage: set PS1=<prompt>\n");
+            }
         } else if (str_eq(argv[0], "cd")) {
             (void)cmd_cd(argc, argv);
         } else if (str_eq(argv[0], "motd")) {
@@ -94,23 +109,27 @@ int main(void)
             cmd_ttytest();
         } else if (str_eq(argv[0], "run")) {
             if (argc < 2) {
-                (void)write_str("run: path required\n");
+                (void)write_str("sh: run: usage: run <path> [args ...]\n");
             } else {
                 if (cmd_run(argc - 1, &argv[1], 1) < 0) {
-                    (void)write_str("run: spawn failed\n");
+                    (void)write_str("sh: run: ");
+                    (void)write_str(argv[1]);
+                    (void)write_str(": not found\n");
                 }
             }
         } else if (str_eq(argv[0], "exec")) {
             if (argc < 2) {
-                (void)write_str("exec: path required\n");
+                (void)write_str("sh: exec: usage: exec <path> [args ...]\n");
             } else {
                 if (cmd_run(argc - 1, &argv[1], 1) < 0) {
-                    (void)write_str("exec: spawn failed\n");
+                    (void)write_str("sh: exec: ");
+                    (void)write_str(argv[1]);
+                    (void)write_str(": not found\n");
                 }
             }
         } else if (str_eq(argv[0], "reexec")) {
             if (argc < 2) {
-                (void)write_str("reexec: path required\n");
+                (void)write_str("sh: reexec: usage: reexec <path> [args ...]\n");
             } else {
                 char path_buf[SH_PATH_MAX];
                 char* ex_argv[SH_ARG_MAX + 1];
@@ -123,7 +142,9 @@ int main(void)
                 ex_argv[ex_argc] = 0;
                 long ret = posix_execve(path_buf, (const char* const*)ex_argv, (const char* const*)0);
                 if (ret < 0) {
-                    (void)write_str("reexec: failed\n");
+                    (void)write_str("sh: reexec: ");
+                    (void)write_str(path_buf);
+                    (void)write_str(": not found\n");
                 }
             }
         } else if (str_eq(argv[0], "exit")) {
@@ -131,7 +152,9 @@ int main(void)
             (void)posix_exit(0);
         } else {
             if (cmd_autorun(argc, argv) < 0) {
-                (void)write_str("command not found or failed\n");
+                (void)write_str("sh: ");
+                (void)write_str(argv[0]);
+                (void)write_str(": not found\n");
             }
         }
     }

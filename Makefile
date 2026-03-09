@@ -91,6 +91,7 @@ QEMU_SERIAL ?= mon:stdio
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
 QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
 QEMU_DISK_SIZE_MB ?= 128
+QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
 #
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
@@ -278,6 +279,11 @@ qemu-disk:
 	@if [ ! -f "$(QEMU_DISK_IMG)" ]; then \
 		echo "[*] Creating QEMU disk image: $(QEMU_DISK_IMG) ($(QEMU_DISK_SIZE_MB) MiB)"; \
 		dd if=/dev/zero of="$(QEMU_DISK_IMG)" bs=1m count="$(QEMU_DISK_SIZE_MB)" status=none; \
+	fi
+	@if [ ! -f "$(QEMU_DISK_FS_STAMP)" ]; then \
+		echo "[*] Formatting demo ext2 filesystem on $(QEMU_DISK_IMG)"; \
+		python3 scripts/mkext2_demo.py --output "$(QEMU_DISK_IMG)" --size-mb "$(QEMU_DISK_SIZE_MB)"; \
+		touch "$(QEMU_DISK_FS_STAMP)"; \
 	fi
 
 idl:

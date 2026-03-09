@@ -478,7 +478,7 @@ int cmd_run(int argc, char** argv, int verbose)
     long pid = -1;
 
     if (!argv || argc < 1 || !argv[0] || argv[0][0] == '\0') {
-        (void)write_str("run: path required\n");
+        (void)write_str("sh: run: usage: run <path> [args ...]\n");
         return -1;
     }
     if (cmd_spawn_raw(argc, argv, &pid) != 0) {
@@ -506,7 +506,9 @@ int cmd_cd(int argc, char** argv)
     resolve_path(in, resolved, (int)sizeof(resolved));
     d = opendir(resolved);
     if (!d) {
-        (void)write_str("cd: no such directory\n");
+        (void)write_str("sh: cd: ");
+        (void)write_str(in);
+        (void)write_str(": not found\n");
         return -1;
     }
     (void)closedir(d);

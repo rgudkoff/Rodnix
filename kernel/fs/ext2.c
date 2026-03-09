@@ -117,6 +117,9 @@ typedef struct {
     uint32_t node_budget;
 } ext2_mount_ctx_t;
 
+static ext2_mount_ctx_t g_ext2_live;
+static int g_ext2_live_ready = 0;
+
 static uint64_t ext2_inode_size_bytes(const ext2_inode_t* ino)
 {
     uint64_t sz = ino ? (uint64_t)ino->size_lo : 0;
@@ -131,6 +134,15 @@ static int ext2_is_dir(const ext2_inode_t* ino)
 static int ext2_is_reg(const ext2_inode_t* ino)
 {
     return ino && ((ino->mode & 0xF000u) == EXT2_S_IFREG);
+}
+
+static void ext2_mark_node(vfs_node_t* node, uint32_t ino_num)
+{
+    if (!node || !node->inode) {
+        return;
+    }
+    node->inode->fs_tag = VFS_FS_TAG_EXT2;
+    node->inode->fs_ino = (uint64_t)ino_num;
 }
 
 static int ext2_read_bytes(ext2_mount_ctx_t* ctx, uint64_t offset, void* out, uint32_t len)
@@ -161,6 +173,50 @@ static int ext2_read_bytes(ext2_mount_ctx_t* ctx, uint64_t offset, void* out, ui
         }
         memcpy(dst, &secbuf[sec_off], chunk);
         dst += chunk;
+        cur += chunk;
+        left -= chunk;
+    }
+    return RDNX_OK;
+}
+
+static int ext2_write_bytes(ext2_mount_ctx_t* ctx, uint64_t offset, const void* in, uint32_t len)
+{
+    if (!ctx || !ctx->bdev || !in || len == 0 || ctx->sector_size == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint8_t secbuf[512];
+    if (ctx->sector_size > sizeof(secbuf)) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    const uint8_t* src = (const uint8_t*)in;
+    uint64_t cur = offset;
+    uint32_t left = len;
+    while (left > 0) {
+        uint64_t sec = cur / ctx->sector_size;
+        uint32_t sec_off = (uint32_t)(cur % ctx->sector_size);
+        uint32_t chunk = ctx->sector_size - sec_off;
+        if (chunk > left) {
+            chunk = left;
+        }
+
+        if (chunk != ctx->sector_size) {
+            int rrc = fabric_blockdev_read(ctx->bdev, sec, 1, secbuf);
+            if (rrc != RDNX_OK) {
+                return rrc;
+            }
+        } else {
+            memset(secbuf, 0, sizeof(secbuf));
+        }
+        memcpy(&secbuf[sec_off], src, chunk);
+
+        int wrc = fabric_blockdev_write(ctx->bdev, sec, 1, secbuf);
+        if (wrc != RDNX_OK) {
+            return wrc;
+        }
+
+        src += chunk;
         cur += chunk;
         left -= chunk;
     }
@@ -244,7 +300,7 @@ static int ext2_inode_get_block(ext2_mount_ctx_t* ctx,
     return rc;
 }
 
-static int ext2_load_file(ext2_mount_ctx_t* ctx, const ext2_inode_t* ino, vfs_node_t* node)
+static int ext2_load_file(ext2_mount_ctx_t* ctx, uint32_t ino_num, const ext2_inode_t* ino, vfs_node_t* node)
 {
     if (!ctx || !ino || !node) {
         return RDNX_E_INVALID;
@@ -257,7 +313,11 @@ static int ext2_load_file(ext2_mount_ctx_t* ctx, const ext2_inode_t* ino, vfs_no
     }
 
     if (fsize == 0) {
-        return vfs_fs_set_file_data(node, NULL, 0);
+        int zrc = vfs_fs_set_file_data(node, NULL, 0);
+        if (zrc == RDNX_OK) {
+            ext2_mark_node(node, ino_num);
+        }
+        return zrc;
     }
 
     uint8_t* data = (uint8_t*)kmalloc(fsize);
@@ -303,6 +363,9 @@ static int ext2_load_file(ext2_mount_ctx_t* ctx, const ext2_inode_t* ino, vfs_no
     }
 
     int rc = vfs_fs_set_file_data(node, data, fsize);
+    if (rc == RDNX_OK) {
+        ext2_mark_node(node, ino_num);
+    }
     kfree(blk);
     kfree(data);
     return rc;
@@ -375,11 +438,12 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
                             vfs_node_t* child = vfs_fs_alloc_node(name, nt);
                             if (child) {
                                 if (vfs_fs_add_child(parent, child) == RDNX_OK) {
+                                    ext2_mark_node(child, de->inode);
                                     ctx->node_budget--;
                                     if (nt == VFS_NODE_DIR) {
                                         (void)ext2_build_dir(ctx, child, de->inode, &child_ino, depth + 1u);
                                     } else if (ext2_is_reg(&child_ino)) {
-                                        (void)ext2_load_file(ctx, &child_ino, child);
+                                        (void)ext2_load_file(ctx, de->inode, &child_ino, child);
                                     }
                                 }
                             }
@@ -393,6 +457,81 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
         scanned += ctx->block_size;
         lbn++;
         (void)dir_ino_num;
+    }
+
+    kfree(blk);
+    return RDNX_OK;
+}
+
+int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t len, size_t final_size)
+{
+    if (!node || !node->inode || !data) {
+        return RDNX_E_INVALID;
+    }
+    if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    if (len == 0) {
+        return RDNX_OK;
+    }
+
+    ext2_inode_t ino;
+    int irc = ext2_read_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
+    if (irc != RDNX_OK) {
+        return irc;
+    }
+    if (!ext2_is_reg(&ino)) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    uint64_t disk_size = ext2_inode_size_bytes(&ino);
+    if ((uint64_t)final_size != disk_size) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    if ((uint64_t)off + (uint64_t)len > disk_size) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    uint8_t* blk = (uint8_t*)kmalloc(g_ext2_live.block_size);
+    if (!blk) {
+        return RDNX_E_NOMEM;
+    }
+
+    const uint8_t* src = (const uint8_t*)data;
+    size_t done = 0;
+    while (done < len) {
+        uint64_t abs = (uint64_t)off + (uint64_t)done;
+        uint32_t lbn = (uint32_t)(abs / g_ext2_live.block_size);
+        uint32_t boff = (uint32_t)(abs % g_ext2_live.block_size);
+        size_t chunk = len - done;
+        size_t room = (size_t)g_ext2_live.block_size - (size_t)boff;
+        if (chunk > room) {
+            chunk = room;
+        }
+
+        uint32_t pblk = 0;
+        int brc = ext2_inode_get_block(&g_ext2_live, &ino, lbn, &pblk);
+        if (brc != RDNX_OK || pblk == 0) {
+            kfree(blk);
+            return RDNX_E_UNSUPPORTED;
+        }
+
+        brc = ext2_read_block(&g_ext2_live, pblk, blk);
+        if (brc != RDNX_OK) {
+            kfree(blk);
+            return brc;
+        }
+        memcpy(blk + boff, src + done, chunk);
+        brc = ext2_write_bytes(&g_ext2_live, (uint64_t)pblk * (uint64_t)g_ext2_live.block_size,
+                               blk, g_ext2_live.block_size);
+        if (brc != RDNX_OK) {
+            kfree(blk);
+            return brc;
+        }
+        done += chunk;
     }
 
     kfree(blk);
@@ -480,8 +619,14 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
     ctx.node_budget = EXT2_MAX_TREE_NODES;
     (void)ext2_build_dir(&ctx, root, EXT2_ROOT_INO, &root_ino, 0);
 
+    ext2_mark_node(root, EXT2_ROOT_INO);
     *out_root = root;
-    kfree(ctx.gdt);
+
+    if (g_ext2_live_ready && g_ext2_live.gdt) {
+        kfree(g_ext2_live.gdt);
+    }
+    g_ext2_live = ctx;
+    g_ext2_live_ready = 1;
     return RDNX_OK;
 }
 

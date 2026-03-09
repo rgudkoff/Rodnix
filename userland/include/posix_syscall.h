@@ -45,7 +45,7 @@ static inline long posix_getpid(void)
 
 static inline long posix_write(int fd, const void* buf, uint64_t len)
 {
-    return rdnx_syscall6(POSIX_SYS_WRITE, fd, (long)(uintptr_t)buf, (long)len, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_WRITE, fd, (long)(uintptr_t)buf, (long)len);
 }
 
 static inline long posix_read(int fd, void* buf, uint64_t len)
@@ -55,12 +55,12 @@ static inline long posix_read(int fd, void* buf, uint64_t len)
         return posix_read_int80(fd, buf, len);
     }
 #endif
-    return rdnx_syscall6(POSIX_SYS_READ, fd, (long)(uintptr_t)buf, (long)len, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_READ, fd, (long)(uintptr_t)buf, (long)len);
 }
 
 static inline long posix_open(const char* path, int flags)
 {
-    return rdnx_syscall6(POSIX_SYS_OPEN, (long)(uintptr_t)path, flags, 0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_OPEN, (long)(uintptr_t)path, flags);
 }
 
 static inline long posix_close(int fd)
@@ -115,27 +115,27 @@ static inline long posix_rename(const char* oldpath, const char* newpath)
 
 static inline long posix_fcntl(int fd, int cmd, long arg)
 {
-    return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_FCNTL, fd, cmd, arg);
 }
 
 static inline long posix_ioctl(int fd, uint64_t request, void* argp)
 {
-    return rdnx_syscall6(POSIX_SYS_IOCTL, fd, (long)request, (long)(uintptr_t)argp, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_IOCTL, fd, (long)request, (long)(uintptr_t)argp);
 }
 
 static inline long posix_stat(const char* path, void* st)
 {
-    return rdnx_syscall6(POSIX_SYS_STAT, (long)(uintptr_t)path, (long)(uintptr_t)st, 0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_STAT, (long)(uintptr_t)path, (long)(uintptr_t)st);
 }
 
 static inline long posix_fstat(int fd, void* st)
 {
-    return rdnx_syscall6(POSIX_SYS_FSTAT, fd, (long)(uintptr_t)st, 0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_FSTAT, fd, (long)(uintptr_t)st);
 }
 
 static inline long posix_lseek(int fd, long off, int whence)
 {
-    return rdnx_syscall6(POSIX_SYS_LSEEK, fd, off, whence, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_LSEEK, fd, off, whence);
 }
 
 static inline long posix_uname(void* u)
@@ -150,11 +150,10 @@ static inline long posix_exit(int code)
 
 static inline long posix_execve(const char* path, const char* const argv[], const char* const envp[])
 {
-    return rdnx_syscall6(POSIX_SYS_EXEC,
+    return rdnx_syscall3(POSIX_SYS_EXEC,
                          (long)(uintptr_t)path,
                          (long)(uintptr_t)argv,
-                         (long)(uintptr_t)envp,
-                         0, 0, 0);
+                         (long)(uintptr_t)envp);
 }
 
 static inline long posix_exec(const char* path)
@@ -164,54 +163,50 @@ static inline long posix_exec(const char* path)
 
 static inline long posix_spawn(const char* path, const char* const argv[])
 {
-    return rdnx_syscall6(POSIX_SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv, 0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv);
 }
 
 static inline long posix_waitpid(long pid, int* status)
 {
-    return rdnx_syscall6(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status, 0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status);
 }
 
 static inline long posix_readdir(const char* path, void* entries, uint64_t len)
 {
-    return rdnx_syscall6(POSIX_SYS_READDIR, (long)(uintptr_t)path, (long)(uintptr_t)entries, (long)len, 0, 0, 0);
+    return rdnx_syscall3(POSIX_SYS_READDIR, (long)(uintptr_t)path, (long)(uintptr_t)entries, (long)len);
 }
 
 static inline long posix_netiflist(void* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_NETIFLIST,
+    return rdnx_syscall3(POSIX_SYS_NETIFLIST,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_hwlist(void* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_HWLIST,
+    return rdnx_syscall3(POSIX_SYS_HWLIST,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_fabricls(void* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_FABRICLS,
+    return rdnx_syscall3(POSIX_SYS_FABRICLS,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_fabricevents(void* entries, uint64_t max_entries, uint32_t* out_read, uint32_t* out_dropped)
 {
-    return rdnx_syscall6(POSIX_SYS_FABRICEVENTS,
+    return rdnx_syscall4(POSIX_SYS_FABRICEVENTS,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
                          (long)(uintptr_t)out_read,
-                         (long)(uintptr_t)out_dropped,
-                         0, 0);
+                         (long)(uintptr_t)out_dropped);
 }
 
 static inline long posix_sysinfo(void* out_info)
@@ -232,10 +227,7 @@ static inline long posix_mmap(void* addr, uint64_t len, int prot, int flags, int
 
 static inline long posix_munmap(void* addr, uint64_t len)
 {
-    return rdnx_syscall6(POSIX_SYS_MUNMAP,
-                         (long)(uintptr_t)addr,
-                         (long)len,
-                         0, 0, 0, 0);
+    return rdnx_syscall2(POSIX_SYS_MUNMAP, (long)(uintptr_t)addr, (long)len);
 }
 
 static inline long posix_brk(void* new_break)
@@ -265,11 +257,10 @@ static inline long posix_kill(long pid, int signum)
 
 static inline long posix_sigaction(int signum, const void* act, void* oldact)
 {
-    return rdnx_syscall6(POSIX_SYS_SIGACTION,
+    return rdnx_syscall3(POSIX_SYS_SIGACTION,
                          (long)signum,
                          (long)(uintptr_t)act,
-                         (long)(uintptr_t)oldact,
-                         0, 0, 0);
+                         (long)(uintptr_t)oldact);
 }
 
 static inline long posix_sigreturn(void)
@@ -279,39 +270,44 @@ static inline long posix_sigreturn(void)
 
 static inline long posix_scstat(rodnix_scstat_entry_t* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_SCSTAT,
+    return rdnx_syscall3(POSIX_SYS_SCSTAT,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_blocklist(rodnix_blockdev_info_t* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_BLOCKLIST,
+    return rdnx_syscall3(POSIX_SYS_BLOCKLIST,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_blockread(const char* dev_name, uint64_t lba, void* out, uint64_t out_len)
 {
-    return rdnx_syscall6(POSIX_SYS_BLOCKREAD,
+    return rdnx_syscall4(POSIX_SYS_BLOCKREAD,
                          (long)(uintptr_t)dev_name,
                          (long)lba,
                          (long)(uintptr_t)out,
-                         (long)out_len,
-                         0, 0);
+                         (long)out_len);
+}
+
+static inline long posix_blockwrite(const char* dev_name, uint64_t lba, const void* in, uint64_t in_len)
+{
+    return rdnx_syscall4(POSIX_SYS_BLOCKWRITE,
+                         (long)(uintptr_t)dev_name,
+                         (long)lba,
+                         (long)(uintptr_t)in,
+                         (long)in_len);
 }
 
 static inline long posix_kmodls(rodnix_kmod_info_t* entries, uint64_t max_entries, uint32_t* out_total)
 {
-    return rdnx_syscall6(POSIX_SYS_KMODLS,
+    return rdnx_syscall3(POSIX_SYS_KMODLS,
                          (long)(uintptr_t)entries,
                          (long)max_entries,
-                         (long)(uintptr_t)out_total,
-                         0, 0, 0);
+                         (long)(uintptr_t)out_total);
 }
 
 static inline long posix_kmodload(const char* path)

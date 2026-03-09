@@ -4,7 +4,9 @@
 #include "../../../include/error.h"
 
 #define UNIX_DT_UNKNOWN 0
+#define UNIX_DT_CHR 2
 #define UNIX_DT_DIR 4
+#define UNIX_DT_BLK 6
 #define UNIX_DT_REG 8
 
 typedef struct {
@@ -28,8 +30,19 @@ static void unix_readdir_cb(const vfs_node_t* node, void* ctx)
     memset(de, 0, sizeof(*de));
     de->d_fileno = c->next_ino++;
     de->d_reclen = (uint16_t)sizeof(*de);
-    de->d_type = (node->type == VFS_NODE_DIR) ? UNIX_DT_DIR :
-                 (node->type == VFS_NODE_FILE) ? UNIX_DT_REG : UNIX_DT_UNKNOWN;
+    if (node->type == VFS_NODE_DIR) {
+        de->d_type = UNIX_DT_DIR;
+    } else if (node->type == VFS_NODE_FILE && node->inode) {
+        if (node->inode->flags & VFS_INODE_BLOCKDEV) {
+            de->d_type = UNIX_DT_BLK;
+        } else if (node->inode->flags & VFS_INODE_CHARDEV) {
+            de->d_type = UNIX_DT_CHR;
+        } else {
+            de->d_type = UNIX_DT_REG;
+        }
+    } else {
+        de->d_type = UNIX_DT_UNKNOWN;
+    }
 
     size_t nlen = strlen(node->name);
     if (nlen > UNIX_DIRENT_NAME_MAX) {
