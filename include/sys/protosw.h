@@ -1,0 +1,3 @@
+#ifndef _RODNIX_COMPAT_SYS_PROTOSW_H
+#define _RODNIX_COMPAT_SYS_PROTOSW_H
+#endif

@@ -1,0 +1,4 @@
+#ifndef _RODNIX_COMPAT_SYS_LOCK_H
+#define _RODNIX_COMPAT_SYS_LOCK_H
+#define SX_XLOCKED 1
+#endif

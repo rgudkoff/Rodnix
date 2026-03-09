@@ -1,0 +1,3 @@
+#ifndef _RODNIX_COMPAT_NET_IF_VLAN_VAR_H
+#define _RODNIX_COMPAT_NET_IF_VLAN_VAR_H
+#endif

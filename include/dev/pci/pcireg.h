@@ -12,4 +12,6 @@
 #define PCIS_BRIDGE_HOST 0x00
 #define PCIS_BRIDGE_ISA  0x01
 
+#define PCIR_COMMAND 0x04
+
 #endif /* _RODNIX_COMPAT_DEV_PCI_PCIREG_H */
