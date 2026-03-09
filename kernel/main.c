@@ -6,6 +6,7 @@
 #include "../include/kernel.h"
 #include "../include/console.h"
 #include "../include/debug.h"
+#include "../include/version.h"
 #include "core/interrupts.h"
 #include "syscall.h"
 #include "posix/posix_syscall.h"
@@ -171,7 +172,7 @@ void kmain(uint32_t magic, void* mbi)
     
     /* Print welcome message */
     kputs("========================================\n");
-    kputs("    RodNIX Kernel v0.1\n");
+    kputs("    RodNIX Kernel v" RODNIX_RELEASE "\n");
     kputs("    64-bit Architecture\n");
     kputs("========================================\n\n");
     

@@ -24,6 +24,7 @@
 #include "../../include/common.h"
 #include "../../include/error.h"
 #include "../../include/utsname.h"
+#include "../../include/version.h"
 #include "../posix/posix_syscall.h"
 #include "../common/scheduler.h"
 #include "../common/heap.h"
@@ -211,7 +212,7 @@ static int shell_cmd_info(int argc, char** argv)
     (void)argc;
     (void)argv;
     
-    kputs("RodNIX Kernel v0.2\n");
+    kputs("RodNIX Kernel v" RODNIX_RELEASE "\n");
     kputs("Architecture: x86_64 (64-bit)\n");
     kputs("Build: " __DATE__ " " __TIME__ "\n");
     kputs("\n");
