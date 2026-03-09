@@ -78,6 +78,53 @@ static inline long posix_pipe2(int pipefd[2], int flags)
     return rdnx_syscall2(POSIX_SYS_PIPE2, (long)(uintptr_t)pipefd, (long)flags);
 }
 
+static inline long posix_socket(int domain, int type, int protocol)
+{
+    return rdnx_syscall3(POSIX_SYS_SOCKET, (long)domain, (long)type, (long)protocol);
+}
+
+static inline long posix_bind(int fd, const void* addr)
+{
+    return rdnx_syscall2(POSIX_SYS_BIND, (long)fd, (long)(uintptr_t)addr);
+}
+
+static inline long posix_connect(int fd, const void* addr)
+{
+    return rdnx_syscall2(POSIX_SYS_CONNECT, (long)fd, (long)(uintptr_t)addr);
+}
+
+static inline long posix_sendto(int fd,
+                                const void* buf,
+                                uint64_t len,
+                                int flags,
+                                const void* dst_addr,
+                                uint64_t dst_len)
+{
+    return rdnx_syscall6(POSIX_SYS_SENDTO,
+                         (long)fd,
+                         (long)(uintptr_t)buf,
+                         (long)len,
+                         (long)flags,
+                         (long)(uintptr_t)dst_addr,
+                         (long)dst_len);
+}
+
+static inline long posix_recvfrom(int fd,
+                                  void* buf,
+                                  uint64_t len,
+                                  int flags,
+                                  void* src_addr,
+                                  uint64_t timeout_ms)
+{
+    return rdnx_syscall6(POSIX_SYS_RECVFROM,
+                         (long)fd,
+                         (long)(uintptr_t)buf,
+                         (long)len,
+                         (long)flags,
+                         (long)(uintptr_t)src_addr,
+                         (long)timeout_ms);
+}
+
 static inline long posix_poll(void* fds, uint64_t nfds, int timeout_ms)
 {
     return rdnx_syscall3(POSIX_SYS_POLL, (long)(uintptr_t)fds, (long)nfds, (long)timeout_ms);
@@ -263,6 +310,11 @@ static inline long posix_mmap(void* addr, uint64_t len, int prot, int flags, int
 static inline long posix_munmap(void* addr, uint64_t len)
 {
     return rdnx_syscall2(POSIX_SYS_MUNMAP, (long)(uintptr_t)addr, (long)len);
+}
+
+static inline long posix_msync(void* addr, uint64_t len, int flags)
+{
+    return rdnx_syscall3(POSIX_SYS_MSYNC, (long)(uintptr_t)addr, (long)len, (long)flags);
 }
 
 static inline long posix_brk(void* new_break)

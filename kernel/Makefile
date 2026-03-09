@@ -37,6 +37,7 @@ KERNEL_C_SRCS += \
 	kernel/common/debug.c \
 	kernel/common/task.c \
 	kernel/vm/vm_object.c \
+	kernel/vm/vm_page_ref.c \
 	kernel/vm/vm_pager.c \
 	kernel/vm/vm_map.c \
 	kernel/vm/vm_fault.c \
@@ -60,6 +61,8 @@ KERNEL_C_SRCS += \
 	kernel/arch/x86_64/usermode.c \
 	kernel/net/net.c \
 	kernel/net/socket.c \
+	kernel/linux/linux_errno.c \
+	kernel/linux/linux_compat.c \
 	kernel/fabric/fabric.c \
 	kernel/fabric/spin.c \
 	kernel/fabric/service/net_service.c \

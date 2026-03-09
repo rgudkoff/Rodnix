@@ -1,5 +1,7 @@
 #include "syscall.h"
 #include "../posix/posix_syscall.h"
+#include "../linux/linux_compat.h"
+#include "../core/task.h"
 #include "scheduler.h"
 #include "../../include/error.h"
 #include "../../include/console.h"
@@ -88,6 +90,7 @@ void syscall_init(void)
     syscall_register(SYS_TEST_SLEEP, sys_test_sleep);
     syscall_register(SYS_WRITE, sys_write);
     posix_syscall_init();
+    (void)linux_compat_init();
 }
 
 int syscall_register(uint32_t num, syscall_fn_t fn)
@@ -115,7 +118,16 @@ uint64_t syscall_dispatch(uint64_t num,
         logged = 1;
     }
 
-    /* Keep SYS_NOP compatible for legacy ring3 stubs. */
+    task_t* task = task_get_current();
+    task_abi_t abi = task_get_abi(task);
+
+    if (abi == TASK_ABI_LINUX) {
+        uint64_t ret = linux_compat_dispatch(num, a1, a2, a3, a4, a5, a6);
+        linux_compat_apply_user_state();
+        return ret;
+    }
+
+    /* Keep SYS_NOP compatible for legacy ring3 stubs in native mode. */
     if (num == SYS_NOP && syscall_table[SYS_NOP]) {
         return syscall_table[SYS_NOP](a1, a2, a3, a4, a5, a6);
     }

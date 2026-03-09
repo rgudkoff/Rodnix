@@ -1,6 +1,7 @@
 #include "vm_fault.h"
 #include "vm_map.h"
 #include "vm_pager.h"
+#include "vm_page_ref.h"
 #include "../arch/x86_64/paging.h"
 #include "../arch/x86_64/config.h"
 #include "../../include/common.h"
@@ -64,25 +65,42 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
                                        va,
                                        new_phys,
                                        vm_pte_flags_from_prot(e->prot));
-        e->flags &= ~VM_MAP_F_COW;
+        (void)vm_page_ref_release(current_phys); /* Drop this mapping's old COW reference. */
         return RDNX_OK;
     }
 
     if (current_phys == 0) {
-        uint64_t phys = vm_pager_alloc_zero_page();
-        if (!phys) {
-            return RDNX_E_NOMEM;
+        uint64_t phys = 0;
+        uint64_t obj_page_idx = 0;
+        int has_obj_page = 0;
+
+        if (e->object) {
+            obj_page_idx = (e->object_offset + (va - e->start)) / VM_PAGE_SIZE;
+            phys = vm_object_get_resident_page(e->object, obj_page_idx);
+            if (phys) {
+                has_obj_page = 1;
+                (void)vm_page_ref_retain(phys); /* New mapping reference. */
+            }
         }
-        if (e->object && e->object->type == VM_OBJECT_FILE && e->object->pager_private) {
-            vm_file_backing_t* fb = (vm_file_backing_t*)e->object->pager_private;
-            if (fb->data && fb->size > 0) {
-                uint64_t rel = va - e->start;
-                uint64_t off = fb->file_offset + e->object_offset + rel;
-                if (off < fb->size) {
-                    uint64_t avail = fb->size - off;
-                    uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
-                    memcpy(X86_64_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
+        if (!has_obj_page) {
+            phys = vm_pager_alloc_zero_page();
+            if (!phys) {
+                return RDNX_E_NOMEM;
+            }
+            if (e->object && e->object->type == VM_OBJECT_FILE && e->object->pager_private) {
+                vm_file_backing_t* fb = (vm_file_backing_t*)e->object->pager_private;
+                if (fb->data && fb->size > 0) {
+                    uint64_t rel = va - e->start;
+                    uint64_t off = fb->file_offset + e->object_offset + rel;
+                    if (off < fb->size) {
+                        uint64_t avail = fb->size - off;
+                        uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
+                        memcpy(X86_64_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
+                    }
                 }
+            }
+            if (e->object) {
+                (void)vm_object_set_resident_page(e->object, obj_page_idx, phys);
             }
         }
         int rc = paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,

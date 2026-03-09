@@ -374,6 +374,9 @@ uint64_t unix_proc_fork(void)
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    task_set_abi(child, task_get_abi(parent));
+    child->tls_fs_base = parent->tls_fs_base;
+    child->umask = parent->umask;
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
     child->cwd[sizeof(child->cwd) - 1] = '\0';
 

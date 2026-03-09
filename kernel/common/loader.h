@@ -22,6 +22,7 @@ typedef struct {
     uint32_t seg_count;
     loader_segment_t segs[LOADER_MAX_SEGMENTS];
     uint64_t brk_base;
+    uint8_t abi;
 } loader_image_t;
 
 typedef int (*loader_pre_exec_commit_fn)(void* ctx);

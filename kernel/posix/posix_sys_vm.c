@@ -3,7 +3,13 @@
 #include "../fs/vfs.h"
 #include "../vm/vm_map.h"
 #include "../unix/unix_layer.h"
+#include "../common/heap.h"
 #include "../../include/error.h"
+
+static uint64_t vm_align_up_local(uint64_t v)
+{
+    return (v + VM_PAGE_SIZE - 1u) & ~(VM_PAGE_SIZE - 1u);
+}
 
 uint64_t posix_mmap(uint64_t a1,
                            uint64_t a2,
@@ -44,6 +50,7 @@ uint64_t posix_mmap(uint64_t a1,
     }
 
     uint32_t flags = 0;
+    bool is_shared = (a4 & MAP_SHARED) != 0;
     if (a4 & MAP_PRIVATE) {
         flags |= VM_MAP_F_PRIVATE;
     }
@@ -70,10 +77,34 @@ uint64_t posix_mmap(uint64_t a1,
     if (!file || !file->node || !file->node->inode || file->node->type != VFS_NODE_FILE) {
         return (uint64_t)RDNX_E_INVALID;
     }
+    if ((off & (VM_PAGE_SIZE - 1u)) != 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     const uint8_t* data = file->node->inode->data;
     uint64_t data_size = (uint64_t)file->node->inode->size;
     if (!data) {
         return (uint64_t)RDNX_E_INVALID;
+    }
+    if (is_shared) {
+        vm_object_t* obj = file->node->inode->mmap_object;
+        if (!obj) {
+            obj = vm_object_create(VM_OBJECT_FILE, vm_align_up_local(data_size ? data_size : VM_PAGE_SIZE));
+            if (!obj) {
+                return (uint64_t)RDNX_E_NOMEM;
+            }
+            vm_file_backing_t* fb = (vm_file_backing_t*)kmalloc(sizeof(vm_file_backing_t));
+            if (!fb) {
+                vm_object_unref(obj);
+                return (uint64_t)RDNX_E_NOMEM;
+            }
+            fb->data = data;
+            fb->size = data_size;
+            fb->file_offset = 0;
+            obj->pager_private = fb;
+            file->node->inode->mmap_object = obj;
+        }
+        long ret = vm_task_mmap_object(task, a1, a2, prot, flags, obj, off);
+        return (uint64_t)ret;
     }
     long ret = vm_task_mmap_file(task, a1, a2, prot, flags, data, data_size, off);
     return (uint64_t)ret;
@@ -95,6 +126,27 @@ uint64_t posix_munmap(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     return (uint64_t)vm_task_munmap(task, a1, a2);
+}
+
+uint64_t posix_msync(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    int rc = vm_task_msync(task, a1, a2, (uint32_t)a3);
+    if (rc == RDNX_E_NOTFOUND) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)rc;
 }
 
 uint64_t posix_brk(uint64_t a1,

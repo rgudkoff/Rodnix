@@ -24,7 +24,8 @@ enum {
     UNIX_FD_KIND_NONE = 0,
     UNIX_FD_KIND_VFS = 1,
     UNIX_FD_KIND_PIPE_R = 2,
-    UNIX_FD_KIND_PIPE_W = 3
+    UNIX_FD_KIND_PIPE_W = 3,
+    UNIX_FD_KIND_SOCKET = 4
 };
 
 bool unix_user_range_ok(const void* ptr, size_t len);
@@ -73,6 +74,21 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
 uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr);
 uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags);
+uint64_t unix_fs_socket(uint64_t domain, uint64_t type, uint64_t protocol);
+uint64_t unix_fs_bind(uint64_t fd, uint64_t user_addr_ptr);
+uint64_t unix_fs_connect(uint64_t fd, uint64_t user_addr_ptr);
+uint64_t unix_fs_sendto(uint64_t fd,
+                        uint64_t user_buf_ptr,
+                        uint64_t len,
+                        uint64_t flags,
+                        uint64_t user_dst_addr_ptr,
+                        uint64_t user_dst_len);
+uint64_t unix_fs_recvfrom(uint64_t fd,
+                          uint64_t user_buf_ptr,
+                          uint64_t len,
+                          uint64_t flags,
+                          uint64_t user_src_addr_ptr,
+                          uint64_t timeout_ms);
 uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms);
 uint64_t unix_fs_select(uint64_t nfds,
                         uint64_t user_readfds_ptr,

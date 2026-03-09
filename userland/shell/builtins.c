@@ -316,6 +316,7 @@ void cmd_help(void)
         "  syscalltest   - compare fast syscall vs int80\n"
         "  ttyreadtest   - blocking stdin read probe\n"
         "  ifconfig      - show network interfaces\n"
+        "  udptest       - UDP loopback socket smoke test\n"
         "  ls [path]     - external /bin/ls\n"
         "  cat <path>    - external /bin/cat\n"
         "  smoke         - run basic POSIX smoke check\n"

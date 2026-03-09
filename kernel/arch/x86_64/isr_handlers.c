@@ -16,6 +16,7 @@
 #include "../../common/scheduler.h"
 #include "../../common/syscall.h"
 #include "../../common/tracev2.h"
+#include "../../linux/linux_compat.h"
 #include "../../core/task.h"
 #include "../../vm/vm_fault.h"
 #include "interrupt_frame.h"
@@ -286,6 +287,9 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             task_t* task = task_get_current();
             if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
                 return regs;
+            }
+            if (task && task_get_abi(task) == TASK_ABI_LINUX) {
+                linux_compat_trace_dump_recent();
             }
         }
         tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);

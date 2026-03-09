@@ -225,7 +225,10 @@ int net_socket_sendto(net_socket_t* sock, const void* buf, size_t len, const soc
     src.sin_addr = NET_LOOPBACK_ADDR;
     src.sin_port = sock->bound ? sock->bound_port : 0;
 
-    return udp_queue_push(&dest->queue, &src, buf, len);
+    if (udp_queue_push(&dest->queue, &src, buf, len) != 0) {
+        return -1;
+    }
+    return (int)len;
 }
 
 int net_socket_send(net_socket_t* sock, const void* buf, size_t len)

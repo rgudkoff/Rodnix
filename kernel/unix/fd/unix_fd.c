@@ -5,6 +5,7 @@
 #include "../../common/scheduler.h"
 #include "../../core/interrupts.h"
 #include "../../vm/vm_map.h"
+#include "../../net/socket.h"
 #include "../../../include/common.h"
 #include "../../../include/error.h"
 
@@ -289,6 +290,9 @@ void unix_fd_release(task_t* task, int fd)
     } else if (kind == UNIX_FD_KIND_PIPE_R || kind == UNIX_FD_KIND_PIPE_W) {
         unix_pipe_t* p = (unix_pipe_t*)task->fd_table[fd];
         unix_pipe_release(p, kind);
+    } else if (kind == UNIX_FD_KIND_SOCKET) {
+        net_socket_t* sock = (net_socket_t*)task->fd_table[fd];
+        net_socket_close(sock);
     }
 
     (void)task_fd_close(task, fd);
@@ -327,6 +331,9 @@ static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
         task->fd_kind[newfd] = kind;
         task->fd_flags[newfd] = 0;
         return RDNX_OK;
+    }
+    if (kind == UNIX_FD_KIND_SOCKET) {
+        return RDNX_E_UNSUPPORTED;
     }
     return RDNX_E_UNSUPPORTED;
 }
@@ -417,6 +424,14 @@ int unix_clone_fds_for_spawn(const task_t* parent, task_t* child)
             child->fd_table[fd] = p;
             child->fd_kind[fd] = kind;
             child->fd_flags[fd] = parent->fd_flags[fd];
+            continue;
+        }
+
+        if (kind == UNIX_FD_KIND_SOCKET) {
+            /* Sockets are not inherited yet (no shared ref model for net_socket_t). */
+            child->fd_table[fd] = NULL;
+            child->fd_kind[fd] = UNIX_FD_KIND_NONE;
+            child->fd_flags[fd] = 0;
             continue;
         }
 
@@ -1279,4 +1294,136 @@ uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags)
         task->fd_flags[fd_w] |= UNIX_FD_CLOEXEC;
     }
     return (uint64_t)RDNX_OK;
+}
+
+uint64_t unix_fs_socket(uint64_t domain, uint64_t type, uint64_t protocol)
+{
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    net_socket_t* sock = net_socket_create((int)domain, (int)type, (int)protocol);
+    if (!sock) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int fd = task_fd_alloc(task, sock);
+    if (fd < 0) {
+        net_socket_close(sock);
+        return (uint64_t)RDNX_E_BUSY;
+    }
+    task->fd_kind[fd] = UNIX_FD_KIND_SOCKET;
+    task->fd_flags[fd] = 0;
+    return (uint64_t)fd;
+}
+
+uint64_t unix_fs_bind(uint64_t fd, uint64_t user_addr_ptr)
+{
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    sockaddr_in_t* addr = (sockaddr_in_t*)(uintptr_t)user_addr_ptr;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || task->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!addr || !unix_user_range_ok(addr, sizeof(*addr))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    net_socket_t* sock = (net_socket_t*)task_fd_get(task, fdi);
+    if (!sock) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (net_socket_bind(sock, addr) == 0) ? (uint64_t)RDNX_OK : (uint64_t)RDNX_E_INVALID;
+}
+
+uint64_t unix_fs_connect(uint64_t fd, uint64_t user_addr_ptr)
+{
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    sockaddr_in_t* addr = (sockaddr_in_t*)(uintptr_t)user_addr_ptr;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || task->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!addr || !unix_user_range_ok(addr, sizeof(*addr))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    net_socket_t* sock = (net_socket_t*)task_fd_get(task, fdi);
+    if (!sock) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (net_socket_connect(sock, addr) == 0) ? (uint64_t)RDNX_OK : (uint64_t)RDNX_E_INVALID;
+}
+
+uint64_t unix_fs_sendto(uint64_t fd,
+                        uint64_t user_buf_ptr,
+                        uint64_t len,
+                        uint64_t flags,
+                        uint64_t user_dst_addr_ptr,
+                        uint64_t user_dst_len)
+{
+    (void)flags;
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    const void* buf = (const void*)(uintptr_t)user_buf_ptr;
+    size_t n = (size_t)len;
+    sockaddr_in_t* dst = (sockaddr_in_t*)(uintptr_t)user_dst_addr_ptr;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || task->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!buf || n == 0 || !unix_user_range_ok(buf, n)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_io_range_mapped(task, buf, n, false)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!dst || user_dst_len < sizeof(sockaddr_in_t) || !unix_user_range_ok(dst, sizeof(*dst))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    net_socket_t* sock = (net_socket_t*)task_fd_get(task, fdi);
+    if (!sock) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int rc = net_socket_sendto(sock, buf, n, dst);
+    if (rc < 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)rc;
+}
+
+uint64_t unix_fs_recvfrom(uint64_t fd,
+                          uint64_t user_buf_ptr,
+                          uint64_t len,
+                          uint64_t flags,
+                          uint64_t user_src_addr_ptr,
+                          uint64_t timeout_ms)
+{
+    (void)flags;
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    void* buf = (void*)(uintptr_t)user_buf_ptr;
+    size_t n = (size_t)len;
+    sockaddr_in_t* src = (sockaddr_in_t*)(uintptr_t)user_src_addr_ptr;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || task->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!buf || n == 0 || !unix_user_range_ok(buf, n)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_io_range_mapped(task, buf, n, true)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (src && !unix_user_range_ok(src, sizeof(*src))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    net_socket_t* sock = (net_socket_t*)task_fd_get(task, fdi);
+    if (!sock) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    int rc = net_socket_recvfrom(sock, buf, n, src, timeout_ms);
+    if (rc < 0) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+    return (uint64_t)rc;
 }

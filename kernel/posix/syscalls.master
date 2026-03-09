@@ -69,3 +69,9 @@
 59 dup3
 60 pipe2
 61 futex
+62 msync
+63 socket
+64 bind
+65 connect
+66 sendto
+67 recvfrom

@@ -194,6 +194,22 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
         spawn_argv[0] = resolved;
     }
 
+    /* BusyBox multicall convenience:
+     * "/bin/busybox <applet> [args...]" -> exec busybox with argv[0]=<applet>.
+     * This avoids relying on busybox's secondary dispatcher path and matches
+     * how symlink-style multicall invocation behaves.
+     */
+    if (spawn_path && str_eq(spawn_path, "/bin/busybox") &&
+        argc >= 2 && argv[1] && argv[1][0] != '\0' && argv[1][0] != '-') {
+        int out_i = 0;
+        for (int in_i = 1; in_i < argc && out_i < SH_ARG_MAX; in_i++, out_i++) {
+            spawn_argv[out_i] = argv[in_i];
+        }
+        if (out_i < SH_ARG_MAX + 1) {
+            spawn_argv[out_i] = 0;
+        }
+    }
+
     long pid = posix_spawn(spawn_path, spawn_argv);
     if (pid < 0) {
         return -1;

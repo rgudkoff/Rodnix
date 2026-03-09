@@ -30,9 +30,11 @@ bool paging_is_physmap_ready(void);
 
 /* Unmap page */
 int paging_unmap_page(uint64_t virt);
+int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt);
 
 /* Get physical address */
 uint64_t paging_get_physical(uint64_t virt);
+uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt);
 
 /* User address space helpers */
 uint64_t paging_create_user_pml4(void);

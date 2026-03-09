@@ -212,6 +212,7 @@ task_t* task_create(void)
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
+    task->umask = 0022;
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
         task->fd_flags[i] = 0;
@@ -230,6 +231,8 @@ task_t* task_create(void)
     }
     task->sig_pending = 0;
     task->sig_in_handler = 0;
+    task->abi = TASK_ABI_NATIVE;
+    task->tls_fs_base = 0;
     {
         uint64_t* p = (uint64_t*)&task->sig_saved;
         for (size_t i = 0; i < sizeof(task->sig_saved) / sizeof(uint64_t); i++) {
@@ -299,6 +302,22 @@ void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint3
     task->gid = gid;
     task->euid = euid;
     task->egid = egid;
+}
+
+void task_set_abi(task_t* task, task_abi_t abi)
+{
+    if (!task) {
+        return;
+    }
+    task->abi = (uint8_t)abi;
+}
+
+task_abi_t task_get_abi(const task_t* task)
+{
+    if (!task) {
+        return TASK_ABI_NATIVE;
+    }
+    return (task->abi == (uint8_t)TASK_ABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
 }
 
 uint32_t task_get_euid(const task_t* task)
