@@ -120,7 +120,7 @@ static void tty_process_input_char(int c, bool echo)
         return;
     }
 
-    if ((uint8_t)c == tty_cc[TTY_VERASE]) {
+    if ((uint8_t)c == tty_cc[TTY_VERASE] || c == '\b') {
         if (tty_line_len > 0) {
             tty_line_len--;
             if (do_echo) {

@@ -1,13 +1,37 @@
 /**
  * @file ext2.c
- * @brief Minimal EXT2 mount driver (skeleton, read-only placeholder)
+ * @brief Read-only EXT2 mount driver (inode/dir traversal)
+ *
+ * Structures and traversal approach are adapted to RodNIX from the compact
+ * EXT2 implementation style used in FreeBSD's stand/libsa loader code.
  */
 
 #include "ext2.h"
 #include "vfs.h"
+#include "../common/heap.h"
+#include "../common/kmod.h"
 #include "../fabric/service/block_service.h"
 #include "../../../include/common.h"
 #include "../../include/error.h"
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#define EXT2_MAGIC 0xEF53u
+#define EXT2_ROOT_INO 2u
+
+#define EXT2_S_IFDIR 0x4000u
+#define EXT2_S_IFREG 0x8000u
+#define EXT2_NDIR_BLOCKS 12u
+
+#define EXT2_MAX_BLOCK_SIZE 4096u
+#define EXT2_MAX_INODE_SIZE 512u
+#define EXT2_MAX_TREE_DEPTH 4u
+#define EXT2_MAX_TREE_NODES 2048u
+#define EXT2_MAX_FILE_BYTES (1024u * 1024u)
+
+#define EXT2_FEATURE_INCOMPAT_FILETYPE 0x0002u
+#define EXT2_FEATURE_INCOMPAT_SUPP (EXT2_FEATURE_INCOMPAT_FILETYPE)
 
 typedef struct __attribute__((packed)) {
     uint32_t inodes_count;
@@ -35,48 +59,344 @@ typedef struct __attribute__((packed)) {
     uint32_t rev_level;
     uint16_t def_resuid;
     uint16_t def_resgid;
+    uint32_t first_ino;
+    uint16_t inode_size;
+    uint16_t block_group_nr;
+    uint32_t feature_compat;
+    uint32_t feature_incompat;
+    uint32_t feature_ro_compat;
 } ext2_superblock_t;
 
-static void append_u64(char* buf, uint32_t cap, uint64_t v)
+typedef struct __attribute__((packed)) {
+    uint32_t block_bitmap;
+    uint32_t inode_bitmap;
+    uint32_t inode_table;
+    uint16_t free_blocks_count;
+    uint16_t free_inodes_count;
+    uint16_t used_dirs_count;
+    uint16_t pad;
+    uint32_t reserved[3];
+} ext2_group_desc_t;
+
+typedef struct __attribute__((packed)) {
+    uint16_t mode;
+    uint16_t uid;
+    uint32_t size_lo;
+    uint32_t atime;
+    uint32_t ctime;
+    uint32_t mtime;
+    uint32_t dtime;
+    uint16_t gid;
+    uint16_t links_count;
+    uint32_t blocks;
+    uint32_t flags;
+    uint32_t osd1;
+    uint32_t block[15];
+    uint32_t generation;
+    uint32_t file_acl;
+    uint32_t size_high;
+    uint32_t faddr;
+    uint8_t osd2[12];
+} ext2_inode_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t inode;
+    uint16_t rec_len;
+    uint8_t name_len;
+    uint8_t file_type;
+} ext2_dirent_hdr_t;
+
+typedef struct {
+    fabric_blockdev_t* bdev;
+    ext2_superblock_t sb;
+    ext2_group_desc_t* gdt;
+    uint32_t group_count;
+    uint32_t block_size;
+    uint32_t inode_size;
+    uint32_t sector_size;
+    uint32_t node_budget;
+} ext2_mount_ctx_t;
+
+static uint64_t ext2_inode_size_bytes(const ext2_inode_t* ino)
 {
-    char tmp[32];
-    uint32_t n = 0;
-    if (cap == 0) {
-        return;
-    }
-    if (v == 0) {
-        size_t l = strlen(buf);
-        if (l + 1 < cap) {
-            buf[l] = '0';
-            buf[l + 1] = '\0';
-        }
-        return;
-    }
-    while (v > 0 && n < sizeof(tmp)) {
-        tmp[n++] = (char)('0' + (v % 10u));
-        v /= 10u;
-    }
-    while (n > 0) {
-        size_t l = strlen(buf);
-        if (l + 1 >= cap) {
-            return;
-        }
-        buf[l] = tmp[--n];
-        buf[l + 1] = '\0';
-    }
+    uint64_t sz = ino ? (uint64_t)ino->size_lo : 0;
+    return sz;
 }
 
-static void append_str(char* buf, uint32_t cap, const char* s)
+static int ext2_is_dir(const ext2_inode_t* ino)
 {
-    if (!buf || cap == 0 || !s) {
-        return;
+    return ino && ((ino->mode & 0xF000u) == EXT2_S_IFDIR);
+}
+
+static int ext2_is_reg(const ext2_inode_t* ino)
+{
+    return ino && ((ino->mode & 0xF000u) == EXT2_S_IFREG);
+}
+
+static int ext2_read_bytes(ext2_mount_ctx_t* ctx, uint64_t offset, void* out, uint32_t len)
+{
+    if (!ctx || !ctx->bdev || !out || len == 0 || ctx->sector_size == 0) {
+        return RDNX_E_INVALID;
     }
-    size_t l = strlen(buf);
-    size_t i = 0;
-    while (s[i] && l + 1 < cap) {
-        buf[l++] = s[i++];
+
+    uint8_t secbuf[512];
+    if (ctx->sector_size > sizeof(secbuf)) {
+        return RDNX_E_UNSUPPORTED;
     }
-    buf[l] = '\0';
+
+    uint8_t* dst = (uint8_t*)out;
+    uint64_t cur = offset;
+    uint32_t left = len;
+    while (left > 0) {
+        uint64_t sec = cur / ctx->sector_size;
+        uint32_t sec_off = (uint32_t)(cur % ctx->sector_size);
+        uint32_t chunk = ctx->sector_size - sec_off;
+        if (chunk > left) {
+            chunk = left;
+        }
+
+        int rc = fabric_blockdev_read(ctx->bdev, sec, 1, secbuf);
+        if (rc != RDNX_OK) {
+            return rc;
+        }
+        memcpy(dst, &secbuf[sec_off], chunk);
+        dst += chunk;
+        cur += chunk;
+        left -= chunk;
+    }
+    return RDNX_OK;
+}
+
+static int ext2_read_block(ext2_mount_ctx_t* ctx, uint32_t block_no, void* out)
+{
+    if (!ctx || !out || ctx->block_size == 0) {
+        return RDNX_E_INVALID;
+    }
+    uint64_t byte_off = (uint64_t)block_no * (uint64_t)ctx->block_size;
+    return ext2_read_bytes(ctx, byte_off, out, ctx->block_size);
+}
+
+static int ext2_read_inode(ext2_mount_ctx_t* ctx, uint32_t ino_num, ext2_inode_t* out)
+{
+    if (!ctx || !out || !ctx->gdt || ino_num == 0 || ctx->inode_size == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint32_t group = (ino_num - 1u) / ctx->sb.inodes_per_group;
+    uint32_t index = (ino_num - 1u) % ctx->sb.inodes_per_group;
+    if (group >= ctx->group_count) {
+        return RDNX_E_INVALID;
+    }
+
+    uint32_t table_block = ctx->gdt[group].inode_table;
+    if (table_block == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint64_t inode_off = ((uint64_t)table_block * ctx->block_size) + ((uint64_t)index * ctx->inode_size);
+    uint8_t raw[EXT2_MAX_INODE_SIZE];
+    if (ctx->inode_size > sizeof(raw)) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    int rc = ext2_read_bytes(ctx, inode_off, raw, ctx->inode_size);
+    if (rc != RDNX_OK) {
+        return rc;
+    }
+    memset(out, 0, sizeof(*out));
+    memcpy(out, raw, (ctx->inode_size < sizeof(*out)) ? ctx->inode_size : sizeof(*out));
+    return RDNX_OK;
+}
+
+static int ext2_inode_get_block(ext2_mount_ctx_t* ctx,
+                                const ext2_inode_t* ino,
+                                uint32_t lbn,
+                                uint32_t* out_blk)
+{
+    if (!ctx || !ino || !out_blk) {
+        return RDNX_E_INVALID;
+    }
+    if (lbn < EXT2_NDIR_BLOCKS) {
+        *out_blk = ino->block[lbn];
+        return RDNX_OK;
+    }
+
+    uint32_t per_block = ctx->block_size / sizeof(uint32_t);
+    uint32_t idx = lbn - EXT2_NDIR_BLOCKS;
+    if (idx >= per_block) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    if (ino->block[12] == 0) {
+        *out_blk = 0;
+        return RDNX_OK;
+    }
+
+    uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
+    if (!ibuf) {
+        return RDNX_E_NOMEM;
+    }
+    int rc = ext2_read_block(ctx, ino->block[12], ibuf);
+    if (rc == RDNX_OK) {
+        const uint32_t* table = (const uint32_t*)ibuf;
+        *out_blk = table[idx];
+    }
+    kfree(ibuf);
+    return rc;
+}
+
+static int ext2_load_file(ext2_mount_ctx_t* ctx, const ext2_inode_t* ino, vfs_node_t* node)
+{
+    if (!ctx || !ino || !node) {
+        return RDNX_E_INVALID;
+    }
+
+    uint64_t fsize64 = ext2_inode_size_bytes(ino);
+    uint32_t fsize = (fsize64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)fsize64;
+    if (fsize > EXT2_MAX_FILE_BYTES) {
+        fsize = EXT2_MAX_FILE_BYTES;
+    }
+
+    if (fsize == 0) {
+        return vfs_fs_set_file_data(node, NULL, 0);
+    }
+
+    uint8_t* data = (uint8_t*)kmalloc(fsize);
+    uint8_t* blk = (uint8_t*)kmalloc(ctx->block_size);
+    if (!data || !blk) {
+        if (data) {
+            kfree(data);
+        }
+        if (blk) {
+            kfree(blk);
+        }
+        return RDNX_E_NOMEM;
+    }
+
+    uint32_t done = 0;
+    uint32_t lbn = 0;
+    while (done < fsize) {
+        uint32_t pblk = 0;
+        int rc = ext2_inode_get_block(ctx, ino, lbn, &pblk);
+        if (rc != RDNX_OK) {
+            kfree(blk);
+            kfree(data);
+            return rc;
+        }
+        if (pblk == 0) {
+            memset(blk, 0, ctx->block_size);
+        } else {
+            rc = ext2_read_block(ctx, pblk, blk);
+            if (rc != RDNX_OK) {
+                kfree(blk);
+                kfree(data);
+                return rc;
+            }
+        }
+
+        uint32_t chunk = ctx->block_size;
+        if (chunk > (fsize - done)) {
+            chunk = fsize - done;
+        }
+        memcpy(&data[done], blk, chunk);
+        done += chunk;
+        lbn++;
+    }
+
+    int rc = vfs_fs_set_file_data(node, data, fsize);
+    kfree(blk);
+    kfree(data);
+    return rc;
+}
+
+static int ext2_build_dir(ext2_mount_ctx_t* ctx,
+                          vfs_node_t* parent,
+                          uint32_t dir_ino_num,
+                          const ext2_inode_t* dir_ino,
+                          uint32_t depth)
+{
+    if (!ctx || !parent || !dir_ino || !ext2_is_dir(dir_ino)) {
+        return RDNX_E_INVALID;
+    }
+    if (depth > EXT2_MAX_TREE_DEPTH) {
+        return RDNX_OK;
+    }
+
+    uint8_t* blk = (uint8_t*)kmalloc(ctx->block_size);
+    if (!blk) {
+        return RDNX_E_NOMEM;
+    }
+
+    uint64_t dir_size = ext2_inode_size_bytes(dir_ino);
+    uint32_t scanned = 0;
+    uint32_t lbn = 0;
+    while (scanned < dir_size) {
+        uint32_t pblk = 0;
+        int rc = ext2_inode_get_block(ctx, dir_ino, lbn, &pblk);
+        if (rc != RDNX_OK) {
+            kfree(blk);
+            return rc;
+        }
+        if (pblk == 0) {
+            break;
+        }
+        rc = ext2_read_block(ctx, pblk, blk);
+        if (rc != RDNX_OK) {
+            kfree(blk);
+            return rc;
+        }
+
+        uint32_t pos = 0;
+        while (pos + sizeof(ext2_dirent_hdr_t) <= ctx->block_size) {
+            const ext2_dirent_hdr_t* de = (const ext2_dirent_hdr_t*)&blk[pos];
+            if (de->rec_len < sizeof(ext2_dirent_hdr_t) || pos + de->rec_len > ctx->block_size) {
+                break;
+            }
+            if (de->inode != 0 && de->name_len > 0) {
+                const uint8_t* name_raw = &blk[pos + sizeof(ext2_dirent_hdr_t)];
+                uint8_t max_name = (uint8_t)(de->rec_len - sizeof(ext2_dirent_hdr_t));
+                if (de->name_len <= max_name) {
+                    char name[32];
+                    uint32_t n = de->name_len;
+                    if (n >= sizeof(name)) {
+                        n = sizeof(name) - 1u;
+                    }
+                    memcpy(name, name_raw, n);
+                    name[n] = '\0';
+
+                    if (!((n == 1 && name[0] == '.') || (n == 2 && name[0] == '.' && name[1] == '.'))) {
+                        if (ctx->node_budget == 0) {
+                            kfree(blk);
+                            return RDNX_OK;
+                        }
+
+                        ext2_inode_t child_ino;
+                        if (ext2_read_inode(ctx, de->inode, &child_ino) == RDNX_OK) {
+                            vfs_node_type_t nt = ext2_is_dir(&child_ino) ? VFS_NODE_DIR : VFS_NODE_FILE;
+                            vfs_node_t* child = vfs_fs_alloc_node(name, nt);
+                            if (child) {
+                                if (vfs_fs_add_child(parent, child) == RDNX_OK) {
+                                    ctx->node_budget--;
+                                    if (nt == VFS_NODE_DIR) {
+                                        (void)ext2_build_dir(ctx, child, de->inode, &child_ino, depth + 1u);
+                                    } else if (ext2_is_reg(&child_ino)) {
+                                        (void)ext2_load_file(ctx, &child_ino, child);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            pos += de->rec_len;
+        }
+
+        scanned += ctx->block_size;
+        lbn++;
+        (void)dir_ino_num;
+    }
+
+    kfree(blk);
+    return RDNX_OK;
 }
 
 static int ext2_mount(const char* source, vfs_node_t** out_root)
@@ -86,59 +406,82 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
         return RDNX_E_INVALID;
     }
 
-    fabric_blockdev_t* bdev = fabric_blockdev_find(disk_name);
-    if (!bdev) {
+    ext2_mount_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.bdev = fabric_blockdev_find(disk_name);
+    if (!ctx.bdev) {
         return RDNX_E_NOTFOUND;
     }
-    if (bdev->sector_size != 512) {
+
+    ctx.sector_size = ctx.bdev->sector_size;
+    if (ctx.sector_size == 0 || ctx.sector_size > 512u) {
         return RDNX_E_UNSUPPORTED;
     }
 
-    uint8_t super_raw[1024];
-    if (fabric_blockdev_read(bdev, 2, 2, super_raw) != RDNX_OK) {
-        return RDNX_E_GENERIC;
+    int rc = ext2_read_bytes(&ctx, 1024u, &ctx.sb, sizeof(ctx.sb));
+    if (rc != RDNX_OK) {
+        return rc;
     }
-    const ext2_superblock_t* sb = (const ext2_superblock_t*)super_raw;
-    if (sb->magic != 0xEF53u) {
+    if (ctx.sb.magic != EXT2_MAGIC) {
         return RDNX_E_INVALID;
+    }
+    if (ctx.sb.feature_incompat & ~EXT2_FEATURE_INCOMPAT_SUPP) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    if (ctx.sb.blocks_per_group == 0 || ctx.sb.inodes_per_group == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    ctx.block_size = 1024u << ctx.sb.log_block_size;
+    if (ctx.block_size < 1024u || ctx.block_size > EXT2_MAX_BLOCK_SIZE) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    if (ctx.sb.rev_level == 0) {
+        ctx.inode_size = 128u;
+    } else {
+        ctx.inode_size = (ctx.sb.inode_size == 0) ? 128u : ctx.sb.inode_size;
+    }
+    if (ctx.inode_size < 128u || ctx.inode_size > EXT2_MAX_INODE_SIZE) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    uint32_t blocks_for_groups = ctx.sb.blocks_count - ctx.sb.first_data_block;
+    ctx.group_count = (blocks_for_groups + ctx.sb.blocks_per_group - 1u) / ctx.sb.blocks_per_group;
+    if (ctx.group_count == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint64_t gdt_off = (uint64_t)(ctx.sb.first_data_block + 1u) * ctx.block_size;
+    uint32_t gdt_size = ctx.group_count * (uint32_t)sizeof(ext2_group_desc_t);
+    ctx.gdt = (ext2_group_desc_t*)kmalloc(gdt_size);
+    if (!ctx.gdt) {
+        return RDNX_E_NOMEM;
+    }
+    rc = ext2_read_bytes(&ctx, gdt_off, ctx.gdt, gdt_size);
+    if (rc != RDNX_OK) {
+        kfree(ctx.gdt);
+        return rc;
+    }
+
+    ext2_inode_t root_ino;
+    rc = ext2_read_inode(&ctx, EXT2_ROOT_INO, &root_ino);
+    if (rc != RDNX_OK || !ext2_is_dir(&root_ino)) {
+        kfree(ctx.gdt);
+        return (rc == RDNX_OK) ? RDNX_E_INVALID : rc;
     }
 
     vfs_node_t* root = vfs_fs_alloc_node("/", VFS_NODE_DIR);
     if (!root) {
+        kfree(ctx.gdt);
         return RDNX_E_NOMEM;
     }
 
-    vfs_node_t* lost_found = vfs_fs_alloc_node("lost+found", VFS_NODE_DIR);
-    if (!lost_found) {
-        return RDNX_E_NOMEM;
-    }
-    if (vfs_fs_add_child(root, lost_found) != RDNX_OK) {
-        return RDNX_E_GENERIC;
-    }
-
-    vfs_node_t* readme = vfs_fs_alloc_node("README.ext2", VFS_NODE_FILE);
-    if (!readme) {
-        return RDNX_E_NOMEM;
-    }
-    char note[256];
-    memset(note, 0, sizeof(note));
-    append_str(note, sizeof(note), "EXT2 mounted from ");
-    append_str(note, sizeof(note), disk_name);
-    append_str(note, sizeof(note), "\nblocks=");
-    append_u64(note, sizeof(note), (uint64_t)sb->blocks_count);
-    append_str(note, sizeof(note), " inodes=");
-    append_u64(note, sizeof(note), (uint64_t)sb->inodes_count);
-    append_str(note, sizeof(note), " block_size=");
-    append_u64(note, sizeof(note), (uint64_t)(1024u << sb->log_block_size));
-    append_str(note, sizeof(note), "\nNOTE: inode/dir traversal is not implemented yet.\n");
-    if (vfs_fs_set_file_data(readme, note, strlen(note)) != RDNX_OK) {
-        return RDNX_E_GENERIC;
-    }
-    if (vfs_fs_add_child(root, readme) != RDNX_OK) {
-        return RDNX_E_GENERIC;
-    }
+    ctx.node_budget = EXT2_MAX_TREE_NODES;
+    (void)ext2_build_dir(&ctx, root, EXT2_ROOT_INO, &root_ino, 0);
 
     *out_root = root;
+    kfree(ctx.gdt);
     return RDNX_OK;
 }
 
@@ -149,5 +492,6 @@ static const vfs_fs_driver_t ext2_driver = {
 
 int ext2_fs_init(void)
 {
+    (void)kmod_register_builtin("fs.ext2", "fs", "0.1", 0);
     return vfs_register_fs(&ext2_driver);
 }

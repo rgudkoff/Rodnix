@@ -7,6 +7,7 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "../include/version.h"
+#include "../include/error.h"
 #include "core/interrupts.h"
 #include "syscall.h"
 #include "posix/posix_syscall.h"
@@ -15,6 +16,7 @@
 #include "common/security.h"
 #include "common/bootstrap.h"
 #include "common/loader.h"
+#include "common/kmod.h"
 #include "common/shell.h"
 #include "common/bootlog.h"
 #include "common/idl_demo.h"
@@ -344,6 +346,14 @@ void kmain(uint32_t magic, void* mbi)
     __asm__ volatile ("" ::: "memory");
     loader_init();
     bootlog_mark("loader", "done");
+    __asm__ volatile ("" ::: "memory");
+
+    kputs("[INIT-8.8] Kmod\n");
+    if (kmod_init() != RDNX_OK) {
+        kputs("[INIT-8.8] Kmod init failed\n");
+    } else {
+        kputs("[INIT-8.8] Kmod registry ready\n");
+    }
     __asm__ volatile ("" ::: "memory");
     
     /* Step 9: Initialize Fabric */

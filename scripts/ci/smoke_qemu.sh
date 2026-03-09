@@ -7,10 +7,16 @@ cd "$ROOT_DIR"
 LOG_FILE="${LOG_FILE:-boot.log}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-10}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
+DISK_IMG="${DISK_IMG:-build/rodnix-disk.img}"
+DISK_MB="${DISK_MB:-128}"
 
 rm -f "$LOG_FILE"
 
 make iso
+mkdir -p "$(dirname "$DISK_IMG")"
+if [ ! -f "$DISK_IMG" ]; then
+  dd if=/dev/zero of="$DISK_IMG" bs=1m count="$DISK_MB" status=none
+fi
 
 if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
   echo "[smoke] qemu not found: $QEMU_BIN"
@@ -18,7 +24,8 @@ if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
 fi
 
 set +e
-"$QEMU_BIN" -m 1G -boot d -cdrom rodnix.iso -serial file:"$LOG_FILE" -no-reboot -no-shutdown &
+"$QEMU_BIN" -m 1G -boot d -cdrom rodnix.iso -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
+  -drive file="$DISK_IMG",if=ide,format=raw,index=0,media=disk &
 QEMU_PID=$!
 set -e
 

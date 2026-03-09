@@ -56,3 +56,8 @@
 46 kill
 47 sigaction
 48 sigreturn
+49 blocklist
+50 blockread
+51 kmodls
+52 kmodload
+53 kmodunload

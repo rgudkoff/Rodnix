@@ -307,6 +307,8 @@ void cmd_help(void)
         "  motd          - print /etc/motd\n"
         "  uname         - show system information\n"
         "  hostinfo      - compact host/system report\n"
+        "  diskinfo      - list disks, read sector: diskinfo -r <dev> <lba>\n"
+        "  kmodctl       - module ctl: kmodctl ls|load|unload\n"
         "  scstat [-a]   - syscall stats by number (int80/fast)\n"
         "  forktest      - validate fork + COW semantics\n"
         "  execvetest    - validate execve(argv) path\n"

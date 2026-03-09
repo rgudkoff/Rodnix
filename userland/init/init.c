@@ -164,6 +164,34 @@ static void ct_log(const char* id, const char* verdict, const char* msg)
     (void)write_str("\n");
 }
 
+static int cstr_eq(const char* a, const char* b)
+{
+    uint64_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static int kmod_find(rodnix_kmod_info_t* mods, uint32_t n, const char* name)
+{
+    if (!mods || !name) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        if (cstr_eq(mods[i].name, name)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 static void run_ifconfig_smoke_if_enabled(void)
 {
     if (!file_exists("/etc/smoke.ifconfig.auto")) {
@@ -551,6 +579,46 @@ static void run_contract_mode_if_enabled(void)
             } else {
                 ct_log("CT-004", "FAIL", "waitpid non-child contract failed");
                 ok = 0;
+            }
+        }
+    }
+
+    {
+        rodnix_kmod_info_t mods[32];
+        uint32_t total = 0;
+        long n = posix_kmodls(mods, 32, &total);
+        if (n < 0) {
+            ct_log("CT-022", "FAIL", "kmodls initial failed");
+            ok = 0;
+        } else {
+            int ext2_idx = kmod_find(mods, (uint32_t)n, "fs.ext2");
+            if (ext2_idx < 0 || mods[ext2_idx].loaded == 0 || mods[ext2_idx].builtin == 0) {
+                ct_log("CT-022", "FAIL", "builtin fs.ext2 not visible");
+                ok = 0;
+            } else if (posix_kmodload("/lib/modules/demo.ko") < 0) {
+                ct_log("CT-022", "FAIL", "kmodload demo failed");
+                ok = 0;
+            } else {
+                uint32_t total2 = 0;
+                long n2 = posix_kmodls(mods, 32, &total2);
+                int demo_idx = (n2 < 0) ? -1 : kmod_find(mods, (uint32_t)n2, "demo.echo");
+                if (n2 < 0 || demo_idx < 0 || mods[demo_idx].loaded == 0 || mods[demo_idx].builtin != 0) {
+                    ct_log("CT-022", "FAIL", "demo module not loaded");
+                    ok = 0;
+                } else if (posix_kmodunload("demo.echo") < 0) {
+                    ct_log("CT-022", "FAIL", "kmodunload demo failed");
+                    ok = 0;
+                } else {
+                    uint32_t total3 = 0;
+                    long n3 = posix_kmodls(mods, 32, &total3);
+                    int demo3 = (n3 < 0) ? -1 : kmod_find(mods, (uint32_t)n3, "demo.echo");
+                    if (n3 < 0 || demo3 < 0 || mods[demo3].loaded != 0) {
+                        ct_log("CT-022", "FAIL", "demo module still loaded");
+                        ok = 0;
+                    } else {
+                        ct_log("CT-022", "PASS", "kmod ls/load/unload contract");
+                    }
+                }
             }
         }
     }

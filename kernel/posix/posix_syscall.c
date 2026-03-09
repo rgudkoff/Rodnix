@@ -4,10 +4,12 @@
 #include "../core/memory.h"
 #include "../common/security.h"
 #include "../common/syscall.h"
+#include "../common/kmod.h"
 #include "../fabric/fabric.h"
 #include "../fabric/device/device.h"
 #include "../fabric/bus/pci.h"
 #include "../fabric/service/net_service.h"
+#include "../fabric/service/block_service.h"
 #include "../fs/vfs.h"
 #include "../vm/vm_map.h"
 #include "../unix/unix_layer.h"
@@ -686,6 +688,25 @@ typedef struct rodnix_scstat_entry {
     uint64_t total_count;
 } rodnix_scstat_entry_t;
 
+typedef struct rodnix_blockdev_info {
+    char name[16];
+    uint32_t sector_size;
+    uint64_t sector_count;
+    uint32_t flags;
+    uint32_t reserved0;
+} rodnix_blockdev_info_t;
+
+typedef struct rodnix_kmod_info {
+    char name[32];
+    char kind[16];
+    char version[16];
+    uint32_t flags;
+    uint8_t builtin;
+    uint8_t loaded;
+    uint8_t reserved0;
+    uint8_t reserved1;
+} rodnix_kmod_info_t;
+
 static uint64_t posix_hwlist(uint64_t a1,
                              uint64_t a2,
                              uint64_t a3,
@@ -959,6 +980,177 @@ static uint64_t posix_scstat(uint64_t a1,
         *user_count = total;
     }
     return (uint64_t)n;
+}
+
+static uint64_t posix_blocklist(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    rodnix_blockdev_info_t* user_entries = (rodnix_blockdev_info_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+    uint32_t total = fabric_blockdev_count();
+    uint32_t n = (max_entries < total) ? max_entries : total;
+
+    if (max_entries == 0 || !user_entries) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(*user_entries))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        fabric_blockdev_info_t info;
+        if (fabric_blockdev_get_info(i, &info) != RDNX_OK) {
+            continue;
+        }
+        rodnix_blockdev_info_t out;
+        memset(&out, 0, sizeof(out));
+        strncpy(out.name, info.name, sizeof(out.name) - 1);
+        out.sector_size = info.sector_size;
+        out.sector_count = info.sector_count;
+        out.flags = info.flags;
+        user_entries[i] = out;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_blockread(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a5;
+    (void)a6;
+
+    const char* name = (const char*)(uintptr_t)a1;
+    uint64_t lba = a2;
+    void* out = (void*)(uintptr_t)a3;
+    uint64_t out_len = a4;
+
+    if (!name || !out || out_len == 0) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(name, 1) || !unix_user_range_ok(out, (size_t)out_len)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    fabric_blockdev_t* dev = fabric_blockdev_find(name);
+    if (!dev) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+    if (dev->sector_size == 0 || dev->sector_size > out_len || dev->sector_size > 4096u) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint8_t bounce[4096];
+    int rc = fabric_blockdev_read(dev, lba, 1, bounce);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
+    }
+    memcpy(out, bounce, dev->sector_size);
+    return (uint64_t)dev->sector_size;
+}
+
+static uint64_t posix_kmodls(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    rodnix_kmod_info_t* user_entries = (rodnix_kmod_info_t*)(uintptr_t)a1;
+    uint32_t max_entries = (uint32_t)a2;
+    uint32_t* user_count = (uint32_t*)(uintptr_t)a3;
+    uint32_t total = kmod_count();
+    uint32_t n = (max_entries < total) ? max_entries : total;
+
+    if (max_entries == 0 || !user_entries) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_entries, (size_t)max_entries * sizeof(*user_entries))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (user_count && !unix_user_range_ok(user_count, sizeof(uint32_t))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    for (uint32_t i = 0; i < n; i++) {
+        kmod_info_t ki;
+        if (kmod_get_info(i, &ki) != RDNX_OK) {
+            continue;
+        }
+        rodnix_kmod_info_t out;
+        memset(&out, 0, sizeof(out));
+        strncpy(out.name, ki.name, sizeof(out.name) - 1);
+        strncpy(out.kind, ki.kind, sizeof(out.kind) - 1);
+        strncpy(out.version, ki.version, sizeof(out.version) - 1);
+        out.flags = ki.flags;
+        out.builtin = ki.builtin;
+        out.loaded = ki.loaded;
+        user_entries[i] = out;
+    }
+    if (user_count) {
+        *user_count = total;
+    }
+    return (uint64_t)n;
+}
+
+static uint64_t posix_kmodload(uint64_t a1,
+                               uint64_t a2,
+                               uint64_t a3,
+                               uint64_t a4,
+                               uint64_t a5,
+                               uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    const char* path = (const char*)(uintptr_t)a1;
+    if (!path || !unix_user_range_ok(path, 1)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)kmod_load(path);
+}
+
+static uint64_t posix_kmodunload(uint64_t a1,
+                                 uint64_t a2,
+                                 uint64_t a3,
+                                 uint64_t a4,
+                                 uint64_t a5,
+                                 uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    const char* name = (const char*)(uintptr_t)a1;
+    if (!name || !unix_user_range_ok(name, 1)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)kmod_unload(name);
 }
 
 static uint64_t posix_clock_gettime(uint64_t a1,

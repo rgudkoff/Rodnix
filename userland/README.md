@@ -19,6 +19,8 @@ legacy entry `int 0x80` сохранён как fallback.
   - `sh> echo hello world`
 - `/bin/ls`, `/bin/cat`, `/bin/true` — внешние userland-заготовки
   (MVP-утилиты для модели "не builtin").
+- `/bin/diskinfo` — диагностика блочных устройств (`diskinfo`, `diskinfo -r <dev> <lba>`).
+- `/bin/kmodctl` — управление реестром модулей (`kmodctl ls|load|unload`).
 - `/etc` в rootfs:
   - `/etc/motd` — приветствие, печатается `init` при старте;
   - `/etc/hostname` — hostname, читается `init`;
@@ -68,3 +70,9 @@ vendor BSD baseline (`third_party/bsd/*/sys/sys/*`) и проверяются
 - минимальный loader и переход в ring3;
 - bootstrap‑сервер/launcher в userland;
 - запуск сервисов через IPC.
+
+Тестовый модульный образ:
+- при сборке userland автоматически создаётся `/lib/modules/demo.kmod`
+  (минимальный `RDKMOD1`-заголовок для проверки `kmodload`/`kmodunload`).
+- также создаётся `/lib/modules/demo.ko` (ELF relocatable object с секцией
+  `.rodnix_mod`), используемый для ELF-пути загрузки.

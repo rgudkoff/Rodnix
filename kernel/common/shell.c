@@ -29,6 +29,7 @@
 #include "../common/scheduler.h"
 #include "../common/heap.h"
 #include "../common/loader.h"
+#include "../common/kmod.h"
 #include "../core/interrupts.h"
 #include "../fabric/fabric.h"
 #include <stddef.h>
@@ -50,6 +51,9 @@ typedef struct {
 } run_args_t;
 
 static int shell_cmd_run(int argc, char** argv);
+static int shell_cmd_kmodls(int argc, char** argv);
+static int shell_cmd_kmodload(int argc, char** argv);
+static int shell_cmd_kmodunload(int argc, char** argv);
 
 static void shell_run_thread(void* arg)
 {
@@ -117,6 +121,9 @@ static int shell_cmd_help(int argc, char** argv)
     kputs("  timecheck - Check timer/scheduler drift\n");
     kputs("  echo      - Echo arguments\n");
     kputs("  mount     - Mount filesystem (mount -t <fs> [src] <target>)\n");
+    kputs("  kmodls    - List registered kernel modules\n");
+    kputs("  kmodload  - Load module image (kmodload <path>)\n");
+    kputs("  kmodunload- Unload module (kmodunload <name>)\n");
     kputs("  sched     - Show scheduler statistics\n");
     kputs("  exit      - Exit shell (reboot)\n");
     kputs("\n");
@@ -863,6 +870,59 @@ static int shell_cmd_mount(int argc, char** argv)
     return RDNX_OK;
 }
 
+static int shell_cmd_kmodls(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    uint32_t n = kmod_count();
+    kprintf("kmods: %u\n", (unsigned)n);
+    for (uint32_t i = 0; i < n; i++) {
+        kmod_info_t mi;
+        if (kmod_get_info(i, &mi) != RDNX_OK) {
+            continue;
+        }
+        kprintf("  %u: %s type=%s ver=%s %s %s\n",
+                (unsigned)i,
+                mi.name,
+                mi.kind,
+                mi.version,
+                mi.builtin ? "builtin" : "loadable",
+                mi.loaded ? "loaded" : "unloaded");
+    }
+    return RDNX_OK;
+}
+
+static int shell_cmd_kmodload(int argc, char** argv)
+{
+    if (argc < 2 || !argv[1] || !argv[1][0]) {
+        kputs("usage: kmodload <path>\n");
+        return RDNX_E_INVALID;
+    }
+    int rc = kmod_load(argv[1]);
+    if (rc != RDNX_OK) {
+        kprintf("kmodload: failed rc=%d\n", rc);
+        return rc;
+    }
+    kprintf("kmodload: loaded %s\n", argv[1]);
+    return RDNX_OK;
+}
+
+static int shell_cmd_kmodunload(int argc, char** argv)
+{
+    if (argc < 2 || !argv[1] || !argv[1][0]) {
+        kputs("usage: kmodunload <name>\n");
+        return RDNX_E_INVALID;
+    }
+    int rc = kmod_unload(argv[1]);
+    if (rc != RDNX_OK) {
+        kprintf("kmodunload: failed rc=%d\n", rc);
+        return rc;
+    }
+    kprintf("kmodunload: unloaded %s\n", argv[1]);
+    return RDNX_OK;
+}
+
 /**
  * @function shell_cmd_exit
  * @brief Exit shell (reboot system)
@@ -916,6 +976,9 @@ static const struct shell_command commands[] = {
     {"timecheck", shell_cmd_timecheck, "Check timer/scheduler drift"},
     {"echo",    shell_cmd_echo,    "Echo arguments (supports: echo ... > file)"},
     {"mount",   shell_cmd_mount,   "Mount filesystem (mount -t <fs> [src] <target>)"},
+    {"kmodls",  shell_cmd_kmodls,  "List registered kernel modules"},
+    {"kmodload", shell_cmd_kmodload, "Load module image (kmodload <path>)"},
+    {"kmodunload", shell_cmd_kmodunload, "Unload module (kmodunload <name>)"},
     {"ls",      shell_cmd_ls,      "List directory"},
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},

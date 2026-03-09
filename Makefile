@@ -89,10 +89,13 @@ QEMU_ACCEL ?=
 QEMU_SERIAL ?= mon:stdio
 # QEMU NIC for first real Fabric backend (e1000).
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
+QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
+QEMU_DISK_SIZE_MB ?= 128
 #
 # QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
 # Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
 QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
+                   -drive file=$(QEMU_DISK_IMG),if=ide,format=raw,index=0,media=disk \
                    -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S
 
@@ -101,7 +104,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke
+.PHONY: all clean run _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -196,14 +199,14 @@ iso: $(KERNEL_BIN) initrd
 	fi
 
 # ===== Run / Debug =====
-run:
+run: qemu-disk
 	@if [ -n "$(filter debug,$(MAKECMDGOALS))" ]; then \
 		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
 	else \
 		$(MAKE) --no-print-directory _run_impl; \
 	fi
 
-_run_impl: iso
+_run_impl: iso qemu-disk
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
 		echo "[*] Running QEMU $(QEMU_ACCEL), serial=$(QEMU_SERIAL), tee -> boot.log"; \
 		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
@@ -219,7 +222,7 @@ debug:
 		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
 	fi
 
-gdb: iso
+gdb: iso qemu-disk
 	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
 	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
 	sleep 1
@@ -269,6 +272,13 @@ check-contract-10:
 
 check-ifconfig-smoke:
 	@bash scripts/ci/smoke_ifconfig_qemu.sh
+
+qemu-disk:
+	@mkdir -p $(dir $(QEMU_DISK_IMG))
+	@if [ ! -f "$(QEMU_DISK_IMG)" ]; then \
+		echo "[*] Creating QEMU disk image: $(QEMU_DISK_IMG) ($(QEMU_DISK_SIZE_MB) MiB)"; \
+		dd if=/dev/zero of="$(QEMU_DISK_IMG)" bs=1m count="$(QEMU_DISK_SIZE_MB)" status=none; \
+	fi
 
 idl:
 	@mkdir -p $(IDL_OUT)

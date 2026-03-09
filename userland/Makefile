@@ -34,6 +34,8 @@ FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
 FABRICNETCHECK_SRCS = bin/fabricnetcheck.c
 HOSTINFO_SRCS = bin/hostinfo.c
+DISKINFO_SRCS = bin/diskinfo.c
+KMODCTL_SRCS = bin/kmodctl.c
 SLEEP_SRCS = bin/sleep.c
 SIGTEST_SRCS = bin/sigtest.c
 STTY_SRCS = bin/stty.c
@@ -71,6 +73,8 @@ FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $
 FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HOSTINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(HOSTINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+DISKINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(DISKINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+KMODCTL_OBJS = $(addprefix $(BUILD_DIR)/, $(KMODCTL_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -104,6 +108,8 @@ FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
 FABRICNETCHECK_ELF = $(BUILD_DIR)/fabricnetcheck.elf
 HOSTINFO_ELF = $(BUILD_DIR)/hostinfo.elf
+DISKINFO_ELF = $(BUILD_DIR)/diskinfo.elf
+KMODCTL_ELF = $(BUILD_DIR)/kmodctl.elf
 SLEEP_ELF = $(BUILD_DIR)/sleep.elf
 SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
 STTY_ELF = $(BUILD_DIR)/stty.elf
@@ -136,7 +142,13 @@ FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
 FABRICNETCHECK_BIN = $(BIN_DIR)/fabricnetcheck
 HOSTINFO_BIN = $(BIN_DIR)/hostinfo
+DISKINFO_BIN = $(BIN_DIR)/diskinfo
+KMODCTL_BIN = $(BIN_DIR)/kmodctl
 SLEEP_BIN = $(BIN_DIR)/sleep
+MODULES_DIR = $(ROOTFS_DIR)/lib/modules
+DEMO_KMOD = $(MODULES_DIR)/demo.kmod
+DEMO_KO_OBJ = $(BUILD_DIR)/modules/demo_echo.o
+DEMO_KO = $(MODULES_DIR)/demo.ko
 SIGTEST_BIN = $(BIN_DIR)/sigtest
 STTY_BIN = $(BIN_DIR)/stty
 TIMECHECK_BIN = $(BIN_DIR)/timecheck
@@ -159,7 +171,7 @@ CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -227,6 +239,14 @@ $(FABRICNETCHECK_ELF): $(FABRICNETCHECK_OBJS) link.ld
 $(HOSTINFO_ELF): $(HOSTINFO_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(HOSTINFO_OBJS)
+
+$(DISKINFO_ELF): $(DISKINFO_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(DISKINFO_OBJS)
+
+$(KMODCTL_ELF): $(KMODCTL_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(KMODCTL_OBJS)
 
 $(SLEEP_ELF): $(SLEEP_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -355,6 +375,26 @@ $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 $(HOSTINFO_BIN): $(HOSTINFO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+
+$(DISKINFO_BIN): $(DISKINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(KMODCTL_BIN): $(KMODCTL_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(DEMO_KMOD): ../scripts/mkkmod.py
+	@mkdir -p $(MODULES_DIR)
+	python3 ../scripts/mkkmod.py --output $@ --name demo.echo --kind misc --version 0.1 --flags 0
+
+$(DEMO_KO_OBJ): modules/demo_echo.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I../include -fno-asynchronous-unwind-tables -fno-unwind-tables -c $< -o $@
+
+$(DEMO_KO): $(DEMO_KO_OBJ)
+	@mkdir -p $(MODULES_DIR)
+	cp $(DEMO_KO_OBJ) $@
 
 $(SLEEP_BIN): $(SLEEP_ELF)
 	@mkdir -p $(BIN_DIR)

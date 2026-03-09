@@ -16,6 +16,7 @@ KERNEL_C_SRCS += \
 	kernel/common/security.c \
 	kernel/common/bootstrap.c \
 	kernel/common/loader.c \
+	kernel/common/kmod.c \
 	kernel/common/bootlog.c \
 	kernel/common/tracev2.c \
 	kernel/common/tty_console.c \

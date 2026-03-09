@@ -10,6 +10,8 @@
 #include "syscall.h"
 #include "posix_sysnums.h"
 #include "scstat.h"
+#include "diskinfo.h"
+#include "kmodinfo.h"
 
 #ifndef RDNX_STDIN_INT80_READ_WORKAROUND
 #define RDNX_STDIN_INT80_READ_WORKAROUND 1
@@ -282,6 +284,44 @@ static inline long posix_scstat(rodnix_scstat_entry_t* entries, uint64_t max_ent
                          (long)max_entries,
                          (long)(uintptr_t)out_total,
                          0, 0, 0);
+}
+
+static inline long posix_blocklist(rodnix_blockdev_info_t* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_BLOCKLIST,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_blockread(const char* dev_name, uint64_t lba, void* out, uint64_t out_len)
+{
+    return rdnx_syscall6(POSIX_SYS_BLOCKREAD,
+                         (long)(uintptr_t)dev_name,
+                         (long)lba,
+                         (long)(uintptr_t)out,
+                         (long)out_len,
+                         0, 0);
+}
+
+static inline long posix_kmodls(rodnix_kmod_info_t* entries, uint64_t max_entries, uint32_t* out_total)
+{
+    return rdnx_syscall6(POSIX_SYS_KMODLS,
+                         (long)(uintptr_t)entries,
+                         (long)max_entries,
+                         (long)(uintptr_t)out_total,
+                         0, 0, 0);
+}
+
+static inline long posix_kmodload(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_KMODLOAD, (long)(uintptr_t)path);
+}
+
+static inline long posix_kmodunload(const char* name)
+{
+    return rdnx_syscall1(POSIX_SYS_KMODUNLOAD, (long)(uintptr_t)name);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

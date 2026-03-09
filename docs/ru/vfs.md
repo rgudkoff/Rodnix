@@ -23,6 +23,10 @@
 - Есть `vfs_mount_initrd_root()` для замены корня на initrd‑RAMFS.
 - Весь доступ сейчас идёт через RAMFS (in-memory).
  - Initrd подключается из boot‑модуля (Multiboot2 module) и импортируется в RAMFS.
+- Зарегистрирован драйвер `ext2` (read-only mount path):
+  - чтение superblock/group descriptors;
+  - чтение inode/directories и построение дерева VFS при mount;
+  - write-path пока не реализован.
 - Узлы `/dev` сейчас создаются ядром виртуально (не читаются с диска):
   `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.
 - Консольные узлы `/dev/*` обслуживаются через `kernel/common/tty_console.c`
