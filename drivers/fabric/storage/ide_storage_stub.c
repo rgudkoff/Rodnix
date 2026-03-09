@@ -46,7 +46,9 @@ enum {
 
 enum {
     ATA_CMD_IDENTIFY = 0xEC,
-    ATA_CMD_READ_PIO = 0x20
+    ATA_CMD_READ_PIO = 0x20,
+    ATA_CMD_WRITE_PIO = 0x30,
+    ATA_CMD_CACHE_FLUSH = 0xE7
 };
 
 enum {
@@ -73,6 +75,11 @@ static inline uint16_t ide_inw(uint16_t port)
     uint16_t value;
     __asm__ volatile ("inw %1, %0" : "=a"(value) : "Nd"(port));
     return value;
+}
+
+static inline void ide_outw(uint16_t port, uint16_t value)
+{
+    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
 }
 
 static void ide_io_wait(const ide_slot_t* slot)
@@ -203,12 +210,52 @@ static int ide_block_read(fabric_blockdev_t* bdev, uint64_t lba, uint32_t count,
 
 static int ide_block_write(fabric_blockdev_t* bdev, uint64_t lba, uint32_t count, const void* in)
 {
-    (void)bdev;
-    (void)lba;
-    (void)count;
-    (void)in;
-    /* TODO: Wire real ATA/PIO write path. */
-    return RDNX_E_UNSUPPORTED;
+    if (!bdev || !in || count == 0) {
+        return RDNX_E_INVALID;
+    }
+    ide_slot_t* slot = (ide_slot_t*)bdev->context;
+    if (!slot || !slot->present) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    const uint8_t* src = (const uint8_t*)in;
+    uint64_t cur_lba = lba;
+    uint32_t remain = count;
+    while (remain > 0) {
+        uint8_t batch = (remain > 255u) ? 255u : (uint8_t)remain;
+
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_HDDEVSEL),
+                 (uint8_t)(0xE0u | (slot->drive_head & 0x10u) |
+                           ((cur_lba >> 24) & 0x0Fu)));
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_SECCOUNT0), batch);
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_LBA0), (uint8_t)(cur_lba & 0xFFu));
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_LBA1), (uint8_t)((cur_lba >> 8) & 0xFFu));
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_LBA2), (uint8_t)((cur_lba >> 16) & 0xFFu));
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_COMMAND), ATA_CMD_WRITE_PIO);
+
+        for (uint8_t s = 0; s < batch; s++) {
+            int wrc = ide_wait_ready(slot, true);
+            if (wrc != RDNX_OK) {
+                return wrc;
+            }
+            for (uint32_t i = 0; i < 256; i++) {
+                uint16_t w = (uint16_t)src[0] | ((uint16_t)src[1] << 8);
+                ide_outw((uint16_t)(slot->io_base + ATA_REG_DATA), w);
+                src += 2;
+            }
+            ide_io_wait(slot);
+        }
+
+        /* Ensure data is committed before returning to upper layers. */
+        ide_outb((uint16_t)(slot->io_base + ATA_REG_COMMAND), ATA_CMD_CACHE_FLUSH);
+        if (ide_wait_ready(slot, false) != RDNX_OK) {
+            return RDNX_E_TIMEOUT;
+        }
+
+        cur_lba += batch;
+        remain -= batch;
+    }
+    return RDNX_OK;
 }
 
 static bool ide_storage_probe(fabric_device_t* dev)

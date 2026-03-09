@@ -90,6 +90,34 @@ polling-циклов: вызов может уступить квант план
 - `23` — `MUNMAP` — experimental
 - `24` — `BRK` — experimental
 - `25` — `FORK` — experimental
+- `26` — `HWLIST` — experimental
+- `27` — `FABRICLS` — experimental
+- `28` — `FABRICEVENTS` — experimental
+- `29` — `SYSINFO` — experimental
+- `30` — `CLOCK_GETTIME` — experimental
+- `31` — `STAT` — experimental
+- `32` — `FSTAT` — experimental
+- `33` — `LSEEK` — experimental
+- `34` — `SCSTAT` — experimental
+- `35` — `PIPE` — experimental
+- `36` — `DUP` — experimental
+- `37` — `DUP2` — experimental
+- `38` — `CHDIR` — experimental
+- `39` — `GETCWD` — experimental
+- `40` — `MKDIR` — experimental
+- `41` — `UNLINK` — experimental
+- `42` — `RMDIR` — experimental
+- `43` — `RENAME` — experimental
+- `44` — `IOCTL` — experimental
+- `45` — `NANOSLEEP` — experimental
+- `46` — `KILL` — experimental
+- `47` — `SIGACTION` — experimental
+- `48` — `SIGRETURN` — experimental
+- `49` — `BLOCKLIST` — experimental
+- `50` — `BLOCKREAD` — experimental
+- `51` — `KMODLS` — experimental
+- `52` — `KMODLOAD` — experimental
+- `53` — `KMODUNLOAD` — experimental
 
 Свободные номера помечаются как `RESERVED` и не переиспользуются.
 

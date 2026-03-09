@@ -4,6 +4,8 @@
  */
 
 #include "../../include/console.h"
+#include "startup_trace.h"
+#include "bootlog.h"
 #include <stdarg.h>
 
 /* Simple VGA text mode implementation */
@@ -365,6 +367,49 @@ static void serial_write_char(char c)
     outb(SERIAL_COM1_BASE + SERIAL_DATA, (uint8_t)c);
 }
 
+static bool line_matches_prefix(const char* s, const char* p)
+{
+    if (!s || !p) {
+        return false;
+    }
+    while (*p) {
+        if (*s != *p) {
+            return false;
+        }
+        s++;
+        p++;
+    }
+    return true;
+}
+
+static bool line_filter_is_noisy_prefix(const char* s)
+{
+    static const char* noisy[] = {
+        "[INT-",
+        "[IDT-",
+        "[MEM-",
+        "[APIC-",
+        "[PCI]",
+        "[PS2-BUS]",
+        "[HID-KBD]",
+        "[FABRIC-IRQ]",
+        "[fabric]",
+        "[VFS] initrd: entries=",
+        "[VFS] initrd entry:"
+    };
+    for (uint32_t i = 0; i < (uint32_t)(sizeof(noisy) / sizeof(noisy[0])); i++) {
+        if (line_matches_prefix(s, noisy[i])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool console_verbose_mode(void)
+{
+    return startup_trace_bootverbose() || bootlog_is_verbose();
+}
+
 /**
  * @function update_cursor
  * @brief Update VGA text mode cursor position
@@ -702,6 +747,10 @@ void kputc(char c)
 
 void kputs(const char* str)
 {
+    if (!console_verbose_mode() && str && line_filter_is_noisy_prefix(str)) {
+        return;
+    }
+
     /* Prevent recursive calls from exception handlers */
     if (kputs_in_progress) {
         /* If already in kputs, just write directly to VGA to avoid recursion */
@@ -803,6 +852,10 @@ void kprintf(const char* fmt, ...)
 
 void kvprintf(const char* fmt, va_list args)
 {
+    if (!console_verbose_mode() && fmt && line_filter_is_noisy_prefix(fmt)) {
+        return;
+    }
+
     while (*fmt) {
         if (*fmt == '%') {
             fmt++;

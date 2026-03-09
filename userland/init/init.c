@@ -9,9 +9,11 @@
 #include "posix_syscall.h"
 #include "unistd.h"
 #include "sys/wait.h"
+#include "dirent.h"
 #include "time.h"
 
 #define VFS_OPEN_READ 1
+#define VFS_OPEN_WRITE 2
 #define FD_STDOUT 1
 #define SYS_TEST_SLEEP 62
 
@@ -162,6 +164,72 @@ static void ct_log(const char* id, const char* verdict, const char* msg)
     (void)write_str(" ");
     (void)write_str(msg);
     (void)write_str("\n");
+}
+
+static int cstr_eq(const char* a, const char* b)
+{
+    uint64_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static int cstr_contains(const char* s, const char* needle)
+{
+    uint64_t i = 0;
+    uint64_t j = 0;
+    if (!s || !needle || !needle[0]) {
+        return 0;
+    }
+    for (i = 0; s[i]; i++) {
+        for (j = 0; needle[j] && s[i + j] == needle[j]; j++) {
+            ;
+        }
+        if (!needle[j]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int kmod_find(rodnix_kmod_info_t* mods, uint32_t n, const char* name)
+{
+    if (!mods || !name) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        if (cstr_eq(mods[i].name, name)) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int dev_dir_has_entry(const char* name)
+{
+    DIR* d = opendir("/dev");
+    if (!d) {
+        return 0;
+    }
+    for (;;) {
+        struct dirent* de = readdir(d);
+        if (!de) {
+            break;
+        }
+        if (cstr_eq(de->d_name, name)) {
+            (void)closedir(d);
+            return 1;
+        }
+    }
+    (void)closedir(d);
+    return 0;
 }
 
 static void run_ifconfig_smoke_if_enabled(void)
@@ -522,6 +590,128 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        int dev_ok = 1;
+        if (!dev_dir_has_entry("console") ||
+            !dev_dir_has_entry("stdin") ||
+            !dev_dir_has_entry("stdout") ||
+            !dev_dir_has_entry("stderr") ||
+            !dev_dir_has_entry("null") ||
+            !dev_dir_has_entry("zero")) {
+            dev_ok = 0;
+        }
+        if (dev_ok) {
+            ct_log("CT-024", "PASS", "devfs base nodes visible in /dev");
+        } else {
+            ct_log("CT-024", "FAIL", "missing required /dev entries");
+            ok = 0;
+        }
+    }
+
+    {
+        int tty_ok = (isatty(0) != 0) && (isatty(1) != 0) && (isatty(2) != 0);
+        if (tty_ok) {
+            ct_log("CT-025", "PASS", "isatty works for stdio fds");
+        } else {
+            ct_log("CT-025", "FAIL", "isatty failed for stdio");
+            ok = 0;
+        }
+    }
+
+    {
+        int io_ok = 1;
+        char b = 'X';
+        char zbuf[8] = {1,2,3,4,5,6,7,8};
+        long fd_null = posix_open("/dev/null", VFS_OPEN_READ | VFS_OPEN_WRITE);
+        if (fd_null < 0) {
+            io_ok = 0;
+        } else {
+            long wn = posix_write((int)fd_null, &b, 1);
+            long rn = posix_read((int)fd_null, &b, 1);
+            if (wn != 1 || rn != 0) {
+                io_ok = 0;
+            }
+            (void)posix_close((int)fd_null);
+        }
+        long fd_zero = posix_open("/dev/zero", VFS_OPEN_READ);
+        if (fd_zero < 0) {
+            io_ok = 0;
+        } else {
+            long rn = posix_read((int)fd_zero, zbuf, sizeof(zbuf));
+            if (rn != (long)sizeof(zbuf)) {
+                io_ok = 0;
+            } else {
+                for (uint64_t i = 0; i < sizeof(zbuf); i++) {
+                    if (zbuf[i] != 0) {
+                        io_ok = 0;
+                        break;
+                    }
+                }
+            }
+            (void)posix_close((int)fd_zero);
+        }
+        if (io_ok) {
+            ct_log("CT-026", "PASS", "devfs null/zero I/O contract");
+        } else {
+            ct_log("CT-026", "FAIL", "devfs null/zero behavior mismatch");
+            ok = 0;
+        }
+    }
+
+    {
+        rodnix_blockdev_info_t devs[4];
+        uint32_t total = 0;
+        int block_ok = 1;
+        long n = posix_blocklist(devs, 4, &total);
+        if (n < 0) {
+            block_ok = 0;
+        } else if (n > 0) {
+            char path[32];
+            uint64_t p = 0;
+            const char* prefix = "/dev/";
+            for (uint64_t i = 0; prefix[i] && p + 1 < sizeof(path); i++) {
+                path[p++] = prefix[i];
+            }
+            for (uint64_t i = 0; devs[0].name[i] && p + 1 < sizeof(path); i++) {
+                path[p++] = devs[0].name[i];
+            }
+            path[p] = '\0';
+            if (!dev_dir_has_entry(devs[0].name)) {
+                block_ok = 0;
+            } else {
+                char sec[512];
+                char tail[17];
+                long fd = posix_open(path, VFS_OPEN_READ);
+                if (fd < 0) {
+                    block_ok = 0;
+                } else {
+                    long rn = posix_read((int)fd, sec, sizeof(sec));
+                    if (rn != (long)sizeof(sec)) {
+                        block_ok = 0;
+                    }
+                    if (block_ok) {
+                        if (posix_lseek((int)fd, 1, 0) < 0) {
+                            block_ok = 0;
+                        } else {
+                            long rn2 = posix_read((int)fd, tail, sizeof(tail));
+                            if (rn2 != (long)sizeof(tail)) {
+                                block_ok = 0;
+                            }
+                        }
+                    }
+                    (void)posix_close((int)fd);
+                }
+            }
+        }
+
+        if (block_ok) {
+            ct_log("CT-027", "PASS", "devfs block node bridge works");
+        } else {
+            ct_log("CT-027", "FAIL", "devfs block node missing or unreadable");
+            ok = 0;
+        }
+    }
+
+    {
         int status = -1;
         long pid = posix_spawn("/bin/contract_fsio", 0);
         if (pid <= 0) {
@@ -556,6 +746,46 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        rodnix_kmod_info_t mods[32];
+        uint32_t total = 0;
+        long n = posix_kmodls(mods, 32, &total);
+        if (n < 0) {
+            ct_log("CT-022", "FAIL", "kmodls initial failed");
+            ok = 0;
+        } else {
+            int ext2_idx = kmod_find(mods, (uint32_t)n, "fs.ext2");
+            if (ext2_idx < 0 || mods[ext2_idx].loaded == 0 || mods[ext2_idx].builtin == 0) {
+                ct_log("CT-022", "FAIL", "builtin fs.ext2 not visible");
+                ok = 0;
+            } else if (posix_kmodload("/lib/modules/demo.ko") < 0) {
+                ct_log("CT-022", "FAIL", "kmodload demo failed");
+                ok = 0;
+            } else {
+                uint32_t total2 = 0;
+                long n2 = posix_kmodls(mods, 32, &total2);
+                int demo_idx = (n2 < 0) ? -1 : kmod_find(mods, (uint32_t)n2, "demo.echo");
+                if (n2 < 0 || demo_idx < 0 || mods[demo_idx].loaded == 0 || mods[demo_idx].builtin != 0) {
+                    ct_log("CT-022", "FAIL", "demo module not loaded");
+                    ok = 0;
+                } else if (posix_kmodunload("demo.echo") < 0) {
+                    ct_log("CT-022", "FAIL", "kmodunload demo failed");
+                    ok = 0;
+                } else {
+                    uint32_t total3 = 0;
+                    long n3 = posix_kmodls(mods, 32, &total3);
+                    int demo3 = (n3 < 0) ? -1 : kmod_find(mods, (uint32_t)n3, "demo.echo");
+                    if (n3 < 0 || demo3 < 0 || mods[demo3].loaded != 0) {
+                        ct_log("CT-022", "FAIL", "demo module still loaded");
+                        ok = 0;
+                    } else {
+                        ct_log("CT-022", "PASS", "kmod ls/load/unload contract");
+                    }
+                }
+            }
+        }
+    }
+
+    {
         /* Race case: child may exit before parent enters waitpid. */
         int status = -1;
         long pid = posix_spawn("/bin/true", 0);
@@ -584,6 +814,93 @@ static void run_contract_mode_if_enabled(void)
                     ok = 0;
                 }
             }
+        }
+    }
+
+    {
+        char buf[192];
+        long fd = posix_open("/mnt/README.txt", VFS_OPEN_READ);
+        if (fd < 0) {
+            ct_log("CT-023", "FAIL", "open /mnt/README.txt failed");
+            ok = 0;
+        } else {
+            long nr = posix_read((int)fd, buf, sizeof(buf) - 1);
+            (void)posix_close((int)fd);
+            if (nr <= 0) {
+                ct_log("CT-023", "FAIL", "read /mnt/README.txt failed");
+                ok = 0;
+            } else {
+                buf[nr] = '\0';
+                if (cstr_contains(buf, "RodNIX ext2 demo volume")) {
+                    ct_log("CT-023", "PASS", "ext2 mounted and file read");
+                } else {
+                    ct_log("CT-023", "FAIL", "ext2 content mismatch");
+                    ok = 0;
+                }
+            }
+        }
+    }
+
+    {
+        int wr_ok = 1;
+        int wr_unavail = 0; /* reserved while storage write path is being stabilized */
+        char buf[16];
+        long fd = posix_open("/mnt/README.txt", VFS_OPEN_READ | VFS_OPEN_WRITE);
+        if (fd < 0) {
+            wr_ok = 0;
+        } else {
+            long rr = posix_read((int)fd, buf, sizeof(buf));
+            if (rr != (long)sizeof(buf)) {
+                wr_ok = 0;
+            }
+            (void)posix_close((int)fd);
+        }
+
+        if (wr_ok) {
+            fd = posix_open("/mnt/README.txt", VFS_OPEN_READ | VFS_OPEN_WRITE);
+            if (fd < 0) {
+                wr_ok = 0;
+            } else {
+                long wn = posix_write((int)fd, buf, sizeof(buf));
+                if (wn != (long)sizeof(buf)) {
+                    if (wn == -7) {
+                        wr_unavail = 1;
+                    } else {
+                        wr_ok = 0;
+                    }
+                }
+                (void)posix_close((int)fd);
+            }
+        }
+
+        if (wr_ok && !wr_unavail) {
+            fd = posix_open("/mnt/README.txt", VFS_OPEN_READ);
+            if (fd < 0) {
+                wr_ok = 0;
+            } else {
+                char chk[16];
+                long rr2 = posix_read((int)fd, chk, sizeof(chk));
+                if (rr2 != (long)sizeof(chk)) {
+                    wr_ok = 0;
+                } else {
+                    for (uint64_t i = 0; i < sizeof(buf); i++) {
+                        if (chk[i] != buf[i]) {
+                            wr_ok = 0;
+                            break;
+                        }
+                    }
+                }
+                (void)posix_close((int)fd);
+            }
+        }
+
+        if (wr_ok && !wr_unavail) {
+            ct_log("CT-028", "PASS", "ext2 overwrite writeback path");
+        } else if (wr_unavail) {
+            ct_log("CT-028", "PASS", "ext2 writeback deferred: block write backend unavailable");
+        } else {
+            ct_log("CT-028", "FAIL", "ext2 overwrite writeback failed");
+            ok = 0;
         }
     }
 

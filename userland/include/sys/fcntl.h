@@ -18,6 +18,7 @@
 #define O_TRUNC    0x0400
 #define O_EXCL     0x0800
 #define O_NOCTTY   0x8000
+#define O_CLOEXEC  0x00100000
 
 #define F_GETFD 1
 #define F_SETFD 2

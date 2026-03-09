@@ -10,7 +10,10 @@ behavior, and practical observability while the system is still small.
 - Physical memory manager and basic VM path (`mmap/munmap/brk`, COW groundwork)
 - Interrupts, timers, and preemptive scheduler
 - VFS with RAMFS and initrd import
+- EXT2 read-only mount path (real inode/dir traversal)
 - Fabric device model (`device -> driver -> service`) with event stream
+- Fabric block service + IDE disk discovery (`disk0`) and sector read path
+- Kernel module registry (`kmod`) with load/unload control path
 - Basic userland launch path (`/bin/init`, `/bin/sh`) and minimal POSIX syscalls
 - Hardware/system introspection utilities in userland
 
@@ -50,6 +53,8 @@ More setup details: `INSTALL.md` and `docs/ru/build_run.md`.
 - `fabricevents` - Fabric event queue dump
 - `fabricnetcheck` - net service lifecycle checks
 - `scstat` - per-syscall counters (`int80` vs `fast`)
+- `diskinfo` - block devices and sector probe (`diskinfo -r <dev> <lba>`)
+- `kmodctl` - module registry control (`ls/load/unload`)
 - `sleep <seconds>` - userspace delay via `nanosleep`
 - `sigtest` - minimal signal path check (`sigaction/kill/sigreturn`)
 - `stty` - inspect/change terminal mode (`raw/cooked`, echo/signals/control chars)

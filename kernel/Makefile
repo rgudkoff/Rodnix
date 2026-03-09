@@ -16,7 +16,9 @@ KERNEL_C_SRCS += \
 	kernel/common/security.c \
 	kernel/common/bootstrap.c \
 	kernel/common/loader.c \
+	kernel/common/kmod.c \
 	kernel/common/bootlog.c \
+	kernel/common/startup_trace.c \
 	kernel/common/tracev2.c \
 	kernel/common/tty_console.c \
 	kernel/common/waitq.c \
@@ -26,6 +28,11 @@ KERNEL_C_SRCS += \
 	kernel/unix/exec/unix_exec.c \
 	kernel/unix/process/unix_process.c \
 	kernel/posix/posix_syscall.c \
+	kernel/posix/posix_sys_ids.c \
+	kernel/posix/posix_sys_file.c \
+	kernel/posix/posix_sys_proc.c \
+	kernel/posix/posix_sys_vm.c \
+	kernel/posix/posix_sys_info.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \

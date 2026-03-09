@@ -12,5 +12,6 @@ typedef long off_t;
 typedef uint32_t mode_t;
 typedef long time_t;
 typedef int clockid_t;
+typedef uint64_t nfds_t;
 
 #endif /* _RODNIX_USERLAND_SYS_TYPES_H */

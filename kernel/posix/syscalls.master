@@ -56,3 +56,16 @@
 46 kill
 47 sigaction
 48 sigreturn
+49 blocklist
+50 blockread
+51 kmodls
+52 kmodload
+53 kmodunload
+54 blockwrite
+55 truncate
+56 ftruncate
+57 poll
+58 select
+59 dup3
+60 pipe2
+61 futex

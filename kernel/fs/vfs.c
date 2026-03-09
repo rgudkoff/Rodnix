@@ -6,6 +6,8 @@
 #include "vfs.h"
 #include "initrd.h"
 #include "ext2.h"
+#include "devfs.h"
+#include "../fabric/service/block_service.h"
 #include "../common/tty_console.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
@@ -271,6 +273,38 @@ static int vfs_grow_file(vfs_node_t* node, size_t needed)
     return 0;
 }
 
+static int vfs_resize_file(vfs_file_t* file, size_t new_size)
+{
+    if (!file || !file->node || file->node->type != VFS_NODE_FILE || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_inode_t* inode = file->node->inode;
+    if ((inode->flags & (VFS_INODE_CONSOLE | VFS_INODE_CHARDEV | VFS_INODE_BLOCKDEV)) != 0) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    if (inode->fs_tag == VFS_FS_TAG_EXT2) {
+        /* Ext2 writeback path currently supports in-place writes only. */
+        return (new_size == inode->size) ? RDNX_OK : RDNX_E_UNSUPPORTED;
+    }
+
+    size_t old_size = inode->size;
+    if (new_size > inode->capacity) {
+        if (vfs_grow_file(file->node, new_size) != 0) {
+            return RDNX_E_NOMEM;
+        }
+    }
+    if (new_size > old_size && inode->data) {
+        memset(inode->data + old_size, 0, new_size - old_size);
+    }
+    inode->size = new_size;
+    if (file->pos > new_size) {
+        file->pos = new_size;
+    }
+    return RDNX_OK;
+}
+
 static const vfs_fs_driver_t* vfs_find_fs_driver(const char* fs_name)
 {
     if (!fs_name || fs_name[0] == '\0') {
@@ -344,44 +378,20 @@ static int vfs_mount_root_ramfs(void)
     return 0;
 }
 
-static int vfs_setup_console_node(void)
+static int vfs_mount_devfs(void)
 {
     if (!vfs_root) {
         return -1;
     }
 
-    vfs_node_t* dev = vfs_lookup("/dev");
-    if (!dev) {
-        dev = vfs_create_node(vfs_root, "dev", VFS_NODE_DIR);
-        if (!dev) {
-            return -1;
-        }
-    }
-    if (dev->type != VFS_NODE_DIR) {
+    int mkrc = vfs_mkdir("/dev");
+    if (mkrc != RDNX_OK) {
         return -1;
     }
-
-    static const char* names[] = {
-        "console",
-        "stdin",
-        "stdout",
-        "stderr",
-    };
-
-    for (size_t i = 0; i < (sizeof(names) / sizeof(names[0])); i++) {
-        vfs_node_t* node = vfs_find_child(dev, names[i]);
-        if (!node) {
-            node = vfs_create_node(dev, names[i], VFS_NODE_FILE);
-            if (!node) {
-                return -1;
-            }
-        }
-        if (node->type != VFS_NODE_FILE || !node->inode) {
-            return -1;
-        }
-        node->inode->flags |= VFS_INODE_CONSOLE;
+    int mrc = vfs_mount("devfs", NULL, "/dev");
+    if (mrc != RDNX_OK && mrc != RDNX_E_BUSY) {
+        return -1;
     }
-
     return 0;
 }
 
@@ -407,7 +417,7 @@ int vfs_mount_initrd_root(void)
     if (ret != 0) {
         return ret;
     }
-    if (vfs_setup_console_node() != 0) {
+    if (vfs_mount_devfs() != 0) {
         return -1;
     }
     return 0;
@@ -558,6 +568,7 @@ int vfs_init(void)
     }
     TRACE_EVENT("vfs_init");
     (void)vfs_register_fs(&vfs_ramfs_driver);
+    (void)devfs_fs_init();
     (void)ext2_fs_init();
     if (vfs_mount_root_ramfs() != 0) {
         return RDNX_E_GENERIC;
@@ -567,10 +578,10 @@ int vfs_init(void)
         kputs("[VFS] initrd import failed\n");
     }
     tty_console_init();
-    if (vfs_setup_console_node() != 0) {
-        kputs("[VFS] console node setup failed\n");
-    }
     vfs_ready = 1;
+    if (vfs_mount_devfs() != 0) {
+        kputs("[VFS] devfs mount failed\n");
+    }
     return RDNX_OK;
 }
 
@@ -592,6 +603,9 @@ int vfs_mkdir(const char* path)
     if (!parent) {
         return RDNX_E_NOTFOUND;
     }
+    if (parent->inode && parent->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return RDNX_E_UNSUPPORTED;
+    }
     if (vfs_find_child(parent, leaf)) {
         return RDNX_OK;
     }
@@ -606,6 +620,9 @@ int vfs_unlink(const char* path)
     vfs_node_t* node = vfs_lookup(path);
     if (!node || node == vfs_root) {
         return RDNX_E_NOTFOUND;
+    }
+    if (node->inode && node->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return RDNX_E_UNSUPPORTED;
     }
     if (node->type == VFS_NODE_DIR && node->children) {
         return RDNX_E_BUSY;
@@ -667,6 +684,10 @@ int vfs_rename(const char* old_path, const char* new_path)
     if (!node) {
         return RDNX_E_NOTFOUND;
     }
+    if ((node->inode && node->inode->fs_tag == VFS_FS_TAG_EXT2) ||
+        (new_parent->inode && new_parent->inode->fs_tag == VFS_FS_TAG_EXT2)) {
+        return RDNX_E_UNSUPPORTED;
+    }
     if (vfs_find_child(new_parent, new_leaf)) {
         return RDNX_E_BUSY;
     }
@@ -727,6 +748,9 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
         if (!parent) {
             return RDNX_E_NOTFOUND;
         }
+        if (parent->inode && parent->inode->fs_tag == VFS_FS_TAG_EXT2) {
+            return RDNX_E_UNSUPPORTED;
+        }
         node = vfs_create_node(parent, leaf, VFS_NODE_FILE);
         if (!node) {
             return RDNX_E_NOMEM;
@@ -735,12 +759,18 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     if (node->type != VFS_NODE_FILE || !node->inode) {
         return RDNX_E_INVALID;
     }
-    if (flags & VFS_OPEN_TRUNC) {
-        node->inode->size = 0;
-    }
     out_file->node = node;
     out_file->pos = 0;
     out_file->writable = (flags & VFS_OPEN_WRITE) != 0;
+    if (flags & VFS_OPEN_TRUNC) {
+        int trc = vfs_resize_file(out_file, 0);
+        if (trc != RDNX_OK) {
+            out_file->node = NULL;
+            out_file->pos = 0;
+            out_file->writable = false;
+            return trc;
+        }
+    }
     return RDNX_OK;
 }
 
@@ -764,6 +794,50 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
     if (inode->flags & VFS_INODE_CONSOLE) {
         return tty_console_read(buffer, size, file->writable);
     }
+    if (inode->flags & VFS_INODE_DEV_NULL) {
+        return 0;
+    }
+    if (inode->flags & VFS_INODE_DEV_ZERO) {
+        memset(buffer, 0, size);
+        return (int)size;
+    }
+    if (inode->flags & VFS_INODE_BLOCKDEV) {
+        fabric_blockdev_t* bdev = fabric_blockdev_find(file->node->name);
+        if (!bdev || bdev->sector_size == 0) {
+            return RDNX_E_NOTFOUND;
+        }
+        if (size == 0) {
+            return 0;
+        }
+        uint8_t* out = (uint8_t*)buffer;
+        uint32_t sector_size = bdev->sector_size;
+        uint8_t* bounce = (uint8_t*)kmalloc(sector_size);
+        if (!bounce) {
+            return RDNX_E_NOMEM;
+        }
+        size_t done = 0;
+        while (done < size) {
+            uint64_t abs_off = (uint64_t)file->pos + (uint64_t)done;
+            uint64_t lba = abs_off / (uint64_t)sector_size;
+            uint32_t in_sector_off = (uint32_t)(abs_off % (uint64_t)sector_size);
+            size_t chunk = size - done;
+            size_t max_chunk = (size_t)sector_size - (size_t)in_sector_off;
+            if (chunk > max_chunk) {
+                chunk = max_chunk;
+            }
+
+            int rc = fabric_blockdev_read(bdev, lba, 1, bounce);
+            if (rc != RDNX_OK) {
+                kfree(bounce);
+                return rc;
+            }
+            memcpy(out + done, bounce + in_sector_off, chunk);
+            done += chunk;
+        }
+        kfree(bounce);
+        file->pos += size;
+        return (int)size;
+    }
     if (file->pos >= inode->size) {
         return 0;
     }
@@ -782,6 +856,52 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
     vfs_inode_t* inode = file->node->inode;
     if (inode->flags & VFS_INODE_CONSOLE) {
         return tty_console_write(buffer, size);
+    }
+    if (inode->flags & VFS_INODE_DEV_NULL) {
+        return (int)size;
+    }
+    if (inode->flags & VFS_INODE_DEV_ZERO) {
+        return (int)size;
+    }
+    if (inode->fs_tag == VFS_FS_TAG_EXT2) {
+        size_t end = file->pos + size;
+        size_t final_size = (end > inode->size) ? end : inode->size;
+        int wrc = ext2_writeback_file(file->node, file->pos, buffer, size, final_size);
+        if (wrc != RDNX_OK) {
+            return wrc;
+        }
+        if (end > inode->size) {
+            inode->size = end;
+        }
+        if (inode->data && size > 0) {
+            size_t avail = (file->pos < inode->size) ? (inode->size - file->pos) : 0;
+            size_t copy = (size < avail) ? size : avail;
+            if (copy > 0) {
+                memcpy(inode->data + file->pos, buffer, copy);
+            }
+        }
+        file->pos += size;
+        return (int)size;
+    }
+    if (inode->flags & VFS_INODE_BLOCKDEV) {
+        fabric_blockdev_t* bdev = fabric_blockdev_find(file->node->name);
+        if (!bdev || bdev->sector_size == 0) {
+            return RDNX_E_NOTFOUND;
+        }
+        if (size == 0) {
+            return 0;
+        }
+        if ((file->pos % bdev->sector_size) != 0 || (size % bdev->sector_size) != 0) {
+            return RDNX_E_INVALID;
+        }
+        uint64_t lba = (uint64_t)file->pos / (uint64_t)bdev->sector_size;
+        uint32_t count = (uint32_t)(size / bdev->sector_size);
+        int rc = fabric_blockdev_write(bdev, lba, count, buffer);
+        if (rc != RDNX_OK) {
+            return rc;
+        }
+        file->pos += size;
+        return (int)size;
     }
     size_t end = file->pos + size;
     if (vfs_grow_file(file->node, end) != 0) {
@@ -833,6 +953,36 @@ int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos)
         *out_pos = (uint64_t)file->pos;
     }
     return RDNX_OK;
+}
+
+int vfs_truncate(const char* path, uint64_t size)
+{
+    if (!path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    if (size > (uint64_t)SIZE_MAX) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_node_t* node = vfs_lookup(path);
+    if (!node || node->type != VFS_NODE_FILE || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    vfs_file_t tmp = {
+        .node = node,
+        .pos = 0,
+        .writable = true,
+    };
+    return vfs_resize_file(&tmp, (size_t)size);
+}
+
+int vfs_ftruncate(vfs_file_t* file, uint64_t size)
+{
+    if (size > (uint64_t)SIZE_MAX) {
+        return RDNX_E_INVALID;
+    }
+    return vfs_resize_file(file, (size_t)size);
 }
 
 int vfs_stat(const char* path, vfs_stat_t* out_stat)

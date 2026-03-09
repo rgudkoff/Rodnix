@@ -17,6 +17,7 @@
  */
 #define UNIX_PATH_MAX 256
 #define UNIX_ARG_MAX 16
+#define UNIX_ENV_MAX 32
 #define UNIX_DIRENT_NAME_MAX 255
 
 enum {
@@ -54,9 +55,12 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
 uint64_t unix_fs_close(uint64_t fd);
 uint64_t unix_fs_dup(uint64_t oldfd);
 uint64_t unix_fs_dup2(uint64_t oldfd, uint64_t newfd);
+uint64_t unix_fs_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags);
 uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
 uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
 uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence);
+uint64_t unix_fs_truncate(uint64_t user_path_ptr, uint64_t size);
+uint64_t unix_fs_ftruncate(uint64_t fd, uint64_t size);
 uint64_t unix_fs_chdir(uint64_t user_path_ptr);
 uint64_t unix_fs_getcwd(uint64_t user_buf_ptr, uint64_t size);
 uint64_t unix_fs_mkdir(uint64_t user_path_ptr);
@@ -68,6 +72,13 @@ uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
 uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr);
+uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags);
+uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms);
+uint64_t unix_fs_select(uint64_t nfds,
+                        uint64_t user_readfds_ptr,
+                        uint64_t user_writefds_ptr,
+                        uint64_t user_exceptfds_ptr,
+                        uint64_t user_timeout_ptr);
 /* CT-003 target */
 uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr);
 uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint64_t user_len);
@@ -80,6 +91,12 @@ uint64_t unix_proc_fork(void);
 uint64_t unix_proc_kill(uint64_t pid, uint64_t signum);
 uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t user_oldact_ptr);
 uint64_t unix_proc_sigreturn(void);
+uint64_t unix_proc_futex(uint64_t user_uaddr_ptr,
+                         uint64_t op,
+                         uint64_t val,
+                         uint64_t user_timeout_ptr,
+                         uint64_t user_uaddr2_ptr,
+                         uint64_t val3);
 void unix_proc_signal_checkpoint(void);
 /* CT-004/CT-005/CT-006 */
 uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr);

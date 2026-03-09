@@ -29,6 +29,8 @@ rodnix.iso
 
 # Userland rootfs binaries
 userland/rootfs/bin/
+userland/rootfs/lib/modules/*.kmod
+userland/rootfs/lib/modules/*.ko
 
 # Object files (keep source, ignore compiled)
 **/*.o
