@@ -106,9 +106,19 @@ static inline long posix_rmdir(const char* path)
     return rdnx_syscall1(POSIX_SYS_RMDIR, (long)(uintptr_t)path);
 }
 
+static inline long posix_rename(const char* oldpath, const char* newpath)
+{
+    return rdnx_syscall2(POSIX_SYS_RENAME, (long)(uintptr_t)oldpath, (long)(uintptr_t)newpath);
+}
+
 static inline long posix_fcntl(int fd, int cmd, long arg)
 {
     return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);
+}
+
+static inline long posix_ioctl(int fd, uint64_t request, void* argp)
+{
+    return rdnx_syscall6(POSIX_SYS_IOCTL, fd, (long)request, (long)(uintptr_t)argp, 0, 0, 0);
 }
 
 static inline long posix_stat(const char* path, void* st)
@@ -239,6 +249,30 @@ static inline long posix_fork(void)
 static inline long posix_clock_gettime(int clock_id, void* tp)
 {
     return rdnx_syscall2(POSIX_SYS_CLOCK_GETTIME, (long)clock_id, (long)(uintptr_t)tp);
+}
+
+static inline long posix_nanosleep(const void* req, void* rem)
+{
+    return rdnx_syscall2(POSIX_SYS_NANOSLEEP, (long)(uintptr_t)req, (long)(uintptr_t)rem);
+}
+
+static inline long posix_kill(long pid, int signum)
+{
+    return rdnx_syscall2(POSIX_SYS_KILL, pid, (long)signum);
+}
+
+static inline long posix_sigaction(int signum, const void* act, void* oldact)
+{
+    return rdnx_syscall6(POSIX_SYS_SIGACTION,
+                         (long)signum,
+                         (long)(uintptr_t)act,
+                         (long)(uintptr_t)oldact,
+                         0, 0, 0);
+}
+
+static inline long posix_sigreturn(void)
+{
+    return rdnx_syscall0(POSIX_SYS_SIGRETURN);
 }
 
 static inline long posix_scstat(rodnix_scstat_entry_t* entries, uint64_t max_entries, uint32_t* out_total)

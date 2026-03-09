@@ -631,6 +631,71 @@ int vfs_unlink(const char* path)
     return RDNX_OK;
 }
 
+static int vfs_is_ancestor_dir(const vfs_node_t* ancestor, const vfs_node_t* node)
+{
+    const vfs_node_t* cur = node;
+    while (cur) {
+        if (cur == ancestor) {
+            return 1;
+        }
+        cur = cur->parent;
+    }
+    return 0;
+}
+
+int vfs_rename(const char* old_path, const char* new_path)
+{
+    if (!old_path || !new_path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    if (strcmp(old_path, "/") == 0 || strcmp(new_path, "/") == 0) {
+        return RDNX_E_DENIED;
+    }
+    if (strcmp(old_path, new_path) == 0) {
+        return RDNX_OK;
+    }
+
+    char old_leaf[32];
+    char new_leaf[32];
+    vfs_node_t* old_parent = vfs_resolve_parent(old_path, old_leaf, sizeof(old_leaf));
+    vfs_node_t* new_parent = vfs_resolve_parent(new_path, new_leaf, sizeof(new_leaf));
+    if (!old_parent || !new_parent || old_leaf[0] == '\0' || new_leaf[0] == '\0') {
+        return RDNX_E_NOTFOUND;
+    }
+
+    vfs_node_t* node = vfs_find_child(old_parent, old_leaf);
+    if (!node) {
+        return RDNX_E_NOTFOUND;
+    }
+    if (vfs_find_child(new_parent, new_leaf)) {
+        return RDNX_E_BUSY;
+    }
+    if (node->type == VFS_NODE_DIR && vfs_is_ancestor_dir(node, new_parent)) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_node_t* prev = NULL;
+    for (vfs_node_t* it = old_parent->children; it; it = it->sibling) {
+        if (it == node) {
+            if (prev) {
+                prev->sibling = it->sibling;
+            } else {
+                old_parent->children = it->sibling;
+            }
+            break;
+        }
+        prev = it;
+    }
+
+    node->sibling = new_parent->children;
+    new_parent->children = node;
+    node->parent = new_parent;
+    strncpy(node->name, new_leaf, sizeof(node->name) - 1);
+    node->name[sizeof(node->name) - 1] = '\0';
+    vfs_cache_reset();
+    return RDNX_OK;
+}
+
 int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx)
 {
     if (!path || !cb || !vfs_ready) {

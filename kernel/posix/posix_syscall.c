@@ -366,6 +366,20 @@ static uint64_t posix_rmdir(uint64_t a1,
     return unix_fs_rmdir(a1);
 }
 
+static uint64_t posix_rename(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_rename(a1, a2);
+}
+
 static uint64_t posix_fcntl(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,
@@ -377,6 +391,19 @@ static uint64_t posix_fcntl(uint64_t a1,
     (void)a5;
     (void)a6;
     return unix_fs_fcntl(a1, a2, a3);
+}
+
+static uint64_t posix_ioctl(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_ioctl(a1, a2, a3);
 }
 
 static uint64_t posix_stat(uint64_t a1,
@@ -969,6 +996,20 @@ static uint64_t posix_clock_gettime(uint64_t a1,
     return (uint64_t)RDNX_OK;
 }
 
+static uint64_t posix_nanosleep(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_time_nanosleep(a1, a2);
+}
+
 static uint64_t posix_mmap(uint64_t a1,
                            uint64_t a2,
                            uint64_t a3,
@@ -1096,6 +1137,49 @@ static uint64_t posix_fork(uint64_t a1,
     return unix_proc_fork();
 }
 
+static uint64_t posix_kill(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_kill(a1, a2);
+}
+
+static uint64_t posix_sigaction(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_sigaction(a1, a2, a3);
+}
+
+static uint64_t posix_sigreturn(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a1;
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_proc_sigreturn();
+}
+
 void posix_syscall_init(void)
 {
     for (uint32_t i = 0; i < POSIX_SYSCALL_MAX; i++) {
@@ -1126,5 +1210,9 @@ uint64_t posix_syscall_dispatch(uint64_t num,
     if (num >= POSIX_SYSCALL_MAX || !posix_table[num]) {
         return (uint64_t)RDNX_E_UNSUPPORTED;
     }
-    return posix_table[num](a1, a2, a3, a4, a5, a6);
+    uint64_t ret = posix_table[num](a1, a2, a3, a4, a5, a6);
+    if (num != POSIX_SYS_SIGRETURN) {
+        unix_proc_signal_checkpoint();
+    }
+    return ret;
 }

@@ -62,6 +62,8 @@ uint64_t unix_fs_getcwd(uint64_t user_buf_ptr, uint64_t size);
 uint64_t unix_fs_mkdir(uint64_t user_path_ptr);
 uint64_t unix_fs_unlink(uint64_t user_path_ptr);
 uint64_t unix_fs_rmdir(uint64_t user_path_ptr);
+uint64_t unix_fs_rename(uint64_t user_old_path_ptr, uint64_t user_new_path_ptr);
+uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr);
 uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
@@ -75,8 +77,13 @@ uint64_t unix_proc_exit(uint64_t status);
 /* CT-001 */
 uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr);
 uint64_t unix_proc_fork(void);
+uint64_t unix_proc_kill(uint64_t pid, uint64_t signum);
+uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t user_oldact_ptr);
+uint64_t unix_proc_sigreturn(void);
+void unix_proc_signal_checkpoint(void);
 /* CT-004/CT-005/CT-006 */
 uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr);
+uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr);
 void unix_proc_notify_waiters(uint64_t parent_task_id);
 void unix_proc_close_fds(task_t* task);
 

@@ -84,6 +84,7 @@ int vfs_fs_set_file_data(vfs_node_t* node, const void* data, size_t size);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);
+int vfs_rename(const char* old_path, const char* new_path);
 int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file);

@@ -44,10 +44,16 @@ More setup details: `INSTALL.md` and `docs/ru/build_run.md`.
 ## Useful In-System Commands
 
 - `sysinfo` - CPU, memory, uptime, interrupts, Fabric counters
+- `hostinfo` - compact host snapshot (CPU/memory/Fabric/syscall counters)
 - `hwlist` - discovered hardware list
 - `fabricls` - Fabric topology snapshot
 - `fabricevents` - Fabric event queue dump
 - `fabricnetcheck` - net service lifecycle checks
+- `scstat` - per-syscall counters (`int80` vs `fast`)
+- `sleep <seconds>` - userspace delay via `nanosleep`
+- `sigtest` - minimal signal path check (`sigaction/kill/sigreturn`)
+- `stty` - inspect/change terminal mode (`raw/cooked`, echo/signals/control chars)
+- shell supports `|`, `<`, `>`, `>>`, `2>`, `2>>`
 
 ## Documentation
 

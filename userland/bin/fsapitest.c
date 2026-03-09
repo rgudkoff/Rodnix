@@ -121,7 +121,12 @@ int main(void)
         (void)close(p[0]);
     }
 
-    if (unlink("f.txt") != 0) {
+    if (rename("f.txt", "g.txt") != 0) {
+        (void)write_str("fsapitest: rename failed\n");
+        return 1;
+    }
+
+    if (unlink("g.txt") != 0) {
         (void)write_str("fsapitest: unlink failed\n");
         return 1;
     }

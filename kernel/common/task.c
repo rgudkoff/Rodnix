@@ -222,6 +222,20 @@ task_t* task_create(void)
     task->exit_code = 0;
     task->exited = 0;
     task->waited = 0;
+    for (uint32_t i = 0; i < 32; i++) {
+        task->sigaction[i].handler = 0;
+        task->sigaction[i].flags = 0;
+        task->sigaction[i].restorer = 0;
+        task->sigaction[i].mask = 0;
+    }
+    task->sig_pending = 0;
+    task->sig_in_handler = 0;
+    {
+        uint64_t* p = (uint64_t*)&task->sig_saved;
+        for (size_t i = 0; i < sizeof(task->sig_saved) / sizeof(uint64_t); i++) {
+            p[i] = 0;
+        }
+    }
     task->main_thread = NULL;
     task->thread_count = 0;
     task->ref_count = 1;

@@ -1,6 +1,7 @@
 #include "../unix_layer.h"
 #include "../../fs/vfs.h"
 #include "../../common/heap.h"
+#include "../../common/tty_console.h"
 #include "../../common/scheduler.h"
 #include "../../core/interrupts.h"
 #include "../../vm/vm_map.h"
@@ -13,6 +14,22 @@ enum {
     UNIX_FD_CLOEXEC = 1,
     UNIX_PIPE_CAP = 4096
 };
+
+enum {
+    UNIX_TTY_IOCTL_ISATTY = 0x7401,
+    UNIX_TTY_IOCTL_GETATTR = 0x7402,
+    UNIX_TTY_IOCTL_SETATTR = 0x7403
+};
+
+typedef struct unix_termios_u {
+    uint32_t c_iflag;
+    uint32_t c_oflag;
+    uint32_t c_cflag;
+    uint32_t c_lflag;
+    uint8_t c_cc[20];
+    uint32_t c_ispeed;
+    uint32_t c_ospeed;
+} unix_termios_u_t;
 
 typedef struct unix_pipe {
     uint32_t magic;
@@ -718,6 +735,65 @@ uint64_t unix_fs_rmdir(uint64_t user_path_ptr)
         return (uint64_t)RDNX_E_INVALID;
     }
     return (uint64_t)vfs_unlink(path_buf);
+}
+
+uint64_t unix_fs_rename(uint64_t user_old_path_ptr, uint64_t user_new_path_ptr)
+{
+    char old_path[UNIX_PATH_MAX];
+    char new_path[UNIX_PATH_MAX];
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_old_path_ptr, old_path, sizeof(old_path)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_new_path_ptr, new_path, sizeof(new_path)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_rename(old_path, new_path);
+}
+
+uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
+{
+    task_t* task = task_get_current();
+    int fdi = (int)fd;
+    if (!task || fdi < 0 || fdi >= TASK_MAX_FD || task->fd_kind[fdi] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, fdi);
+    if (!file || !file->node || !file->node->inode) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if ((file->node->inode->flags & VFS_INODE_CONSOLE) == 0) {
+        return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+
+    switch ((uint32_t)request) {
+        case UNIX_TTY_IOCTL_ISATTY:
+            return 1;
+        case UNIX_TTY_IOCTL_GETATTR: {
+            unix_termios_u_t* out = (unix_termios_u_t*)(uintptr_t)user_arg_ptr;
+            if (!out || !unix_user_range_ok(out, sizeof(*out))) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            memset(out, 0, sizeof(*out));
+            out->c_lflag = tty_console_get_lflag();
+            for (uint32_t i = 0; i < 20; i++) {
+                out->c_cc[i] = tty_console_get_cc(i);
+            }
+            return (uint64_t)RDNX_OK;
+        }
+        case UNIX_TTY_IOCTL_SETATTR: {
+            const unix_termios_u_t* in = (const unix_termios_u_t*)(uintptr_t)user_arg_ptr;
+            if (!in || !unix_user_range_ok(in, sizeof(*in))) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            tty_console_set_lflag(in->c_lflag);
+            for (uint32_t i = 0; i < 20; i++) {
+                tty_console_set_cc(i, in->c_cc[i]);
+            }
+            return (uint64_t)RDNX_OK;
+        }
+        default:
+            return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
 }
 
 uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr)

@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <sys/fcntl.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
 #include <errno.h>
 #include <sys/wait.h>
 #include "posix_syscall.h"
@@ -197,6 +198,36 @@ static inline int rmdir(const char* path)
         return -1;
     }
     return 0;
+}
+
+static inline int rename(const char* oldpath, const char* newpath)
+{
+    long r = posix_rename(oldpath, newpath);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int ioctl(int fd, unsigned long request, void* argp)
+{
+    long r = posix_ioctl(fd, (uint64_t)request, argp);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
+}
+
+static inline int isatty(int fd)
+{
+    long r = posix_ioctl(fd, RDNX_TTY_IOCTL_ISATTY, (void*)0);
+    if (r < 0) {
+        errno = (int)(-r);
+        return 0;
+    }
+    return (r != 0) ? 1 : 0;
 }
 
 static inline int execve(const char* path, char* const argv[], char* const envp[])

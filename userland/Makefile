@@ -34,6 +34,9 @@ FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
 FABRICNETCHECK_SRCS = bin/fabricnetcheck.c
 HOSTINFO_SRCS = bin/hostinfo.c
+SLEEP_SRCS = bin/sleep.c
+SIGTEST_SRCS = bin/sigtest.c
+STTY_SRCS = bin/stty.c
 TIMECHECK_SRCS = bin/timecheck.c
 SYSCALLTEST_SRCS = bin/syscalltest.c
 TTYREADTEST_SRCS = bin/ttyreadtest.c
@@ -68,6 +71,9 @@ FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $
 FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HOSTINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(HOSTINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SYSCALLTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSCALLTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TTYREADTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TTYREADTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -98,6 +104,9 @@ FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
 FABRICNETCHECK_ELF = $(BUILD_DIR)/fabricnetcheck.elf
 HOSTINFO_ELF = $(BUILD_DIR)/hostinfo.elf
+SLEEP_ELF = $(BUILD_DIR)/sleep.elf
+SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
+STTY_ELF = $(BUILD_DIR)/stty.elf
 TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
 SYSCALLTEST_ELF = $(BUILD_DIR)/syscalltest.elf
 TTYREADTEST_ELF = $(BUILD_DIR)/ttyreadtest.elf
@@ -127,6 +136,9 @@ FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
 FABRICNETCHECK_BIN = $(BIN_DIR)/fabricnetcheck
 HOSTINFO_BIN = $(BIN_DIR)/hostinfo
+SLEEP_BIN = $(BIN_DIR)/sleep
+SIGTEST_BIN = $(BIN_DIR)/sigtest
+STTY_BIN = $(BIN_DIR)/stty
 TIMECHECK_BIN = $(BIN_DIR)/timecheck
 SYSCALLTEST_BIN = $(BIN_DIR)/syscalltest
 TTYREADTEST_BIN = $(BIN_DIR)/ttyreadtest
@@ -147,7 +159,7 @@ CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -215,6 +227,18 @@ $(FABRICNETCHECK_ELF): $(FABRICNETCHECK_OBJS) link.ld
 $(HOSTINFO_ELF): $(HOSTINFO_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(HOSTINFO_OBJS)
+
+$(SLEEP_ELF): $(SLEEP_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SLEEP_OBJS)
+
+$(SIGTEST_ELF): $(SIGTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SIGTEST_OBJS)
+
+$(STTY_ELF): $(STTY_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(STTY_OBJS)
 
 $(TIMECHECK_ELF): $(TIMECHECK_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -329,6 +353,18 @@ $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 	cp $< $@
 
 $(HOSTINFO_BIN): $(HOSTINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SLEEP_BIN): $(SLEEP_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SIGTEST_BIN): $(SIGTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(STTY_BIN): $(STTY_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
