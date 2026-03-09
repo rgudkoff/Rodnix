@@ -28,6 +28,11 @@ KERNEL_C_SRCS += \
 	kernel/unix/exec/unix_exec.c \
 	kernel/unix/process/unix_process.c \
 	kernel/posix/posix_syscall.c \
+	kernel/posix/posix_sys_ids.c \
+	kernel/posix/posix_sys_file.c \
+	kernel/posix/posix_sys_proc.c \
+	kernel/posix/posix_sys_vm.c \
+	kernel/posix/posix_sys_info.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \

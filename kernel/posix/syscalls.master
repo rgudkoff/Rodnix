@@ -66,3 +66,6 @@
 56 ftruncate
 57 poll
 58 select
+59 dup3
+60 pipe2
+61 futex

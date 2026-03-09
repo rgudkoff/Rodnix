@@ -99,6 +99,16 @@ static inline int pipe(int pipefd[2])
     return 0;
 }
 
+static inline int pipe2(int pipefd[2], int flags)
+{
+    long r = posix_pipe2(pipefd, flags);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
 static inline int dup(int oldfd)
 {
     long r = posix_dup(oldfd);
@@ -112,6 +122,16 @@ static inline int dup(int oldfd)
 static inline int dup2(int oldfd, int newfd)
 {
     long r = posix_dup2(oldfd, newfd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
+}
+
+static inline int dup3(int oldfd, int newfd, int flags)
+{
+    long r = posix_dup3(oldfd, newfd, flags);
     if (r < 0) {
         errno = (int)(-r);
         return -1;

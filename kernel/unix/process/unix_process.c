@@ -1,6 +1,7 @@
 #include "../unix_layer.h"
 #include "../../common/bootlog.h"
 #include "../../common/scheduler.h"
+#include "../../fabric/spin.h"
 #include "../../core/interrupts.h"
 #include "../../arch/x86_64/interrupt_frame.h"
 #include "../../arch/x86_64/paging.h"
@@ -27,6 +28,53 @@ enum {
     UNIX_SIG_MAX = 31,
     UNIX_SIGKILL = 9
 };
+
+enum {
+    UNIX_FUTEX_WAIT = 0,
+    UNIX_FUTEX_WAKE = 1,
+    UNIX_FUTEX_MAX_SLOTS = 64
+};
+
+typedef struct unix_futex_slot {
+    uintptr_t addr;
+    uint32_t waiters;
+    uint32_t gen;
+} unix_futex_slot_t;
+
+static spinlock_t unix_futex_lock;
+static bool unix_futex_lock_inited = false;
+static unix_futex_slot_t unix_futex_slots[UNIX_FUTEX_MAX_SLOTS];
+
+static void unix_futex_init_once(void)
+{
+    if (!unix_futex_lock_inited) {
+        spinlock_init(&unix_futex_lock);
+        unix_futex_lock_inited = true;
+    }
+}
+
+static int unix_futex_find_slot(uintptr_t addr)
+{
+    for (int i = 0; i < UNIX_FUTEX_MAX_SLOTS; i++) {
+        if (unix_futex_slots[i].addr == addr) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int unix_futex_alloc_slot(uintptr_t addr)
+{
+    for (int i = 0; i < UNIX_FUTEX_MAX_SLOTS; i++) {
+        if (unix_futex_slots[i].addr == 0) {
+            unix_futex_slots[i].addr = addr;
+            unix_futex_slots[i].waiters = 0;
+            unix_futex_slots[i].gen = 1;
+            return i;
+        }
+    }
+    return -1;
+}
 
 static int unix_frame_on_thread_stack(const thread_t* t, const interrupt_frame_t* frame)
 {
@@ -389,4 +437,123 @@ uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr)
         rem->tv_nsec = 0;
     }
     return (uint64_t)RDNX_OK;
+}
+
+uint64_t unix_proc_futex(uint64_t user_uaddr_ptr,
+                         uint64_t op,
+                         uint64_t val,
+                         uint64_t user_timeout_ptr,
+                         uint64_t user_uaddr2_ptr,
+                         uint64_t val3)
+{
+    (void)user_uaddr2_ptr;
+    (void)val3;
+
+    int32_t* uaddr = (int32_t*)(uintptr_t)user_uaddr_ptr;
+    if (!uaddr || !unix_user_range_ok(uaddr, sizeof(*uaddr))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    unix_futex_init_once();
+
+    if ((uint32_t)op == UNIX_FUTEX_WAIT) {
+        int32_t expected = (int32_t)val;
+        if (*uaddr != expected) {
+            return (uint64_t)RDNX_E_BUSY;
+        }
+
+        int64_t timeout_ms = -1;
+        if (user_timeout_ptr != 0) {
+            const unix_timespec_u_t* ts = (const unix_timespec_u_t*)(uintptr_t)user_timeout_ptr;
+            if (!unix_user_range_ok(ts, sizeof(*ts))) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            if (ts->tv_sec < 0 || ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000LL) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            uint64_t ms_from_sec = (uint64_t)ts->tv_sec * 1000ULL;
+            uint64_t ms_from_nsec = (uint64_t)ts->tv_nsec / 1000000ULL;
+            timeout_ms = (int64_t)(ms_from_sec + ms_from_nsec);
+            if ((ts->tv_nsec % 1000000LL) != 0) {
+                timeout_ms++;
+            }
+        }
+
+        uint64_t deadline = 0;
+        if (timeout_ms >= 0) {
+            uint64_t now = scheduler_get_ticks();
+            uint64_t ticks = ((uint64_t)timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1u)) / SCHEDULER_TIME_SLICE_MS;
+            deadline = now + ticks;
+        }
+
+        uint32_t wait_gen = 0;
+        int slot = -1;
+        spinlock_lock(&unix_futex_lock);
+        slot = unix_futex_find_slot((uintptr_t)uaddr);
+        if (slot < 0) {
+            slot = unix_futex_alloc_slot((uintptr_t)uaddr);
+        }
+        if (slot < 0) {
+            spinlock_unlock(&unix_futex_lock);
+            return (uint64_t)RDNX_E_BUSY;
+        }
+        unix_futex_slots[slot].waiters++;
+        wait_gen = unix_futex_slots[slot].gen;
+        spinlock_unlock(&unix_futex_lock);
+
+        uint64_t rc = (uint64_t)RDNX_OK;
+        for (;;) {
+            if (*uaddr != expected) {
+                rc = (uint64_t)RDNX_E_BUSY;
+                break;
+            }
+            spinlock_lock(&unix_futex_lock);
+            uint32_t cur_gen = unix_futex_slots[slot].gen;
+            spinlock_unlock(&unix_futex_lock);
+            if (cur_gen != wait_gen) {
+                rc = (uint64_t)RDNX_OK;
+                break;
+            }
+            if (timeout_ms == 0) {
+                rc = (uint64_t)RDNX_E_TIMEOUT;
+                break;
+            }
+            if (timeout_ms > 0 && scheduler_get_ticks() >= deadline) {
+                rc = (uint64_t)RDNX_E_TIMEOUT;
+                break;
+            }
+            scheduler_yield();
+        }
+
+        spinlock_lock(&unix_futex_lock);
+        if (slot >= 0 && slot < UNIX_FUTEX_MAX_SLOTS && unix_futex_slots[slot].waiters > 0) {
+            unix_futex_slots[slot].waiters--;
+            if (unix_futex_slots[slot].waiters == 0) {
+                unix_futex_slots[slot].addr = 0;
+                unix_futex_slots[slot].gen = 0;
+            }
+        }
+        spinlock_unlock(&unix_futex_lock);
+        return rc;
+    }
+
+    if ((uint32_t)op == UNIX_FUTEX_WAKE) {
+        uint32_t wake_n = (uint32_t)val;
+        if (wake_n == 0) {
+            return 0;
+        }
+        uint32_t ready = 0;
+        spinlock_lock(&unix_futex_lock);
+        int slot = unix_futex_find_slot((uintptr_t)uaddr);
+        if (slot >= 0) {
+            uint32_t waiters = unix_futex_slots[slot].waiters;
+            ready = (wake_n < waiters) ? wake_n : waiters;
+            if (waiters > 0) {
+                unix_futex_slots[slot].gen++;
+            }
+        }
+        spinlock_unlock(&unix_futex_lock);
+        return (uint64_t)ready;
+    }
+
+    return (uint64_t)RDNX_E_UNSUPPORTED;
 }

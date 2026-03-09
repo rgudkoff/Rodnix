@@ -12,7 +12,9 @@ enum {
     UNIX_F_GETFD = 1,
     UNIX_F_SETFD = 2,
     UNIX_FD_CLOEXEC = 1,
-    UNIX_PIPE_CAP = 4096
+    UNIX_PIPE_CAP = 4096,
+    UNIX_O_NONBLOCK = 0x0004,
+    UNIX_O_CLOEXEC = 0x00100000
 };
 
 enum {
@@ -517,6 +519,35 @@ uint64_t unix_fs_dup2(uint64_t oldfd, uint64_t newfd)
     int rc = unix_fd_dup_into(task, oldi, newi);
     if (rc != RDNX_OK) {
         return (uint64_t)rc;
+    }
+    return (uint64_t)newi;
+}
+
+uint64_t unix_fs_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags)
+{
+    task_t* task = task_get_current();
+    int oldi = (int)oldfd;
+    int newi = (int)newfd;
+    uint32_t uflags = (uint32_t)flags;
+    if (!task || oldi < 0 || oldi >= TASK_MAX_FD || newi < 0 || newi >= TASK_MAX_FD || !task->fd_table[oldi]) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (oldi == newi) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if ((uflags & ~(UNIX_O_CLOEXEC)) != 0) {
+        return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+
+    if (task->fd_table[newi]) {
+        unix_fd_release(task, newi);
+    }
+    int rc = unix_fd_dup_into(task, oldi, newi);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
+    }
+    if (uflags & UNIX_O_CLOEXEC) {
+        task->fd_flags[newi] |= UNIX_FD_CLOEXEC;
     }
     return (uint64_t)newi;
 }
@@ -1217,5 +1248,35 @@ uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr)
 
     out[0] = fd_r;
     out[1] = fd_w;
+    return (uint64_t)RDNX_OK;
+}
+
+uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags)
+{
+    uint32_t uflags = (uint32_t)flags;
+    if ((uflags & ~(UNIX_O_CLOEXEC | UNIX_O_NONBLOCK)) != 0) {
+        return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+    uint64_t rc = unix_fs_pipe(user_pipefd_ptr);
+    if (rc != (uint64_t)RDNX_OK) {
+        return rc;
+    }
+    if ((uflags & UNIX_O_CLOEXEC) == 0) {
+        return (uint64_t)RDNX_OK;
+    }
+
+    task_t* task = task_get_current();
+    int* out = (int*)(uintptr_t)user_pipefd_ptr;
+    if (!task || !out || !unix_user_range_ok(out, sizeof(int) * 2u)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    int fd_r = out[0];
+    int fd_w = out[1];
+    if (fd_r >= 0 && fd_r < TASK_MAX_FD && task->fd_table[fd_r]) {
+        task->fd_flags[fd_r] |= UNIX_FD_CLOEXEC;
+    }
+    if (fd_w >= 0 && fd_w < TASK_MAX_FD && task->fd_table[fd_w]) {
+        task->fd_flags[fd_w] |= UNIX_FD_CLOEXEC;
+    }
     return (uint64_t)RDNX_OK;
 }

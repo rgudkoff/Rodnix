@@ -73,6 +73,11 @@ static inline long posix_pipe(int pipefd[2])
     return rdnx_syscall1(POSIX_SYS_PIPE, (long)(uintptr_t)pipefd);
 }
 
+static inline long posix_pipe2(int pipefd[2], int flags)
+{
+    return rdnx_syscall2(POSIX_SYS_PIPE2, (long)(uintptr_t)pipefd, (long)flags);
+}
+
 static inline long posix_poll(void* fds, uint64_t nfds, int timeout_ms)
 {
     return rdnx_syscall3(POSIX_SYS_POLL, (long)(uintptr_t)fds, (long)nfds, (long)timeout_ms);
@@ -96,6 +101,11 @@ static inline long posix_dup(int oldfd)
 static inline long posix_dup2(int oldfd, int newfd)
 {
     return rdnx_syscall2(POSIX_SYS_DUP2, (long)oldfd, (long)newfd);
+}
+
+static inline long posix_dup3(int oldfd, int newfd, int flags)
+{
+    return rdnx_syscall3(POSIX_SYS_DUP3, (long)oldfd, (long)newfd, (long)flags);
 }
 
 static inline long posix_chdir(const char* path)
@@ -273,6 +283,22 @@ static inline long posix_clock_gettime(int clock_id, void* tp)
 static inline long posix_nanosleep(const void* req, void* rem)
 {
     return rdnx_syscall2(POSIX_SYS_NANOSLEEP, (long)(uintptr_t)req, (long)(uintptr_t)rem);
+}
+
+static inline long posix_futex(int* uaddr,
+                               int op,
+                               int val,
+                               const void* timeout,
+                               int* uaddr2,
+                               int val3)
+{
+    return rdnx_syscall6(POSIX_SYS_FUTEX,
+                         (long)(uintptr_t)uaddr,
+                         (long)op,
+                         (long)val,
+                         (long)(uintptr_t)timeout,
+                         (long)(uintptr_t)uaddr2,
+                         (long)val3);
 }
 
 static inline long posix_kill(long pid, int signum)

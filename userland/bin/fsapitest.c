@@ -86,6 +86,27 @@ int main(void)
             (void)close(fd);
             return 1;
         }
+        if (dup3(fd, 10, O_CLOEXEC) != 10) {
+            (void)write_str("fsapitest: dup3 failed\n");
+            (void)close(fd2);
+            (void)close(fd);
+            return 1;
+        }
+        if ((fcntl(10, F_GETFD, 0) & FD_CLOEXEC) == 0) {
+            (void)write_str("fsapitest: dup3 cloexec missing\n");
+            (void)close(10);
+            (void)close(fd2);
+            (void)close(fd);
+            return 1;
+        }
+        if (dup3(fd, fd, 0) >= 0) {
+            (void)write_str("fsapitest: dup3 same-fd should fail\n");
+            (void)close(10);
+            (void)close(fd2);
+            (void)close(fd);
+            return 1;
+        }
+        (void)close(10);
         if (close(fd2) != 0 || close(fd) != 0) {
             (void)write_str("fsapitest: close failed\n");
             return 1;
@@ -159,6 +180,20 @@ int main(void)
         }
         (void)close(p[0]);
     }
+
+    if (pipe2(p, O_CLOEXEC) != 0) {
+        (void)write_str("fsapitest: pipe2 failed\n");
+        return 1;
+    }
+    if ((fcntl(p[0], F_GETFD, 0) & FD_CLOEXEC) == 0 ||
+        (fcntl(p[1], F_GETFD, 0) & FD_CLOEXEC) == 0) {
+        (void)write_str("fsapitest: pipe2 cloexec missing\n");
+        (void)close(p[0]);
+        (void)close(p[1]);
+        return 1;
+    }
+    (void)close(p[0]);
+    (void)close(p[1]);
 
     if (rename("f.txt", "g.txt") != 0) {
         (void)write_str("fsapitest: rename failed\n");
