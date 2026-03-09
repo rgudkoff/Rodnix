@@ -265,6 +265,30 @@ static uint64_t posix_pipe(uint64_t a1,
     return unix_fs_pipe(a1);
 }
 
+static uint64_t posix_poll(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_poll(a1, a2, (int64_t)a3);
+}
+
+static uint64_t posix_select(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a6;
+    return unix_fs_select(a1, a2, a3, a4, a5);
+}
+
 static uint64_t posix_dup(uint64_t a1,
                           uint64_t a2,
                           uint64_t a3,
@@ -450,6 +474,34 @@ static uint64_t posix_lseek(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     return unix_fs_lseek(a1, (uint64_t)(int64_t)a2, a3);
+}
+
+static uint64_t posix_truncate(uint64_t a1,
+                               uint64_t a2,
+                               uint64_t a3,
+                               uint64_t a4,
+                               uint64_t a5,
+                               uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_truncate(a1, a2);
+}
+
+static uint64_t posix_ftruncate(uint64_t a1,
+                                uint64_t a2,
+                                uint64_t a3,
+                                uint64_t a4,
+                                uint64_t a5,
+                                uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_ftruncate(a1, a2);
 }
 
 static uint64_t posix_read(uint64_t a1,

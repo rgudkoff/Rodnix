@@ -129,6 +129,26 @@ static inline off_t lseek(int fd, off_t off, int whence)
     return (off_t)r;
 }
 
+static inline int truncate(const char* path, off_t length)
+{
+    long r = posix_truncate(path, (uint64_t)length);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int ftruncate(int fd, off_t length)
+{
+    long r = posix_ftruncate(fd, (uint64_t)length);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
 static inline int fcntl(int fd, int cmd, int arg)
 {
     long r = posix_fcntl(fd, cmd, (long)arg);

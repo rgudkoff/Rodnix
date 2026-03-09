@@ -273,6 +273,38 @@ static int vfs_grow_file(vfs_node_t* node, size_t needed)
     return 0;
 }
 
+static int vfs_resize_file(vfs_file_t* file, size_t new_size)
+{
+    if (!file || !file->node || file->node->type != VFS_NODE_FILE || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_inode_t* inode = file->node->inode;
+    if ((inode->flags & (VFS_INODE_CONSOLE | VFS_INODE_CHARDEV | VFS_INODE_BLOCKDEV)) != 0) {
+        return RDNX_E_UNSUPPORTED;
+    }
+
+    if (inode->fs_tag == VFS_FS_TAG_EXT2) {
+        /* Ext2 writeback path currently supports in-place writes only. */
+        return (new_size == inode->size) ? RDNX_OK : RDNX_E_UNSUPPORTED;
+    }
+
+    size_t old_size = inode->size;
+    if (new_size > inode->capacity) {
+        if (vfs_grow_file(file->node, new_size) != 0) {
+            return RDNX_E_NOMEM;
+        }
+    }
+    if (new_size > old_size && inode->data) {
+        memset(inode->data + old_size, 0, new_size - old_size);
+    }
+    inode->size = new_size;
+    if (file->pos > new_size) {
+        file->pos = new_size;
+    }
+    return RDNX_OK;
+}
+
 static const vfs_fs_driver_t* vfs_find_fs_driver(const char* fs_name)
 {
     if (!fs_name || fs_name[0] == '\0') {
@@ -727,12 +759,18 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     if (node->type != VFS_NODE_FILE || !node->inode) {
         return RDNX_E_INVALID;
     }
-    if (flags & VFS_OPEN_TRUNC) {
-        node->inode->size = 0;
-    }
     out_file->node = node;
     out_file->pos = 0;
     out_file->writable = (flags & VFS_OPEN_WRITE) != 0;
+    if (flags & VFS_OPEN_TRUNC) {
+        int trc = vfs_resize_file(out_file, 0);
+        if (trc != RDNX_OK) {
+            out_file->node = NULL;
+            out_file->pos = 0;
+            out_file->writable = false;
+            return trc;
+        }
+    }
     return RDNX_OK;
 }
 
@@ -915,6 +953,36 @@ int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos)
         *out_pos = (uint64_t)file->pos;
     }
     return RDNX_OK;
+}
+
+int vfs_truncate(const char* path, uint64_t size)
+{
+    if (!path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    if (size > (uint64_t)SIZE_MAX) {
+        return RDNX_E_INVALID;
+    }
+
+    vfs_node_t* node = vfs_lookup(path);
+    if (!node || node->type != VFS_NODE_FILE || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+
+    vfs_file_t tmp = {
+        .node = node,
+        .pos = 0,
+        .writable = true,
+    };
+    return vfs_resize_file(&tmp, (size_t)size);
+}
+
+int vfs_ftruncate(vfs_file_t* file, uint64_t size)
+{
+    if (size > (uint64_t)SIZE_MAX) {
+        return RDNX_E_INVALID;
+    }
+    return vfs_resize_file(file, (size_t)size);
 }
 
 int vfs_stat(const char* path, vfs_stat_t* out_stat)

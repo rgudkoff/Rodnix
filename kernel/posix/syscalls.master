@@ -62,3 +62,7 @@
 52 kmodload
 53 kmodunload
 54 blockwrite
+55 truncate
+56 ftruncate
+57 poll
+58 select

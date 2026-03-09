@@ -105,7 +105,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -201,11 +201,14 @@ iso: $(KERNEL_BIN) initrd
 
 # ===== Run / Debug =====
 run: qemu-disk
-	@if [ -n "$(filter debug,$(MAKECMDGOALS))" ]; then \
-		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+	@if [ "$(V)" = "1" ] || [ "$(VERBOSE)" = "1" ]; then \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	else \
 		$(MAKE) --no-print-directory _run_impl; \
 	fi
+
+run-verbose: qemu-disk
+	@$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"
 
 _run_impl: iso qemu-disk
 	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
@@ -220,7 +223,7 @@ debug:
 	@if [ -n "$(filter run,$(MAKECMDGOALS))" ]; then \
 		echo "[*] debug flag enabled for run (verbose boot logs)"; \
 	else \
-		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	fi
 
 gdb: iso qemu-disk
@@ -307,7 +310,9 @@ help:
 	@echo "  userland    - Build userland binaries"
 	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
-	@echo "  run         - Run kernel in QEMU"
+	@echo "  run         - Run kernel in QEMU (quiet)"
+	@echo "  run V=1     - Run kernel in QEMU (verbose boot)"
+	@echo "  run-verbose - Same as 'run V=1'"
 	@echo "  debug       - Run with verbose kernel diagnostics"
 	@echo "  gdb         - Run paused for debugger (:1234)"
 	@echo "  check       - Verify Multiboot2 header"

@@ -73,6 +73,21 @@ static inline long posix_pipe(int pipefd[2])
     return rdnx_syscall1(POSIX_SYS_PIPE, (long)(uintptr_t)pipefd);
 }
 
+static inline long posix_poll(void* fds, uint64_t nfds, int timeout_ms)
+{
+    return rdnx_syscall3(POSIX_SYS_POLL, (long)(uintptr_t)fds, (long)nfds, (long)timeout_ms);
+}
+
+static inline long posix_select(int nfds, void* readfds, void* writefds, void* exceptfds, void* timeout)
+{
+    return rdnx_syscall5(POSIX_SYS_SELECT,
+                         (long)nfds,
+                         (long)(uintptr_t)readfds,
+                         (long)(uintptr_t)writefds,
+                         (long)(uintptr_t)exceptfds,
+                         (long)(uintptr_t)timeout);
+}
+
 static inline long posix_dup(int oldfd)
 {
     return rdnx_syscall1(POSIX_SYS_DUP, (long)oldfd);
@@ -136,6 +151,16 @@ static inline long posix_fstat(int fd, void* st)
 static inline long posix_lseek(int fd, long off, int whence)
 {
     return rdnx_syscall3(POSIX_SYS_LSEEK, fd, off, whence);
+}
+
+static inline long posix_truncate(const char* path, uint64_t size)
+{
+    return rdnx_syscall2(POSIX_SYS_TRUNCATE, (long)(uintptr_t)path, (long)size);
+}
+
+static inline long posix_ftruncate(int fd, uint64_t size)
+{
+    return rdnx_syscall2(POSIX_SYS_FTRUNCATE, (long)fd, (long)size);
 }
 
 static inline long posix_uname(void* u)

@@ -21,6 +21,14 @@ enum {
     UNIX_TTY_IOCTL_SETATTR = 0x7403
 };
 
+enum {
+    UNIX_POLLIN = 0x0001,
+    UNIX_POLLOUT = 0x0004,
+    UNIX_POLLERR = 0x0008,
+    UNIX_POLLHUP = 0x0010,
+    UNIX_POLLNVAL = 0x0020
+};
+
 typedef struct unix_termios_u {
     uint32_t c_iflag;
     uint32_t c_oflag;
@@ -30,6 +38,37 @@ typedef struct unix_termios_u {
     uint32_t c_ispeed;
     uint32_t c_ospeed;
 } unix_termios_u_t;
+
+typedef struct unix_pollfd_u {
+    int32_t fd;
+    int16_t events;
+    int16_t revents;
+} unix_pollfd_u_t;
+
+typedef struct unix_fdset_u {
+    uint32_t bits;
+} unix_fdset_u_t;
+
+typedef struct unix_timeval_u {
+    int64_t tv_sec;
+    int64_t tv_usec;
+} unix_timeval_u_t;
+
+static inline int unix_fdset_test(const unix_fdset_u_t* s, uint32_t fd)
+{
+    if (!s || fd >= 32u) {
+        return 0;
+    }
+    return (s->bits & (1u << fd)) != 0u;
+}
+
+static inline void unix_fdset_set(unix_fdset_u_t* s, uint32_t fd)
+{
+    if (!s || fd >= 32u) {
+        return;
+    }
+    s->bits |= (1u << fd);
+}
 
 typedef struct unix_pipe {
     uint32_t magic;
@@ -658,6 +697,33 @@ uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence)
     return new_pos;
 }
 
+uint64_t unix_fs_truncate(uint64_t user_path_ptr, uint64_t size)
+{
+    char path_buf[UNIX_PATH_MAX];
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_truncate(path_buf, size);
+}
+
+uint64_t unix_fs_ftruncate(uint64_t fd, uint64_t size)
+{
+    task_t* task = task_get_current();
+    vfs_file_t* file;
+
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if ((int)fd < 0 || (int)fd >= TASK_MAX_FD || task->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    file = (vfs_file_t*)task_fd_get(task, (int)fd);
+    if (!file || !file->writable) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+    return (uint64_t)vfs_ftruncate(file, size);
+}
+
 uint64_t unix_fs_chdir(uint64_t user_path_ptr)
 {
     task_t* task = task_get_current();
@@ -865,6 +931,253 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
             return (uint64_t)RDNX_OK;
         default:
             return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+}
+
+static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
+{
+    int16_t rev = 0;
+    if (!task || !pfd) {
+        return 0;
+    }
+
+    int fdi = pfd->fd;
+    if (fdi < 0 || fdi >= TASK_MAX_FD || !task->fd_table[fdi]) {
+        pfd->revents = UNIX_POLLNVAL;
+        return 1;
+    }
+
+    uint8_t kind = task->fd_kind[fdi];
+    if (kind == UNIX_FD_KIND_VFS) {
+        vfs_file_t* file = (vfs_file_t*)task->fd_table[fdi];
+        if (!file || !file->node || !file->node->inode) {
+            pfd->revents = UNIX_POLLNVAL;
+            return 1;
+        }
+        vfs_inode_t* inode = file->node->inode;
+        if (inode->flags & VFS_INODE_CONSOLE) {
+            if ((pfd->events & UNIX_POLLIN) && tty_console_poll_readable()) {
+                rev |= UNIX_POLLIN;
+            }
+            if (pfd->events & UNIX_POLLOUT) {
+                rev |= UNIX_POLLOUT;
+            }
+        } else {
+            if (pfd->events & UNIX_POLLIN) {
+                rev |= UNIX_POLLIN;
+            }
+            if ((pfd->events & UNIX_POLLOUT) && file->writable) {
+                rev |= UNIX_POLLOUT;
+            }
+        }
+    } else if (kind == UNIX_FD_KIND_PIPE_R) {
+        unix_pipe_t* p = (unix_pipe_t*)task->fd_table[fdi];
+        if (!p || p->magic != UNIX_PIPE_MAGIC) {
+            pfd->revents = UNIX_POLLNVAL;
+            return 1;
+        }
+        irql_t old = unix_pipe_lock();
+        uint32_t count = p->count;
+        uint32_t writers = p->writers;
+        unix_pipe_unlock(old);
+
+        if ((pfd->events & UNIX_POLLIN) && (count > 0 || writers == 0)) {
+            rev |= UNIX_POLLIN;
+        }
+        if (writers == 0) {
+            rev |= UNIX_POLLHUP;
+        }
+    } else if (kind == UNIX_FD_KIND_PIPE_W) {
+        unix_pipe_t* p = (unix_pipe_t*)task->fd_table[fdi];
+        if (!p || p->magic != UNIX_PIPE_MAGIC) {
+            pfd->revents = UNIX_POLLNVAL;
+            return 1;
+        }
+        irql_t old = unix_pipe_lock();
+        uint32_t count = p->count;
+        uint32_t readers = p->readers;
+        unix_pipe_unlock(old);
+
+        if ((pfd->events & UNIX_POLLOUT) && readers > 0 && count < UNIX_PIPE_CAP) {
+            rev |= UNIX_POLLOUT;
+        }
+        if (readers == 0) {
+            rev |= UNIX_POLLHUP | UNIX_POLLERR;
+        }
+    } else {
+        rev |= UNIX_POLLNVAL;
+    }
+
+    pfd->revents = rev;
+    return (rev != 0) ? 1 : 0;
+}
+
+uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
+{
+    task_t* task = task_get_current();
+    unix_pollfd_u_t* pfds = (unix_pollfd_u_t*)(uintptr_t)user_fds_ptr;
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (nfds > TASK_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (nfds > 0 && (!pfds || !unix_user_range_ok(pfds, (size_t)nfds * sizeof(*pfds)))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint64_t deadline = 0;
+    if (timeout_ms >= 0) {
+        uint64_t now = scheduler_get_ticks();
+        uint64_t ticks = ((uint64_t)timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1u)) / SCHEDULER_TIME_SLICE_MS;
+        deadline = now + ticks;
+    }
+
+    for (;;) {
+        int ready = 0;
+        for (uint64_t i = 0; i < nfds; i++) {
+            ready += unix_poll_one(task, &pfds[i]);
+        }
+        if (ready > 0) {
+            return (uint64_t)ready;
+        }
+        if (timeout_ms == 0) {
+            return 0;
+        }
+        if (timeout_ms > 0 && scheduler_get_ticks() >= deadline) {
+            return 0;
+        }
+        scheduler_yield();
+    }
+}
+
+uint64_t unix_fs_select(uint64_t nfds,
+                        uint64_t user_readfds_ptr,
+                        uint64_t user_writefds_ptr,
+                        uint64_t user_exceptfds_ptr,
+                        uint64_t user_timeout_ptr)
+{
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (nfds > TASK_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    const unix_fdset_u_t* user_r = (const unix_fdset_u_t*)(uintptr_t)user_readfds_ptr;
+    const unix_fdset_u_t* user_w = (const unix_fdset_u_t*)(uintptr_t)user_writefds_ptr;
+    const unix_fdset_u_t* user_e = (const unix_fdset_u_t*)(uintptr_t)user_exceptfds_ptr;
+
+    unix_fdset_u_t in_r = {0}, in_w = {0}, in_e = {0};
+    unix_fdset_u_t out_r = {0}, out_w = {0}, out_e = {0};
+
+    if (user_r) {
+        if (!unix_user_range_ok(user_r, sizeof(*user_r))) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        in_r = *user_r;
+    }
+    if (user_w) {
+        if (!unix_user_range_ok(user_w, sizeof(*user_w))) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        in_w = *user_w;
+    }
+    if (user_e) {
+        if (!unix_user_range_ok(user_e, sizeof(*user_e))) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        in_e = *user_e;
+    }
+
+    int64_t timeout_ms = -1;
+    if (user_timeout_ptr != 0) {
+        const unix_timeval_u_t* tv = (const unix_timeval_u_t*)(uintptr_t)user_timeout_ptr;
+        if (!unix_user_range_ok(tv, sizeof(*tv))) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        if (tv->tv_sec < 0 || tv->tv_usec < 0 || tv->tv_usec >= 1000000) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        uint64_t total_ms = (uint64_t)tv->tv_sec * 1000ULL + (uint64_t)((tv->tv_usec + 999) / 1000);
+        timeout_ms = (int64_t)total_ms;
+    }
+
+    uint64_t deadline = 0;
+    if (timeout_ms >= 0) {
+        uint64_t now = scheduler_get_ticks();
+        uint64_t ticks = ((uint64_t)timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1u)) / SCHEDULER_TIME_SLICE_MS;
+        deadline = now + ticks;
+    }
+
+    for (;;) {
+        out_r.bits = 0;
+        out_w.bits = 0;
+        out_e.bits = 0;
+        int ready = 0;
+
+        for (uint64_t fd = 0; fd < nfds; fd++) {
+            int want_r = unix_fdset_test(&in_r, (uint32_t)fd);
+            int want_w = unix_fdset_test(&in_w, (uint32_t)fd);
+            int want_e = unix_fdset_test(&in_e, (uint32_t)fd);
+            if (!want_r && !want_w && !want_e) {
+                continue;
+            }
+
+            unix_pollfd_u_t pfd;
+            pfd.fd = (int32_t)fd;
+            pfd.events = 0;
+            pfd.revents = 0;
+            if (want_r) {
+                pfd.events |= UNIX_POLLIN;
+            }
+            if (want_w) {
+                pfd.events |= UNIX_POLLOUT;
+            }
+            if (want_e) {
+                pfd.events |= UNIX_POLLERR;
+            }
+
+            (void)unix_poll_one(task, &pfd);
+            int fd_ready = 0;
+            if (want_r && (pfd.revents & (UNIX_POLLIN | UNIX_POLLHUP))) {
+                unix_fdset_set(&out_r, (uint32_t)fd);
+                fd_ready = 1;
+            }
+            if (want_w && (pfd.revents & UNIX_POLLOUT)) {
+                unix_fdset_set(&out_w, (uint32_t)fd);
+                fd_ready = 1;
+            }
+            if (want_e && (pfd.revents & (UNIX_POLLERR | UNIX_POLLNVAL))) {
+                unix_fdset_set(&out_e, (uint32_t)fd);
+                fd_ready = 1;
+            }
+            if (fd_ready) {
+                ready++;
+            }
+        }
+
+        if (user_r) {
+            * (unix_fdset_u_t*) user_r = out_r;
+        }
+        if (user_w) {
+            * (unix_fdset_u_t*) user_w = out_w;
+        }
+        if (user_e) {
+            * (unix_fdset_u_t*) user_e = out_e;
+        }
+
+        if (ready > 0) {
+            return (uint64_t)ready;
+        }
+        if (timeout_ms == 0) {
+            return 0;
+        }
+        if (timeout_ms > 0 && scheduler_get_ticks() >= deadline) {
+            return 0;
+        }
+        scheduler_yield();
     }
 }
 

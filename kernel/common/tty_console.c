@@ -237,6 +237,29 @@ int tty_console_write(const void* buffer, size_t size)
     return (int)size;
 }
 
+bool tty_console_poll_readable(void)
+{
+    if (tty_cooked_count > 0 || tty_eof_pending) {
+        return true;
+    }
+
+    /*
+     * Drive pending input through line discipline so poll() in canonical mode
+     * reports readable only when a full line/EOF is available.
+     */
+    while (input_has_char()) {
+        int in = input_read_char();
+        if (in < 0) {
+            break;
+        }
+        tty_process_input_char(in, false);
+        if (tty_cooked_count > 0 || tty_eof_pending) {
+            return true;
+        }
+    }
+    return false;
+}
+
 uint32_t tty_console_get_lflag(void)
 {
     return tty_lflag;

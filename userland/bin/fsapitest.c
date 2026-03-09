@@ -92,6 +92,45 @@ int main(void)
         }
     }
 
+    {
+        int fd = open("f.txt", O_WRONLY);
+        if (fd < 0) {
+            (void)write_str("fsapitest: open for ftruncate failed\n");
+            return 1;
+        }
+        if (ftruncate(fd, 1) != 0) {
+            (void)write_str("fsapitest: ftruncate failed\n");
+            (void)close(fd);
+            return 1;
+        }
+        if (close(fd) != 0) {
+            (void)write_str("fsapitest: close after ftruncate failed\n");
+            return 1;
+        }
+        if (truncate("f.txt", 3) != 0) {
+            (void)write_str("fsapitest: truncate failed\n");
+            return 1;
+        }
+    }
+
+    {
+        int fd = open("f.txt", O_RDONLY);
+        char chk[4];
+        if (fd < 0) {
+            (void)write_str("fsapitest: open verify size failed\n");
+            return 1;
+        }
+        if (read(fd, chk, 4) != 3) {
+            (void)write_str("fsapitest: truncate size mismatch\n");
+            (void)close(fd);
+            return 1;
+        }
+        if (close(fd) != 0) {
+            (void)write_str("fsapitest: close verify size failed\n");
+            return 1;
+        }
+    }
+
     if (pipe(p) != 0) {
         (void)write_str("fsapitest: pipe failed\n");
         return 1;

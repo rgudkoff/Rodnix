@@ -104,5 +104,7 @@ int vfs_close(vfs_file_t* file);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
 int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);
+int vfs_truncate(const char* path, uint64_t size);
+int vfs_ftruncate(vfs_file_t* file, uint64_t size);
 int vfs_stat(const char* path, vfs_stat_t* out_stat);
 int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat);

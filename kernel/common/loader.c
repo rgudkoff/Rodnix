@@ -21,7 +21,9 @@
 #define USER_STACK_TOP 0x0000000080000000ULL
 #define USER_PAGE_SIZE X86_64_PAGE_SIZE_4KB
 #define LOADER_ARG_MAX 16
+#define LOADER_ENV_MAX 32
 #define LOADER_ARG_STR_MAX 128
+#define LOADER_ENV_STR_MAX 128
 
 static inline uint64_t align_down(uint64_t v, uint64_t align)
 {
@@ -213,26 +215,56 @@ static int loader_stack_write(const loader_image_t* img, uint64_t user_va, const
     return RDNX_OK;
 }
 
-static int loader_prepare_user_argv(loader_image_t* img,
+static int loader_prepare_user_args(loader_image_t* img,
                                     int argc,
                                     const char* const argv[],
-                                    uint64_t* out_argv_ptr)
+                                    const char* const envp[],
+                                    uint64_t* out_argv_ptr,
+                                    uint64_t* out_envp_ptr)
 {
-    if (!img || !out_argv_ptr) {
+    if (!img || !out_argv_ptr || !out_envp_ptr) {
         return RDNX_E_INVALID;
     }
     *out_argv_ptr = 0;
-    if (argc <= 0 || !argv) {
-        return RDNX_OK;
+    *out_envp_ptr = 0;
+
+    int envc = 0;
+    if (envp) {
+        while (envc < LOADER_ENV_MAX && envp[envc]) {
+            envc++;
+        }
     }
+
     if (argc > LOADER_ARG_MAX) {
         argc = LOADER_ARG_MAX;
+    }
+    if (argc < 0) {
+        argc = 0;
     }
 
     uint64_t sp = img->user_stack;
     uint64_t argv_user[LOADER_ARG_MAX];
+    uint64_t envp_user[LOADER_ENV_MAX];
+
+    for (int i = envc - 1; i >= 0; i--) {
+        const char* s = envp[i] ? envp[i] : "";
+        size_t slen = 0;
+        while (s[slen] && slen < (LOADER_ENV_STR_MAX - 1)) {
+            slen++;
+        }
+        sp -= (uint64_t)(slen + 1);
+        if (sp < img->stack_bottom) {
+            return RDNX_E_NOMEM;
+        }
+        int wr = loader_stack_write(img, sp, s, slen + 1);
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        envp_user[i] = sp;
+    }
+
     for (int i = argc - 1; i >= 0; i--) {
-        const char* s = argv[i] ? argv[i] : "";
+        const char* s = (argv && argv[i]) ? argv[i] : "";
         size_t slen = 0;
         while (s[slen] && slen < (LOADER_ARG_STR_MAX - 1)) {
             slen++;
@@ -249,18 +281,35 @@ static int loader_prepare_user_argv(loader_image_t* img,
     }
 
     sp &= ~0x7ULL;
-    sp -= (uint64_t)(argc + 1) * sizeof(uint64_t);
+    sp -= (uint64_t)(envc + 1) * sizeof(uint64_t);
     if (sp < img->stack_bottom) {
         return RDNX_E_NOMEM;
     }
-    for (int i = 0; i < argc; i++) {
-        int wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &argv_user[i], sizeof(uint64_t));
+    for (int i = 0; i < envc; i++) {
+        int wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &envp_user[i], sizeof(uint64_t));
         if (wr != RDNX_OK) {
             return wr;
         }
     }
     uint64_t null_ptr = 0;
-    int wr = loader_stack_write(img, sp + (uint64_t)argc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+    int wr = loader_stack_write(img, sp + (uint64_t)envc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+    if (wr != RDNX_OK) {
+        return wr;
+    }
+    *out_envp_ptr = sp;
+
+    sp &= ~0x7ULL;
+    sp -= (uint64_t)(argc + 1) * sizeof(uint64_t);
+    if (sp < img->stack_bottom) {
+        return RDNX_E_NOMEM;
+    }
+    for (int i = 0; i < argc; i++) {
+        wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &argv_user[i], sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+    }
+    wr = loader_stack_write(img, sp + (uint64_t)argc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
     if (wr != RDNX_OK) {
         return wr;
     }
@@ -364,16 +413,21 @@ int loader_enter_user_stub(void)
         }
         return RDNX_E_INVALID;
     }
-    usermode_enter(entry, user_stack, rsp0, 0, 0);
+    usermode_enter(entry, user_stack, rsp0, 0, 0, 0);
     return 0;
 }
 
 int loader_exec(const char* path)
 {
-    return loader_execve(path, 0, NULL);
+    return loader_execve(path, 0, NULL, NULL);
 }
 
-int loader_execve(const char* path, int argc, const char* const argv[])
+int loader_execve_ex(const char* path,
+                    int argc,
+                    const char* const argv[],
+                    const char* const envp[],
+                    loader_pre_exec_commit_fn pre_commit,
+                    void* pre_commit_ctx)
 {
     if (!path) {
         return RDNX_E_INVALID;
@@ -408,9 +462,17 @@ int loader_execve(const char* path, int argc, const char* const argv[])
     }
 
     uint64_t argv_ptr = 0;
-    ret = loader_prepare_user_argv(&img, argc, argv, &argv_ptr);
+    uint64_t envp_ptr = 0;
+    ret = loader_prepare_user_args(&img, argc, argv, envp, &argv_ptr, &envp_ptr);
     if (ret != RDNX_OK) {
         return ret;
+    }
+
+    if (pre_commit) {
+        ret = pre_commit(pre_commit_ctx);
+        if (ret != RDNX_OK) {
+            return ret;
+        }
     }
 
     usermode_set_pml4(img.pml4_phys);
@@ -440,6 +502,12 @@ int loader_execve(const char* path, int argc, const char* const argv[])
                    (void*)(uintptr_t)img.user_stack,
                    rsp0,
                    (uint64_t)(argc > 0 ? argc : 0),
-                   argv_ptr);
+                   argv_ptr,
+                   envp_ptr);
     return RDNX_OK;
+}
+
+int loader_execve(const char* path, int argc, const char* const argv[], const char* const envp[])
+{
+    return loader_execve_ex(path, argc, argv, envp, NULL, NULL);
 }

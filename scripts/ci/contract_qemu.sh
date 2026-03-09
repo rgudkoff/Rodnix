@@ -10,6 +10,7 @@ QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 DISK_IMG="${DISK_IMG:-build/rodnix-disk.img}"
 DISK_MB="${DISK_MB:-128}"
 DISK_FS_STAMP="${DISK_FS_STAMP:-build/rodnix-disk.ext2.stamp}"
+FRESH_DISK="${FRESH_DISK:-1}"
 FLAG_FILE="userland/rootfs/etc/contract.auto"
 
 cleanup() {
@@ -33,6 +34,9 @@ rm -f "$LOG_FILE"
 
 make iso
 mkdir -p "$(dirname "$DISK_IMG")"
+if [ "$FRESH_DISK" = "1" ]; then
+  rm -f "$DISK_IMG" "$DISK_FS_STAMP"
+fi
 if [ ! -f "$DISK_IMG" ]; then
   dd if=/dev/zero of="$DISK_IMG" bs=1m count="$DISK_MB" status=none
 fi

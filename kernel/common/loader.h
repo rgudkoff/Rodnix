@@ -24,10 +24,18 @@ typedef struct {
     uint64_t brk_base;
 } loader_image_t;
 
+typedef int (*loader_pre_exec_commit_fn)(void* ctx);
+
 int loader_init(void);
 int loader_load_image(const void* image, size_t size);
 int loader_enter_user_stub(void);
 int loader_exec(const char* path);
-int loader_execve(const char* path, int argc, const char* const argv[]);
+int loader_execve(const char* path, int argc, const char* const argv[], const char* const envp[]);
+int loader_execve_ex(const char* path,
+                     int argc,
+                     const char* const argv[],
+                     const char* const envp[],
+                     loader_pre_exec_commit_fn pre_commit,
+                     void* pre_commit_ctx);
 
 #endif /* _RODNIX_COMMON_LOADER_H */
