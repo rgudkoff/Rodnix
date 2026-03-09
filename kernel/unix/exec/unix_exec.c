@@ -68,6 +68,7 @@ static void unix_spawn_thread(void* arg)
     }
     task_t* task = task_get_current();
     if (task) {
+        unix_proc_close_fds(task);
         task->exit_code = (ret == RDNX_OK) ? 0 : 127;
         task->exited = 1;
         task->state = TASK_STATE_ZOMBIE;

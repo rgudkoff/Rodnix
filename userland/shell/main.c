@@ -88,18 +88,6 @@ int main(void)
             } else {
                 (void)cmd_ls_builtin(shell_cwd);
             }
-        } else if (str_eq(argv[0], "cat")) {
-            char path_buf[SH_PATH_MAX];
-            char* av[3];
-            if (argc < 2 || !argv[1]) {
-                (void)write_str("cat: path required\n");
-            } else {
-                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
-                av[0] = "/bin/cat";
-                av[1] = path_buf;
-                av[2] = 0;
-                (void)cmd_run(2, av, 0);
-            }
         } else if (str_eq(argv[0], "smoke")) {
             run_smoke();
         } else if (str_eq(argv[0], "ttytest")) {

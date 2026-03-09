@@ -25,10 +25,23 @@ void unix_proc_notify_waiters(uint64_t parent_task_id)
     (void)parent_task_id;
 }
 
+void unix_proc_close_fds(task_t* task)
+{
+    if (!task) {
+        return;
+    }
+    for (int fd = 0; fd < TASK_MAX_FD; fd++) {
+        if (task->fd_table[fd]) {
+            unix_fd_release(task, fd);
+        }
+    }
+}
+
 uint64_t unix_proc_exit(uint64_t status)
 {
     task_t* task = task_get_current();
     if (task) {
+        unix_proc_close_fds(task);
         task->exit_code = (int32_t)status;
         task->exited = 1;
         task->state = TASK_STATE_ZOMBIE;

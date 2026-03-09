@@ -78,5 +78,6 @@ uint64_t unix_proc_fork(void);
 /* CT-004/CT-005/CT-006 */
 uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr);
 void unix_proc_notify_waiters(uint64_t parent_task_id);
+void unix_proc_close_fds(task_t* task);
 
 #endif /* _RODNIX_UNIX_LAYER_H */

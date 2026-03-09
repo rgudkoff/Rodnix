@@ -12,7 +12,7 @@
 #include "scstat.h"
 
 #ifndef RDNX_STDIN_INT80_READ_WORKAROUND
-#define RDNX_STDIN_INT80_READ_WORKAROUND 0
+#define RDNX_STDIN_INT80_READ_WORKAROUND 1
 #endif
 
 static inline long posix_read_int80(int fd, void* buf, uint64_t len)

@@ -320,7 +320,7 @@ void cmd_help(void)
         "  run <path>    - spawn program and wait for exit\n"
         "  exec <path>   - run program (safe, returns to shell)\n"
         "  reexec <path> - replace shell process via execve\n"
-        "  syntax: cmd > file, cmd < file, cmd1 | cmd2\n"
+        "  syntax: cmd > file, cmd >> file, cmd 2> file, cmd < file, cmd1 | cmd2\n"
         "  exit          - terminate shell process\n";
     (void)write_buf(kHelpText, sizeof(kHelpText) - 1u);
 }
