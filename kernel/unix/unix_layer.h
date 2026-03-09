@@ -28,6 +28,8 @@ enum {
 
 bool unix_user_range_ok(const void* ptr, size_t len);
 int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src);
+int unix_resolve_path(const task_t* task, const char* in, char* out, size_t out_sz);
+int unix_resolve_user_path(const char* user_src, char* out, size_t out_sz);
 
 int unix_bind_stdio_to_console(task_t* task);
 int unix_clone_fds_for_spawn(const task_t* parent, task_t* child);
@@ -50,9 +52,16 @@ typedef struct {
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
 /* CT-007/CT-008 */
 uint64_t unix_fs_close(uint64_t fd);
+uint64_t unix_fs_dup(uint64_t oldfd);
+uint64_t unix_fs_dup2(uint64_t oldfd, uint64_t newfd);
 uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
 uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len);
 uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence);
+uint64_t unix_fs_chdir(uint64_t user_path_ptr);
+uint64_t unix_fs_getcwd(uint64_t user_buf_ptr, uint64_t size);
+uint64_t unix_fs_mkdir(uint64_t user_path_ptr);
+uint64_t unix_fs_unlink(uint64_t user_path_ptr);
+uint64_t unix_fs_rmdir(uint64_t user_path_ptr);
 uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);

@@ -263,6 +263,109 @@ static uint64_t posix_pipe(uint64_t a1,
     return unix_fs_pipe(a1);
 }
 
+static uint64_t posix_dup(uint64_t a1,
+                          uint64_t a2,
+                          uint64_t a3,
+                          uint64_t a4,
+                          uint64_t a5,
+                          uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_dup(a1);
+}
+
+static uint64_t posix_dup2(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_dup2(a1, a2);
+}
+
+static uint64_t posix_chdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_chdir(a1);
+}
+
+static uint64_t posix_getcwd(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_getcwd(a1, a2);
+}
+
+static uint64_t posix_mkdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_mkdir(a1);
+}
+
+static uint64_t posix_unlink(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_unlink(a1);
+}
+
+static uint64_t posix_rmdir(uint64_t a1,
+                            uint64_t a2,
+                            uint64_t a3,
+                            uint64_t a4,
+                            uint64_t a5,
+                            uint64_t a6)
+{
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    return unix_fs_rmdir(a1);
+}
+
 static uint64_t posix_fcntl(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,

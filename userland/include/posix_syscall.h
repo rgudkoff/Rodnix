@@ -71,6 +71,41 @@ static inline long posix_pipe(int pipefd[2])
     return rdnx_syscall1(POSIX_SYS_PIPE, (long)(uintptr_t)pipefd);
 }
 
+static inline long posix_dup(int oldfd)
+{
+    return rdnx_syscall1(POSIX_SYS_DUP, (long)oldfd);
+}
+
+static inline long posix_dup2(int oldfd, int newfd)
+{
+    return rdnx_syscall2(POSIX_SYS_DUP2, (long)oldfd, (long)newfd);
+}
+
+static inline long posix_chdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_CHDIR, (long)(uintptr_t)path);
+}
+
+static inline long posix_getcwd(char* buf, uint64_t size)
+{
+    return rdnx_syscall2(POSIX_SYS_GETCWD, (long)(uintptr_t)buf, (long)size);
+}
+
+static inline long posix_mkdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_MKDIR, (long)(uintptr_t)path);
+}
+
+static inline long posix_unlink(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_UNLINK, (long)(uintptr_t)path);
+}
+
+static inline long posix_rmdir(const char* path)
+{
+    return rdnx_syscall1(POSIX_SYS_RMDIR, (long)(uintptr_t)path);
+}
+
 static inline long posix_fcntl(int fd, int cmd, long arg)
 {
     return rdnx_syscall6(POSIX_SYS_FCNTL, fd, cmd, arg, 0, 0, 0);

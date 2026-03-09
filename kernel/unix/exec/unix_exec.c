@@ -87,7 +87,7 @@ uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t u
     char argv_buf[UNIX_ARG_MAX][UNIX_PATH_MAX];
     int argc_local = 0;
     (void)user_envp;
-    int rc = unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -145,7 +145,7 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
     const char* user_path = (const char*)(uintptr_t)user_path_ptr;
     const char* const* user_argv = (const char* const*)(uintptr_t)user_argv_ptr;
     char path_buf[UNIX_PATH_MAX];
-    int rc = unix_copy_user_cstr(path_buf, sizeof(path_buf), user_path);
+    int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -166,6 +166,8 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
 
     if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
         task_destroy(child);

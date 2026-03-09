@@ -6,6 +6,7 @@
 #include "../../arch/x86_64/interrupt_frame.h"
 #include "../../arch/x86_64/paging.h"
 #include "../../vm/vm_map.h"
+#include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
 
@@ -161,6 +162,8 @@ uint64_t unix_proc_fork(void)
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
+    child->cwd[sizeof(child->cwd) - 1] = '\0';
 
     if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
         task_destroy(child);

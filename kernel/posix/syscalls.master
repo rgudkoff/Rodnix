@@ -43,3 +43,10 @@
 33 lseek
 34 scstat
 35 pipe
+36 dup
+37 dup2
+38 chdir
+39 getcwd
+40 mkdir
+41 unlink
+42 rmdir

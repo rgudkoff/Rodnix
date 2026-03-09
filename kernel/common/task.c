@@ -217,6 +217,8 @@ task_t* task_create(void)
         task->fd_flags[i] = 0;
         task->fd_kind[i] = 0;
     }
+    task->cwd[0] = '/';
+    task->cwd[1] = '\0';
     task->exit_code = 0;
     task->exited = 0;
     task->waited = 0;

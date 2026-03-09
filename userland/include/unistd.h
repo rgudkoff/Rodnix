@@ -98,6 +98,26 @@ static inline int pipe(int pipefd[2])
     return 0;
 }
 
+static inline int dup(int oldfd)
+{
+    long r = posix_dup(oldfd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
+}
+
+static inline int dup2(int oldfd, int newfd)
+{
+    long r = posix_dup2(oldfd, newfd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
+}
+
 static inline off_t lseek(int fd, off_t off, int whence)
 {
     long r = posix_lseek(fd, (long)off, whence);
@@ -126,6 +146,57 @@ static inline int open(const char* path, int flags)
         return -1;
     }
     return (int)r;
+}
+
+static inline int chdir(const char* path)
+{
+    long r = posix_chdir(path);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline char* getcwd(char* buf, size_t size)
+{
+    long r = posix_getcwd(buf, (uint64_t)size);
+    if (r < 0) {
+        errno = (int)(-r);
+        return (char*)0;
+    }
+    return buf;
+}
+
+static inline int mkdir(const char* path, mode_t mode)
+{
+    (void)mode;
+    long r = posix_mkdir(path);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int unlink(const char* path)
+{
+    long r = posix_unlink(path);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int rmdir(const char* path)
+{
+    long r = posix_rmdir(path);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
 }
 
 static inline int execve(const char* path, char* const argv[], char* const envp[])
