@@ -96,9 +96,18 @@ static inline long posix_exit(int code)
     return rdnx_syscall1(POSIX_SYS_EXIT, code);
 }
 
+static inline long posix_execve(const char* path, const char* const argv[], const char* const envp[])
+{
+    return rdnx_syscall6(POSIX_SYS_EXEC,
+                         (long)(uintptr_t)path,
+                         (long)(uintptr_t)argv,
+                         (long)(uintptr_t)envp,
+                         0, 0, 0);
+}
+
 static inline long posix_exec(const char* path)
 {
-    return rdnx_syscall1(POSIX_SYS_EXEC, (long)(uintptr_t)path);
+    return posix_execve(path, (const char* const*)0, (const char* const*)0);
 }
 
 static inline long posix_spawn(const char* path, const char* const argv[])

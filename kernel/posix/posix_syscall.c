@@ -337,12 +337,10 @@ static uint64_t posix_exec(uint64_t a1,
                            uint64_t a5,
                            uint64_t a6)
 {
-    (void)a2;
-    (void)a3;
     (void)a4;
     (void)a5;
     (void)a6;
-    return unix_fs_exec(a1);
+    return unix_fs_exec(a1, a2, a3);
 }
 
 static uint64_t posix_spawn(uint64_t a1,

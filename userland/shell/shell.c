@@ -749,6 +749,7 @@ static void cmd_help(void)
         "  hostinfo      - compact host/system report\n"
         "  scstat [-a]   - syscall stats by number (int80/fast)\n"
         "  forktest      - validate fork + COW semantics\n"
+        "  execvetest    - validate execve(argv) path\n"
         "  syscalltest   - compare fast syscall vs int80\n"
         "  ttyreadtest   - blocking stdin read probe\n"
         "  ifconfig      - show network interfaces\n"
@@ -874,8 +875,15 @@ int main(void)
                 (void)write_str("exec: path required\n");
             } else {
                 char path_buf[SH_PATH_MAX];
+                char* ex_argv[SH_ARG_MAX + 1];
                 resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
-                long ret = posix_exec(path_buf);
+                ex_argv[0] = path_buf;
+                int ex_argc = 1;
+                for (int i = 2; i < argc && ex_argc < SH_ARG_MAX; i++) {
+                    ex_argv[ex_argc++] = argv[i];
+                }
+                ex_argv[ex_argc] = 0;
+                long ret = posix_execve(path_buf, (const char* const*)ex_argv, (const char* const*)0);
                 if (ret < 0) {
                     (void)write_str("exec: failed\n");
                 }

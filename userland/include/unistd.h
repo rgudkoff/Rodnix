@@ -117,15 +117,19 @@ static inline int open(const char* path, int flags)
     return (int)r;
 }
 
-static inline int execv(const char* path, char* const argv[])
+static inline int execve(const char* path, char* const argv[], char* const envp[])
 {
-    (void)argv;
-    long r = posix_exec(path);
+    long r = posix_execve(path, (const char* const*)argv, (const char* const*)envp);
     if (r < 0) {
         errno = (int)(-r);
         return -1;
     }
     return (int)r;
+}
+
+static inline int execv(const char* path, char* const argv[])
+{
+    return execve(path, argv, (char* const*)0);
 }
 
 static inline pid_t spawnv(const char* path, char* const argv[])
