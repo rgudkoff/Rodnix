@@ -84,12 +84,7 @@ x86_64_syscall_fast_entry:
     mov qword [rsp + TF_SS], 0x1b
 
     mov rdi, rsp
-    ; SYSCALL enters with IF masked by SFMASK. Enable IRQ delivery while
-    ; executing blocking syscall handlers (e.g. TTY read wait path).
-    sti
     call x86_64_syscall_fast_dispatch_frame
-    ; Restore non-interruptible return window before restoring user context.
-    cli
 
     ; Restore full register state from trapframe, keeping returned rax.
     mov r15, [rsp + TF_R15]

@@ -46,6 +46,9 @@ static bool physmap_ready = false;
 #define PTE_SIZE_1GB    0x080   /* Page size bit (1GB page) */
 #define PTE_NX          0x8000000000000000ULL  /* No Execute bit */
 
+#define PTE_ADDR_MASK_4KB 0x000FFFFFFFFFF000ULL
+#define PTE_ADDR_MASK_2MB 0x000FFFFFFFE00000ULL
+
 /* Page table structure sizes */
 #define PML4_ENTRIES    512     /* 512 entries per PML4 */
 #define PDPT_ENTRIES    512     /* 512 entries per PDPT */
@@ -959,7 +962,7 @@ uint64_t paging_get_physical(uint64_t virt)
     
     /* Check if this is a 2MB page */
     if (pd_entry & PTE_SIZE_2MB) {
-        uint64_t phys = (pd_entry & ~0x1FFFFF) | (virt & 0x1FFFFF);
+        uint64_t phys = (pd_entry & PTE_ADDR_MASK_2MB) | (virt & 0x1FFFFF);
         return phys;
     }
     
@@ -970,7 +973,7 @@ uint64_t paging_get_physical(uint64_t virt)
         return 0;
     }
     
-    uint64_t phys = (pte & ~PAGE_OFFSET_MASK) | (virt & PAGE_OFFSET_MASK);
+    uint64_t phys = (pte & PTE_ADDR_MASK_4KB) | (virt & PAGE_OFFSET_MASK);
     return phys;
 }
 

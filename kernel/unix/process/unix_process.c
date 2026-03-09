@@ -30,6 +30,17 @@ static inline void unix_wait_unlock(irql_t old)
     (void)set_irql(old);
 }
 
+static int unix_frame_on_thread_stack(const thread_t* t, const interrupt_frame_t* frame)
+{
+    if (!t || !t->stack || t->stack_size < sizeof(interrupt_frame_t) || !frame) {
+        return 0;
+    }
+    uintptr_t lo = (uintptr_t)t->stack;
+    uintptr_t hi = lo + t->stack_size;
+    uintptr_t p = (uintptr_t)frame;
+    return (p >= lo) && ((p + sizeof(interrupt_frame_t)) <= hi);
+}
+
 void unix_proc_notify_waiters(uint64_t parent_task_id)
 {
     (void)parent_task_id;
@@ -136,8 +147,11 @@ uint64_t unix_proc_fork(void)
         return (uint64_t)RDNX_E_INVALID;
     }
     interrupt_frame_t* frame = (interrupt_frame_t*)self_thread->arch_specific;
-    if (!frame) {
-        return (uint64_t)RDNX_E_INVALID;
+    if (!unix_frame_on_thread_stack(self_thread, frame)) {
+        frame = (interrupt_frame_t*)(uintptr_t)self_thread->context.stack_pointer;
+    }
+    if (!unix_frame_on_thread_stack(self_thread, frame)) {
+        return (uint64_t)RDNX_E_GENERIC;
     }
 
     task_t* child = task_create();

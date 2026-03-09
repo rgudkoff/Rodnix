@@ -121,6 +121,22 @@ struct input_state {
 static struct input_state input_state = {0};
 static bool input_polling_enabled = true;
 
+static bool input_cpu_interrupts_enabled(void)
+{
+    uint64_t rflags = 0;
+    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+    return (rflags & (1ull << 9)) != 0;
+}
+
+static bool input_should_poll_ps2(void)
+{
+    if (input_polling_enabled) {
+        return true;
+    }
+    /* Fast syscall path can run with IF=0; fall back to direct polling. */
+    return !input_cpu_interrupts_enabled();
+}
+
 /* ============================================================================
  * Scan Code Translation Tables
  * ============================================================================ */
@@ -426,8 +442,7 @@ bool input_has_char(void)
     }
 #endif
 
-    /* Poll PS/2 only when fallback mode is enabled. */
-    if (input_polling_enabled) {
+    if (input_should_poll_ps2()) {
         input_poll_keyboard_ps2();
     }
     
@@ -462,8 +477,7 @@ int input_read_char(void)
     }
 #endif
 
-    /* Poll PS/2 only when fallback mode is enabled. */
-    if (input_polling_enabled) {
+    if (input_should_poll_ps2()) {
         input_poll_keyboard_ps2();
     }
     
