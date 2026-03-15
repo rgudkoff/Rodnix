@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "../../kernel/fabric/device/device.h"
 
-/* FreeBSD-style opaque handles (compat layer). */
+/* Opaque driver-facing handles for the compatibility layer. */
 typedef fabric_device_t* device_t;
 typedef struct driver driver_t;
 typedef void* devclass_t;

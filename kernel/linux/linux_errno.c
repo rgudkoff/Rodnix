@@ -2,9 +2,7 @@
 #include "../../include/error.h"
 
 /*
- * FreeBSD linuxulator maps native errno to Linux errno.
- * RodNIX currently has its own compact internal error set, so this function
- * maps RDNX_E_* to Linux-visible errno values.
+ * Translate RodNIX native errno values to the guest syscall ABI errno set.
  */
 int linux_errno_from_rdnx(int rdnx_error)
 {

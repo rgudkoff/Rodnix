@@ -390,33 +390,32 @@ void input_push_scancode(uint16_t scancode, bool pressed)
 }
 
 /* ============================================================================
- * Вспомогательная функция: опрос PS/2 клавиатуры в поллинговом режиме
+ * Helper: poll the PS/2 keyboard in polling mode
  * ============================================================================
  *
- * Используется как fallback, когда IRQ1 не работает/не включён.
- * Читает сканкоды напрямую из портов 0x64/0x60 и прокидывает их в
- * обычный путь через input_push_scancode(), чтобы вся логика
- * трансляции/буфера осталась общей.
+ * Used as a fallback when IRQ1 is unavailable or disabled.
+ * Reads scan codes directly from ports 0x64/0x60 and forwards them through
+ * input_push_scancode(), so translation and buffering stay on the common path.
  */
 static void input_poll_keyboard_ps2(void)
 {
     uint8_t status;
-    /* Прочитать статус контроллера клавиатуры (порт 0x64) */
+    /* Read keyboard controller status from port 0x64. */
     __asm__ volatile ("inb %1, %0" : "=a"(status) : "Nd"((uint16_t)0x64));
     
-    /* Если буфер вывода пуст (бит 0 = 0) – данных нет */
+    /* No data is available when the output buffer bit is clear. */
     if ((status & 0x01) == 0) {
         return;
     }
     
-    /* Прочитать сканкод из порта 0x60 */
+    /* Read the scan code from port 0x60. */
     uint8_t scan_code;
     __asm__ volatile ("inb %1, %0" : "=a"(scan_code) : "Nd"((uint16_t)0x60));
     
     bool pressed = (scan_code & 0x80) == 0;
     uint16_t code = (uint16_t)(scan_code & 0x7F);
     
-    /* Обработка префикса расширенных сканкодов */
+    /* Handle the extended scan code prefix. */
     if (scan_code == 0xE0) {
         code = 0xE0;
         pressed = true;
@@ -446,7 +445,7 @@ bool input_has_char(void)
         input_poll_keyboard_ps2();
     }
     
-    /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
+    /* Then drain the IRQ driver scan code queue if it is active. */
     extern void input_process_queue(void);
     input_process_queue();
     
@@ -481,7 +480,7 @@ int input_read_char(void)
         input_poll_keyboard_ps2();
     }
     
-    /* Затем обработать очередь сканкодов из IRQ-драйвера (если он работает) */
+    /* Then drain the IRQ driver scan code queue if it is active. */
     extern void input_process_queue(void);
     input_process_queue();
     

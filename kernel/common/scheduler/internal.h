@@ -23,7 +23,6 @@
 
 extern bool scheduler_initialized;
 extern bool scheduler_running;
-extern thread_t* current_thread;
 extern sched_policy_t current_policy;
 extern scheduler_stats_t stats;
 

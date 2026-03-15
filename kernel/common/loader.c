@@ -285,7 +285,7 @@ static int loader_prepare_user_args(loader_image_t* img,
     sp &= ~0x7ULL;
     uint64_t env_slots = (uint64_t)(envc + 1);
     if (img->abi == TASK_ABI_LINUX) {
-        /* Linux initial stack expects an auxv list terminated by AT_NULL. */
+        /* This guest ABI stack layout expects an auxv list terminated by AT_NULL. */
         env_slots += 2; /* AT_NULL, 0 */
     }
     sp -= env_slots * sizeof(uint64_t);
@@ -484,7 +484,7 @@ int loader_execve_ex(const char* path,
         }
         return ret;
     }
-    /* BusyBox prebuilt binaries usually use ELFOSABI_SYSV but expect Linux syscall ABI. */
+    /* BusyBox prebuilt binaries often use ELFOSABI_SYSV but still expect the guest syscall ABI. */
     if (path && strncmp(path, "/bin/busybox", 12) == 0) {
         img.abi = TASK_ABI_LINUX;
     }

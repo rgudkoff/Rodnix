@@ -8,5 +8,13 @@
 #include <stddef.h>
 #include "vfs.h"
 
+typedef struct ext2_fs_caps {
+    int write_in_place;
+    int write_extend;
+    int truncate;
+} ext2_fs_caps_t;
+
 int ext2_fs_init(void);
+int ext2_query_caps(ext2_fs_caps_t* out_caps);
 int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t len, size_t final_size);
+int ext2_resize_file(vfs_node_t* node, size_t new_size);

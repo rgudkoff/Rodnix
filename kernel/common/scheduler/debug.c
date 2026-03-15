@@ -18,13 +18,14 @@ void scheduler_debug_dump(void)
             (unsigned long long)reap_stats.deferred,
             (unsigned long long)reap_stats.dropped,
             (unsigned long long)reap_stats.runs);
-    if (current_thread) {
+    thread_t* cur = thread_get_current();
+    if (cur) {
         kprintf("[SCHED] current tid=%llu prio=%u dyn=%d class=%u state=%d\n",
-                (unsigned long long)current_thread->thread_id,
-                (unsigned)current_thread->priority,
-                (int)current_thread->dyn_priority,
-                (unsigned)current_thread->sched_class,
-                (int)current_thread->state);
+                (unsigned long long)cur->thread_id,
+                (unsigned)cur->priority,
+                (int)cur->dyn_priority,
+                (unsigned)cur->sched_class,
+                (int)cur->state);
     } else {
         kputs("[SCHED] current none\n");
     }
