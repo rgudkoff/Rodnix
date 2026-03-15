@@ -11,7 +11,6 @@
 #include "sys/wait.h"
 #include "dirent.h"
 #include "time.h"
-#include "stdio.h"
 
 #define VFS_OPEN_READ 1
 #define VFS_OPEN_WRITE 2
@@ -845,17 +844,12 @@ static void run_contract_mode_if_enabled(void)
     {
         int wr_ok = 1;
         int wr_unavail = 0; /* reserved while storage write path is being stabilized */
-        int wr_open_rc = 0;
-        long wr_write_rc = 0;
-        long wr_read_rc = 0;
         char buf[16];
         long fd = posix_open("/mnt/README.txt", VFS_OPEN_READ | VFS_OPEN_WRITE);
         if (fd < 0) {
-            wr_open_rc = (int)fd;
             wr_ok = 0;
         } else {
             long rr = posix_read((int)fd, buf, sizeof(buf));
-            wr_read_rc = rr;
             if (rr != (long)sizeof(buf)) {
                 wr_ok = 0;
             }
@@ -865,11 +859,9 @@ static void run_contract_mode_if_enabled(void)
         if (wr_ok) {
             fd = posix_open("/mnt/README.txt", VFS_OPEN_READ | VFS_OPEN_WRITE);
             if (fd < 0) {
-                wr_open_rc = (int)fd;
                 wr_ok = 0;
             } else {
                 long wn = posix_write((int)fd, buf, sizeof(buf));
-                wr_write_rc = wn;
                 if (wn != (long)sizeof(buf)) {
                     if (wn == -7) {
                         wr_unavail = 1;
@@ -884,12 +876,10 @@ static void run_contract_mode_if_enabled(void)
         if (wr_ok && !wr_unavail) {
             fd = posix_open("/mnt/README.txt", VFS_OPEN_READ);
             if (fd < 0) {
-                wr_open_rc = (int)fd;
                 wr_ok = 0;
             } else {
                 char chk[16];
                 long rr2 = posix_read((int)fd, chk, sizeof(chk));
-                wr_read_rc = rr2;
                 if (rr2 != (long)sizeof(chk)) {
                     wr_ok = 0;
                 } else {
@@ -910,17 +900,6 @@ static void run_contract_mode_if_enabled(void)
             ct_log("CT-028", "PASS", "ext2 writeback deferred: block write backend unavailable");
         } else {
             ct_log("CT-028", "FAIL", "ext2 overwrite writeback failed");
-            {
-                char dbg[96];
-                int n = snprintf(dbg, sizeof(dbg),
-                                 "CT-028 DBG open=%d write=%ld read=%ld",
-                                 wr_open_rc, wr_write_rc, wr_read_rc);
-                if (n > 0) {
-                    write_str("[CT] ");
-                    write_str(dbg);
-                    write_str("\n");
-                }
-            }
             ok = 0;
         }
     }
