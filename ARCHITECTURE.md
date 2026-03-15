@@ -99,5 +99,6 @@ CPU
 - [x] Userland init and shell with utilities
 - [ ] ARM64 base components
 - [ ] RISC-V64 base components
-- [ ] IRQ-based input path through Fabric
+- [x] IRQ-based input path through Fabric (IRQ1, polling fallback for disabled-irq paths)
 - [ ] Hierarchical scheduler (bucket → group → thread)
+- [ ] Network: TCP stack + real virtio-net (UDP/ICMP loopback done)
