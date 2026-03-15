@@ -285,8 +285,23 @@ static int vfs_resize_file(vfs_file_t* file, size_t new_size)
     }
 
     if (inode->fs_tag == VFS_FS_TAG_EXT2) {
-        /* Ext2 writeback path currently supports in-place writes only. */
-        return (new_size == inode->size) ? RDNX_OK : RDNX_E_UNSUPPORTED;
+        int rc = ext2_resize_file(file->node, new_size);
+        if (rc != RDNX_OK) {
+            return rc;
+        }
+        if (inode->data && new_size > inode->capacity) {
+            if (vfs_grow_file(file->node, new_size) != 0) {
+                return RDNX_E_NOMEM;
+            }
+        }
+        if (inode->data && new_size > inode->size) {
+            memset(inode->data + inode->size, 0, new_size - inode->size);
+        }
+        inode->size = new_size;
+        if (file->pos > new_size) {
+            file->pos = new_size;
+        }
+        return RDNX_OK;
     }
 
     size_t old_size = inode->size;
@@ -869,6 +884,11 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
         int wrc = ext2_writeback_file(file->node, file->pos, buffer, size, final_size);
         if (wrc != RDNX_OK) {
             return wrc;
+        }
+        if (inode->data && end > inode->capacity) {
+            if (vfs_grow_file(file->node, end) != 0) {
+                return RDNX_E_NOMEM;
+            }
         }
         if (end > inode->size) {
             inode->size = end;
