@@ -88,6 +88,8 @@ QEMU_ACCEL ?=
 QEMU_SERIAL ?= mon:stdio
 # QEMU NIC for first real Fabric backend (e1000).
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
+QEMU_CPU ?= qemu64,+apic,+x2apic
+QEMU_SMP ?= 1
 QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
 QEMU_DISK_SIZE_MB ?= 128
 QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
@@ -96,7 +98,7 @@ QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
 # Use -machine pc for stable polling on ports 0x60/0x64.
 QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
                    -drive file=$(QEMU_DISK_IMG),if=ide,format=raw,index=0,media=disk \
-                   -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
+                   -machine pc -smp $(QEMU_SMP) -cpu $(QEMU_CPU) $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S
 
 IDL_OUT ?= build/idl
@@ -322,6 +324,10 @@ help:
 	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
+	@echo ""
+	@echo "QEMU overrides:"
+	@echo "  QEMU_CPU=max   - Override the guest CPU model/features"
+	@echo "  QEMU_SMP=2     - Run with more than one virtual CPU (experimental)"
 	@echo ""
 	@echo "For installation instructions, see INSTALL.md"
 

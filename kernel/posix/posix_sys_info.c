@@ -281,12 +281,14 @@ uint64_t posix_sysinfo(uint64_t a1,
         out->cpu_ext_features_ecx = cinfo.ext_features_ecx;
         out->cpu_cores = cinfo.cores;
         out->cpu_threads = cinfo.threads;
+        out->cpu_count = cpu_get_count();
         if (cinfo.vendor) {
             strncpy(out->cpu_vendor, cinfo.vendor, sizeof(out->cpu_vendor) - 1);
         }
         if (cinfo.model) {
             strncpy(out->cpu_model, cinfo.model, sizeof(out->cpu_model) - 1);
         }
+        out->cpu_freq_hz = cpu_get_frequency();
     }
 
     memory_info_t minfo;

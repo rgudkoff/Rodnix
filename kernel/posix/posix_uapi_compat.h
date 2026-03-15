@@ -43,8 +43,11 @@ typedef struct rodnix_sysinfo {
     uint32_t cpu_ext_features_ecx;
     uint32_t cpu_cores;
     uint32_t cpu_threads;
+    uint32_t cpu_count;
+    uint32_t reserved2;
     char cpu_vendor[16];
     char cpu_model[64];
+    uint64_t cpu_freq_hz;
 
     uint64_t mem_total_bytes;
     uint64_t mem_free_bytes;
