@@ -10,6 +10,7 @@
 #include "vfs.h"
 #include "../common/heap.h"
 #include "../common/kmod.h"
+#include "../fabric/spin.h"
 #include "../fabric/service/block_service.h"
 #include "../../../include/common.h"
 #include "../../include/error.h"
@@ -119,6 +120,7 @@ typedef struct {
 
 static ext2_mount_ctx_t g_ext2_live;
 static int g_ext2_live_ready = 0;
+static spinlock_t g_ext2_rw_lock;
 static const ext2_fs_caps_t g_ext2_caps = {
     .write_in_place = 1,
     .write_extend = 1,
@@ -899,35 +901,44 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
 
 int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t len, size_t final_size)
 {
+    spinlock_lock(&g_ext2_rw_lock);
     if (!node || !node->inode || !data) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_INVALID;
     }
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (len == 0) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_OK;
     }
 
     ext2_inode_t ino;
     int irc = ext2_read_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
     if (irc != RDNX_OK) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return irc;
     }
     if (!ext2_is_reg(&ino)) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint64_t disk_size = ext2_inode_size_bytes(&ino);
     if ((uint64_t)off + (uint64_t)len > (uint64_t)final_size) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint8_t* blk = (uint8_t*)kmalloc(g_ext2_live.block_size);
     if (!blk) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_NOMEM;
     }
 
@@ -950,6 +961,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
                                                 &ino, lbn, 1, &pblk, &inode_dirty);
         if (brc != RDNX_OK || pblk == 0) {
             kfree(blk);
+            spinlock_unlock(&g_ext2_rw_lock);
             return RDNX_E_UNSUPPORTED;
         }
 
@@ -959,6 +971,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
             brc = ext2_read_block(&g_ext2_live, pblk, blk);
             if (brc != RDNX_OK) {
                 kfree(blk);
+                spinlock_unlock(&g_ext2_rw_lock);
                 return brc;
             }
         }
@@ -967,6 +980,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
                                blk, g_ext2_live.block_size);
         if (brc != RDNX_OK) {
             kfree(blk);
+            spinlock_unlock(&g_ext2_rw_lock);
             return brc;
         }
         done += chunk;
@@ -980,11 +994,13 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
         int wrc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
         if (wrc != RDNX_OK) {
             kfree(blk);
+            spinlock_unlock(&g_ext2_rw_lock);
             return wrc;
         }
     }
 
     kfree(blk);
+    spinlock_unlock(&g_ext2_rw_lock);
     return RDNX_OK;
 }
 
@@ -999,27 +1015,34 @@ int ext2_query_caps(ext2_fs_caps_t* out_caps)
 
 int ext2_resize_file(vfs_node_t* node, size_t new_size)
 {
+    spinlock_lock(&g_ext2_rw_lock);
     if (!node || !node->inode) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_INVALID;
     }
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     ext2_inode_t ino;
     int irc = ext2_read_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
     if (irc != RDNX_OK) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return irc;
     }
     if (!ext2_is_reg(&ino)) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint64_t disk_size = ext2_inode_size_bytes(&ino);
     if ((uint64_t)new_size == disk_size) {
+        spinlock_unlock(&g_ext2_rw_lock);
         return RDNX_OK;
     }
 
@@ -1035,6 +1058,7 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
                                                    &ino, lbn, 1, &pblk, &inode_dirty);
             if (rc != RDNX_OK || pblk == 0) {
                 (void)ext2_trim_inode_blocks(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino, old_blocks);
+                spinlock_unlock(&g_ext2_rw_lock);
                 return (rc != RDNX_OK) ? rc : RDNX_E_UNSUPPORTED;
             }
         }
@@ -1043,15 +1067,20 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
         uint32_t sectors_per_block = g_ext2_live.block_size / 512u;
         uint32_t alloc_blocks = ext2_count_allocated_blocks(&g_ext2_live, &ino);
         ino.blocks = alloc_blocks * sectors_per_block;
-        return ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
+        int rc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
+        spinlock_unlock(&g_ext2_rw_lock);
+        return rc;
     } else {
         /* Crash-safer shrink: size first, then free tail blocks. */
         ino.size_lo = (uint32_t)new_size;
         int rc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
         if (rc != RDNX_OK) {
+            spinlock_unlock(&g_ext2_rw_lock);
             return rc;
         }
-        return ext2_trim_inode_blocks(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino, new_blocks);
+        rc = ext2_trim_inode_blocks(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino, new_blocks);
+        spinlock_unlock(&g_ext2_rw_lock);
+        return rc;
     }
 }
 
@@ -1139,11 +1168,13 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
     ext2_mark_node(root, EXT2_ROOT_INO);
     *out_root = root;
 
+    spinlock_lock(&g_ext2_rw_lock);
     if (g_ext2_live_ready && g_ext2_live.gdt) {
         kfree(g_ext2_live.gdt);
     }
     g_ext2_live = ctx;
     g_ext2_live_ready = 1;
+    spinlock_unlock(&g_ext2_rw_lock);
     return RDNX_OK;
 }
 
@@ -1154,6 +1185,7 @@ static const vfs_fs_driver_t ext2_driver = {
 
 int ext2_fs_init(void)
 {
+    spinlock_init(&g_ext2_rw_lock);
     (void)kmod_register_builtin("fs.ext2", "fs", "0.1", 0);
     return vfs_register_fs(&ext2_driver);
 }
