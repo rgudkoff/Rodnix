@@ -66,12 +66,34 @@ static const bootlog_name_id_t bootlog_event_ids[] = {
     {"create_enter", 16},
 };
 
+/* Match needle as a complete whitespace-delimited token in cmdline.
+ * "bootlog=quiet" must not match "bootlog=quietly". */
 static bool bootlog_has_flag(const char* cmdline, const char* needle)
 {
-    if (!cmdline || !needle) {
+    if (!cmdline || !needle || !needle[0]) {
         return false;
     }
-    return strstr(cmdline, needle) != NULL;
+    size_t nlen = 0;
+    while (needle[nlen]) { nlen++; }
+
+    const char* p = cmdline;
+    while (*p) {
+        /* Skip leading whitespace */
+        while (*p == ' ' || *p == '\t') { p++; }
+        if (!*p) { break; }
+
+        /* Find end of this token */
+        const char* tok = p;
+        while (*p && *p != ' ' && *p != '\t') { p++; }
+        size_t tlen = (size_t)(p - tok);
+
+        if (tlen == nlen) {
+            size_t i = 0;
+            while (i < nlen && tok[i] == needle[i]) { i++; }
+            if (i == nlen) { return true; }
+        }
+    }
+    return false;
 }
 
 static uint16_t bootlog_lookup_id(const bootlog_name_id_t* map, size_t map_len, const char* name)
@@ -208,4 +230,53 @@ void bootlog_mark(const char* phase, const char* event)
 int bootlog_is_verbose(void)
 {
     return bootlog_verbose ? 1 : 0;
+}
+
+/* ── Runtime log level ───────────────────────────────────────────────────── */
+
+static int klog_level = KLOG_INFO;
+
+void klog_set_level(int level)
+{
+    if (level >= KLOG_DEBUG && level <= KLOG_ERROR) {
+        klog_level = level;
+    }
+}
+
+int klog_get_level(void)
+{
+    return klog_level;
+}
+
+static const char* klog_level_name(int level)
+{
+    switch (level) {
+        case KLOG_DEBUG: return "DBG ";
+        case KLOG_INFO:  return "INFO";
+        case KLOG_WARN:  return "WARN";
+        case KLOG_ERROR: return "ERR ";
+        default:         return "    ";
+    }
+}
+
+void klog_at(int level, const char* subsys, const char* fmt, ...)
+{
+    if (level < klog_level) {
+        return;
+    }
+    uint64_t ticks = scheduler_get_ticks();
+    uint64_t sec   = ticks / 100u;
+    uint64_t ms    = (ticks % 100u) * 10u;
+    if (!subsys) {
+        subsys = "kernel";
+    }
+    kprintf("[%4llu.%03llu] %s %-10s: ",
+            (unsigned long long)sec,
+            (unsigned long long)ms,
+            klog_level_name(level),
+            subsys);
+    va_list ap;
+    va_start(ap, fmt);
+    kvprintf(fmt, ap);
+    va_end(ap);
 }

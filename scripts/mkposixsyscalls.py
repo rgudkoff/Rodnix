@@ -16,6 +16,11 @@ def parse_master(path: Path):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
+        # Strip inline comments before parsing
+        if "#" in line:
+            line = line[:line.index("#")].strip()
+        if not line:
+            continue
         parts = line.split()
         if len(parts) != 2:
             raise ValueError(f"{path}:{lineno}: expected '<number> <name>'")

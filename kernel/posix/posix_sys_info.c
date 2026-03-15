@@ -597,8 +597,8 @@ uint64_t posix_clock_gettime(uint64_t a1,
         CLOCK_MONOTONIC_ALT = 1
     };
     int clock_id = (int)a1;
-    rdnx_timespec_t* out = (rdnx_timespec_t*)(uintptr_t)a2;
-    if (!unix_user_range_ok(out, sizeof(*out))) {
+    void* user_out = (void*)(uintptr_t)a2;
+    if (!unix_user_range_ok(user_out, sizeof(rdnx_timespec_t))) {
         return (uint64_t)RDNX_E_INVALID;
     }
     uint64_t us = 0;
@@ -610,8 +610,12 @@ uint64_t posix_clock_gettime(uint64_t a1,
         /* Be permissive for early userland ABI drift: treat unknown clocks as monotonic. */
         us = console_get_uptime_us();
     }
-    out->tv_sec = (int64_t)(us / 1000000ULL);
-    out->tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
+    rdnx_timespec_t kts;
+    kts.tv_sec  = (int64_t)(us / 1000000ULL);
+    kts.tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
+    if (unix_copy_to_user(user_out, &kts, sizeof(kts)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     return (uint64_t)RDNX_OK;
 }
 

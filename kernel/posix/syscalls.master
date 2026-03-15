@@ -1,78 +1,87 @@
 # Rodnix POSIX syscall master table
-# Format:
-#   <number> <name>
 #
-# Generated artifacts:
-#   - kernel/posix/posix_sysnums.h
-#   - userland/include/posix_sysnums.h
-#   - kernel/posix/posix_sysent.inc
+# Format:  <number> <name>
+# Status annotations (comments only — not parsed by mkposixsyscalls.py):
+#   [stable]       — ABI frozen, handler fully implemented, covered by tests
+#   [experimental] — implemented but ABI or semantics may change
+#   [stub]         — registered, returns RDNX_E_UNSUPPORTED or minimal impl
+#
+# Numbers 0-68 are the POSIX namespace.  Numbers 120+ are kernel-internal
+# (SYS_* in syscall.h).  A _Static_assert in syscall.c enforces no overlap.
+# Do NOT renumber existing entries — userland binaries depend on these values.
+#
+# Generated artifacts (do not edit by hand):
+#   kernel/posix/posix_sysnums.h
+#   userland/include/posix_sysnums.h
+#   kernel/posix/posix_sysent.inc
 
-0 nosys
-1 getpid
-2 getuid
-3 geteuid
-4 getgid
-5 getegid
-6 setuid
-7 seteuid
-8 setgid
-9 setegid
-10 open
-11 close
-12 read
-13 write
-14 uname
-15 exit
-16 exec
-17 spawn
-18 waitpid
-19 readdir
-20 fcntl
-21 netiflist
-22 mmap
-23 munmap
-24 brk
-25 fork
-26 hwlist
-27 fabricls
-28 fabricevents
-29 sysinfo
-30 clock_gettime
-31 stat
-32 fstat
-33 lseek
-34 scstat
-35 pipe
-36 dup
-37 dup2
-38 chdir
-39 getcwd
-40 mkdir
-41 unlink
-42 rmdir
-43 rename
-44 ioctl
-45 nanosleep
-46 kill
-47 sigaction
-48 sigreturn
-49 blocklist
-50 blockread
-51 kmodls
-52 kmodload
-53 kmodunload
-54 blockwrite
-55 truncate
-56 ftruncate
-57 poll
-58 select
-59 dup3
-60 pipe2
-61 futex
-62 msync
-63 socket
-64 bind
-65 connect
-66 sendto
-67 recvfrom
-68 ping
+0  nosys           # [stable]       no-op / unsupported
+1  getpid          # [stable]
+2  getuid          # [stable]
+3  geteuid         # [stable]
+4  getgid          # [stable]
+5  getegid         # [stable]
+6  setuid          # [stable]
+7  seteuid         # [stable]
+8  setgid          # [stable]
+9  setegid         # [stable]
+10 open            # [stable]
+11 close           # [stable]
+12 read            # [stable]
+13 write           # [stable]
+14 uname           # [stable]
+15 exit            # [stable]
+16 exec            # [stable]
+17 spawn           # [experimental] rodnix-specific; use fork+exec in new code
+18 waitpid         # [stable]
+19 readdir         # [stable]
+20 fcntl           # [experimental] only F_GETFD/F_SETFD implemented
+21 netiflist       # [experimental]
+22 mmap            # [stable]
+23 munmap          # [stable]
+24 brk             # [stable]
+25 fork            # [stable]
+26 hwlist          # [stub]
+27 fabricls        # [experimental]
+28 fabricevents    # [stub]
+29 sysinfo         # [experimental]
+30 clock_gettime   # [stable]
+31 stat            # [stable]
+32 fstat           # [stable]
+33 lseek           # [stable]
+34 scstat          # [experimental]
+35 pipe            # [stable]
+36 dup             # [stable]
+37 dup2            # [stable]
+38 chdir           # [stable]
+39 getcwd          # [stable]
+40 mkdir           # [stable]
+41 unlink          # [stable]
+42 rmdir           # [stable]
+43 rename          # [stable]
+44 ioctl           # [experimental] only ISATTY/GETATTR/SETATTR on TTY
+45 nanosleep       # [stable]
+46 kill            # [stable]
+47 sigaction       # [stable]
+48 sigreturn       # [stable]
+49 blocklist       # [experimental]
+50 blockread       # [experimental]
+51 kmodls          # [experimental]
+52 kmodload        # [stub]
+53 kmodunload      # [stub]
+54 blockwrite      # [experimental]
+55 truncate        # [experimental]
+56 ftruncate       # [experimental]
+57 poll            # [stable]
+58 select          # [stable]
+59 dup3            # [stable]
+60 pipe2           # [stable]
+61 futex           # [experimental]
+62 msync           # [stub]
+63 socket          # [experimental]
+64 bind            # [experimental]
+65 connect         # [experimental]
+66 sendto          # [experimental]
+67 recvfrom        # [experimental]
+68 ping            # [stub]
+69 openat          # [experimental] AT_FDCWD supported; mode arg ignored

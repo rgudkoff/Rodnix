@@ -1,6 +1,7 @@
 #include "posix_syscall.h"
 #include "posix_syscall_handlers.h"
 #include "../unix/unix_layer.h"
+#include "../common/ktrace.h"
 #include "../../include/error.h"
 
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];
@@ -36,6 +37,7 @@ uint64_t posix_syscall_dispatch(uint64_t num,
         return (uint64_t)RDNX_E_UNSUPPORTED;
     }
     uint64_t ret = posix_table[num](a1, a2, a3, a4, a5, a6);
+    ktrace_syscall((uint32_t)num, ret);
     if (num != POSIX_SYS_SIGRETURN) {
         unix_proc_signal_checkpoint();
     }

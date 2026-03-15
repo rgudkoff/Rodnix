@@ -29,6 +29,8 @@ enum {
 };
 
 bool unix_user_range_ok(const void* ptr, size_t len);
+int unix_copy_from_user(void* kdst, const void* usrc, size_t len);
+int unix_copy_to_user(void* udst, const void* ksrc, size_t len);
 int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src);
 int unix_resolve_path(const task_t* task, const char* in, char* out, size_t out_sz);
 int unix_resolve_user_path(const char* user_src, char* out, size_t out_sz);
@@ -52,6 +54,7 @@ typedef struct {
 } unix_stat_u_t;
 
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
+uint64_t unix_fs_openat(uint64_t dirfd, uint64_t user_path_ptr, uint64_t flags);
 /* CT-007/CT-008 */
 uint64_t unix_fs_close(uint64_t fd);
 uint64_t unix_fs_dup(uint64_t oldfd);

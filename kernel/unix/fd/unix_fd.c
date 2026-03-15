@@ -12,10 +12,23 @@
 enum {
     UNIX_F_GETFD = 1,
     UNIX_F_SETFD = 2,
-    UNIX_FD_CLOEXEC = 1,
+    UNIX_F_GETFL = 3,
+    UNIX_F_SETFL = 4,
+    /* fd_flags bits (stored in task->fd_flags[fd]) */
+    UNIX_FD_CLOEXEC  = 1,
+    UNIX_FD_NONBLOCK = 2,   /* O_NONBLOCK state for non-VFS fds (pipes, sockets) */
     UNIX_PIPE_CAP = 4096,
-    UNIX_O_NONBLOCK = 0x0004,
-    UNIX_O_CLOEXEC = 0x00100000
+    /* POSIX open flags (userland ABI) */
+    UNIX_O_RDONLY   = 0x0000,
+    UNIX_O_WRONLY   = 0x0001,
+    UNIX_O_RDWR     = 0x0002,
+    UNIX_O_ACCMODE  = 0x0003,
+    UNIX_O_CREAT    = 0x0040,
+    UNIX_O_TRUNC    = 0x0200,
+    UNIX_O_NONBLOCK = 0x0800,
+    UNIX_O_CLOEXEC  = 0x00080000,
+    /* One-shot open flags — must not appear in F_GETFL result. */
+    UNIX_O_ONESHOT  = 0x0240    /* O_CREAT | O_TRUNC */
 };
 
 enum {
@@ -57,6 +70,25 @@ typedef struct unix_timeval_u {
     int64_t tv_usec;
 } unix_timeval_u_t;
 
+/* Translate POSIX open(2) flags to VFS_OPEN_* flags. */
+static int unix_posix_flags_to_vfs(int posix_flags)
+{
+    int vfs_flags = 0;
+    int accmode = posix_flags & UNIX_O_ACCMODE;
+    if (accmode == UNIX_O_RDONLY) {
+        vfs_flags |= VFS_OPEN_READ;
+    } else if (accmode == UNIX_O_WRONLY) {
+        vfs_flags |= VFS_OPEN_WRITE;
+    } else { /* O_RDWR */
+        vfs_flags |= VFS_OPEN_READ | VFS_OPEN_WRITE;
+    }
+    if (posix_flags & UNIX_O_CREAT)
+        vfs_flags |= VFS_OPEN_CREATE;
+    if (posix_flags & UNIX_O_TRUNC)
+        vfs_flags |= VFS_OPEN_TRUNC;
+    return vfs_flags;
+}
+
 static inline int unix_fdset_test(const unix_fdset_u_t* s, uint32_t fd)
 {
     if (!s || fd >= 32u) {
@@ -89,6 +121,36 @@ static int unix_is_abs_path(const char* p)
 {
     return p && p[0] == '/';
 }
+
+/* Build the absolute path string for a VFS node by walking parent pointers.
+ * Returns RDNX_OK on success. */
+static int unix_vfs_node_path(vfs_node_t* node, char* out, size_t out_sz)
+{
+    const char* parts[64];
+    int count = 0;
+    vfs_node_t* cur = node;
+    while (cur && cur->parent && cur->parent != cur && count < 64) {
+        parts[count++] = cur->name;
+        cur = cur->parent;
+    }
+    size_t p = 0;
+    out[p++] = '/';
+    for (int i = count - 1; i >= 0; i--) {
+        for (const char* s = parts[i]; *s && p + 1 < out_sz; s++) {
+            out[p++] = *s;
+        }
+        if (i > 0 && p + 1 < out_sz) {
+            out[p++] = '/';
+        }
+    }
+    if (p >= out_sz) {
+        return RDNX_E_INVALID;
+    }
+    out[p] = '\0';
+    return RDNX_OK;
+}
+
+enum { UNIX_AT_FDCWD = -100 };
 
 static int unix_path_normalize(const char* in, char* out, size_t out_sz)
 {
@@ -473,6 +535,7 @@ void unix_apply_cloexec(task_t* task)
 
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
 {
+    int posix_flags = (int)flags;
     char path_buf[UNIX_PATH_MAX];
     if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
@@ -481,11 +544,14 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
     if (!file) {
         return (uint64_t)RDNX_E_NOMEM;
     }
-    int orc = vfs_open(path_buf, (int)flags, file);
+    int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
+    int orc = vfs_open(path_buf, vfs_flags, file);
     if (orc != RDNX_OK) {
         kfree(file);
         return (uint64_t)orc;
     }
+    /* Store only access mode + status flags; strip one-shot flags (O_CREAT, O_TRUNC). */
+    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
 
     task_t* task = task_get_current();
     if (!task) {
@@ -500,6 +566,86 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
         return (uint64_t)RDNX_E_BUSY;
     }
     task->fd_kind[fd] = UNIX_FD_KIND_VFS;
+    if (posix_flags & UNIX_O_CLOEXEC)  task->fd_flags[fd] |= UNIX_FD_CLOEXEC;
+    if (posix_flags & UNIX_O_NONBLOCK) task->fd_flags[fd] |= UNIX_FD_NONBLOCK;
+    return (uint64_t)fd;
+}
+
+uint64_t unix_fs_openat(uint64_t dirfd_u, uint64_t user_path_ptr, uint64_t flags)
+{
+    int dirfd = (int)(int64_t)dirfd_u;
+    int posix_flags = (int)flags;
+
+    /* Read userland path first. */
+    char in[UNIX_PATH_MAX];
+    task_t* task = task_get_current();
+    if (!task || unix_copy_user_cstr(in, sizeof(in), (const char*)(uintptr_t)user_path_ptr) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    /* Absolute path or AT_FDCWD: same as open(). */
+    if (unix_is_abs_path(in) || dirfd == UNIX_AT_FDCWD) {
+        return unix_fs_open(user_path_ptr, flags);
+    }
+
+    /* Relative path + real dirfd. */
+    if (dirfd < 0 || dirfd >= TASK_MAX_FD || !task->fd_table[dirfd]) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    /* Only VFS fds can serve as a directory reference. */
+    if (task->fd_kind[dirfd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID; /* ENOTDIR — not a VFS descriptor */
+    }
+    vfs_file_t* dir_file = (vfs_file_t*)task->fd_table[dirfd];
+    if (!dir_file->node || dir_file->node->type != VFS_NODE_DIR) {
+        return (uint64_t)RDNX_E_INVALID; /* ENOTDIR */
+    }
+
+    char dir_path[UNIX_PATH_MAX];
+    if (unix_vfs_node_path(dir_file->node, dir_path, sizeof(dir_path)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    /* Combine dir_path + "/" + in. */
+    char combined[UNIX_PATH_MAX];
+    size_t p = 0;
+    for (size_t i = 0; dir_path[i] && p + 1 < sizeof(combined); i++) {
+        combined[p++] = dir_path[i];
+    }
+    if (p > 0 && combined[p - 1] != '/') {
+        if (p + 1 < sizeof(combined)) combined[p++] = '/';
+    }
+    for (size_t i = 0; in[i] && p + 1 < sizeof(combined); i++) {
+        combined[p++] = in[i];
+    }
+    combined[p] = '\0';
+
+    char path_buf[UNIX_PATH_MAX];
+    if (unix_path_normalize(combined, path_buf, sizeof(path_buf)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    if (!file) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
+    int orc = vfs_open(path_buf, vfs_flags, file);
+    if (orc != RDNX_OK) {
+        kfree(file);
+        return (uint64_t)orc;
+    }
+    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+
+    int fd = task_fd_alloc(task, file);
+    if (fd < 0) {
+        vfs_close(file);
+        kfree(file);
+        return (uint64_t)RDNX_E_BUSY;
+    }
+    task->fd_kind[fd] = UNIX_FD_KIND_VFS;
+    if (posix_flags & UNIX_O_CLOEXEC)  task->fd_flags[fd] |= UNIX_FD_CLOEXEC;
+    if (posix_flags & UNIX_O_NONBLOCK) task->fd_flags[fd] |= UNIX_FD_NONBLOCK;
     return (uint64_t)fd;
 }
 
@@ -652,6 +798,9 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             if (done > 0) {
                 break;
             }
+            if (task->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+                return (done > 0) ? (uint64_t)done : (uint64_t)RDNX_E_AGAIN;
+            }
             scheduler_yield();
         }
         return (uint64_t)done;
@@ -721,6 +870,9 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             }
             if (done > 0) {
                 break;
+            }
+            if (task->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+                return (done > 0) ? (uint64_t)done : (uint64_t)RDNX_E_AGAIN;
             }
             scheduler_yield();
         }
@@ -813,7 +965,9 @@ uint64_t unix_fs_getcwd(uint64_t user_buf_ptr, uint64_t size)
     if (len + 1 > n || !unix_user_range_ok(out, n)) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    memcpy(out, task->cwd, len + 1);
+    if (unix_copy_to_user(out, task->cwd, len + 1) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     return (uint64_t)RDNX_OK;
 }
 
@@ -893,25 +1047,31 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
         case UNIX_TTY_IOCTL_ISATTY:
             return 1;
         case UNIX_TTY_IOCTL_GETATTR: {
-            unix_termios_u_t* out = (unix_termios_u_t*)(uintptr_t)user_arg_ptr;
-            if (!out || !unix_user_range_ok(out, sizeof(*out))) {
+            if (!unix_user_range_ok((void*)(uintptr_t)user_arg_ptr, sizeof(unix_termios_u_t))) {
                 return (uint64_t)RDNX_E_INVALID;
             }
-            memset(out, 0, sizeof(*out));
-            out->c_lflag = tty_console_get_lflag();
+            unix_termios_u_t kterm;
+            memset(&kterm, 0, sizeof(kterm));
+            kterm.c_lflag = tty_console_get_lflag();
             for (uint32_t i = 0; i < 20; i++) {
-                out->c_cc[i] = tty_console_get_cc(i);
+                kterm.c_cc[i] = tty_console_get_cc(i);
+            }
+            if (unix_copy_to_user((void*)(uintptr_t)user_arg_ptr, &kterm, sizeof(kterm)) != RDNX_OK) {
+                return (uint64_t)RDNX_E_INVALID;
             }
             return (uint64_t)RDNX_OK;
         }
         case UNIX_TTY_IOCTL_SETATTR: {
-            const unix_termios_u_t* in = (const unix_termios_u_t*)(uintptr_t)user_arg_ptr;
-            if (!in || !unix_user_range_ok(in, sizeof(*in))) {
+            if (!unix_user_range_ok((void*)(uintptr_t)user_arg_ptr, sizeof(unix_termios_u_t))) {
                 return (uint64_t)RDNX_E_INVALID;
             }
-            tty_console_set_lflag(in->c_lflag);
+            unix_termios_u_t kterm;
+            if (unix_copy_from_user(&kterm, (const void*)(uintptr_t)user_arg_ptr, sizeof(kterm)) != RDNX_OK) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            tty_console_set_lflag(kterm.c_lflag);
             for (uint32_t i = 0; i < 20; i++) {
-                tty_console_set_cc(i, in->c_cc[i]);
+                tty_console_set_cc(i, kterm.c_cc[i]);
             }
             return (uint64_t)RDNX_OK;
         }
@@ -938,8 +1098,12 @@ uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr)
     if (rc != RDNX_OK) {
         return (uint64_t)rc;
     }
-    ustat->st_mode = st.mode;
-    ustat->st_size = (int64_t)st.size;
+    unix_stat_u_t kstat;
+    kstat.st_mode = st.mode;
+    kstat.st_size = (int64_t)st.size;
+    if (unix_copy_to_user((void*)(uintptr_t)user_stat_ptr, &kstat, sizeof(kstat)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     return (uint64_t)RDNX_OK;
 }
 
@@ -947,14 +1111,13 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
 {
     task_t* task = task_get_current();
     vfs_file_t* file;
-    unix_stat_u_t* ustat = (unix_stat_u_t*)(uintptr_t)user_stat_ptr;
     vfs_stat_t st;
     int rc;
 
     if (!task) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if (!unix_user_range_ok(ustat, sizeof(*ustat))) {
+    if (!unix_user_range_ok((void*)(uintptr_t)user_stat_ptr, sizeof(unix_stat_u_t))) {
         return (uint64_t)RDNX_E_INVALID;
     }
     if ((int)fd < 0 || (int)fd >= TASK_MAX_FD || task->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
@@ -968,8 +1131,12 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
     if (rc != RDNX_OK) {
         return (uint64_t)rc;
     }
-    ustat->st_mode = st.mode;
-    ustat->st_size = (int64_t)st.size;
+    unix_stat_u_t kstat;
+    kstat.st_mode = st.mode;
+    kstat.st_size = (int64_t)st.size;
+    if (unix_copy_to_user((void*)(uintptr_t)user_stat_ptr, &kstat, sizeof(kstat)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
     return (uint64_t)RDNX_OK;
 }
 
@@ -981,12 +1148,50 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
         return (uint64_t)RDNX_E_INVALID;
     }
 
+    /* Mutable status flags that F_SETFL may toggle. */
+    static const int unix_setfl_mask = UNIX_O_NONBLOCK;
+
     switch ((int)cmd) {
         case UNIX_F_GETFD:
             return (uint64_t)(task->fd_flags[fdi] & UNIX_FD_CLOEXEC);
         case UNIX_F_SETFD:
             task->fd_flags[fdi] = ((uint8_t)arg) & UNIX_FD_CLOEXEC;
             return (uint64_t)RDNX_OK;
+        case UNIX_F_GETFL: {
+            uint8_t kind = task->fd_kind[fdi];
+            if (kind == UNIX_FD_KIND_VFS) {
+                vfs_file_t* f = (vfs_file_t*)task->fd_table[fdi];
+                if (!f) return (uint64_t)RDNX_E_INVALID;
+                return (uint64_t)f->open_flags;
+            }
+            /* Pipe / socket: synthesise flags from fd_kind + fd_flags. */
+            int fl = 0;
+            if (kind == UNIX_FD_KIND_PIPE_R) {
+                fl = UNIX_O_RDONLY;
+            } else if (kind == UNIX_FD_KIND_PIPE_W) {
+                fl = UNIX_O_WRONLY;
+            }
+            if (task->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+                fl |= UNIX_O_NONBLOCK;
+            }
+            return (uint64_t)fl;
+        }
+        case UNIX_F_SETFL: {
+            uint8_t kind = task->fd_kind[fdi];
+            if (kind == UNIX_FD_KIND_VFS) {
+                vfs_file_t* f = (vfs_file_t*)task->fd_table[fdi];
+                if (!f) return (uint64_t)RDNX_E_INVALID;
+                f->open_flags = (f->open_flags & ~unix_setfl_mask) |
+                                ((int)arg & unix_setfl_mask);
+            }
+            /* For any fd kind, track O_NONBLOCK in fd_flags. */
+            if ((int)arg & UNIX_O_NONBLOCK) {
+                task->fd_flags[fdi] |= UNIX_FD_NONBLOCK;
+            } else {
+                task->fd_flags[fdi] &= (uint8_t)~UNIX_FD_NONBLOCK;
+            }
+            return (uint64_t)RDNX_OK;
+        }
         default:
             return (uint64_t)RDNX_E_UNSUPPORTED;
     }
@@ -1273,8 +1478,12 @@ uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr)
     }
     task->fd_kind[fd_w] = UNIX_FD_KIND_PIPE_W;
 
-    out[0] = fd_r;
-    out[1] = fd_w;
+    int fds[2] = { fd_r, fd_w };
+    if (unix_copy_to_user(out, fds, sizeof(fds)) != RDNX_OK) {
+        unix_fd_release(task, fd_r);
+        unix_fd_release(task, fd_w);
+        return (uint64_t)RDNX_E_INVALID;
+    }
     return (uint64_t)RDNX_OK;
 }
 
@@ -1288,22 +1497,29 @@ uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags)
     if (rc != (uint64_t)RDNX_OK) {
         return rc;
     }
-    if ((uflags & UNIX_O_CLOEXEC) == 0) {
+    /* Nothing to apply — skip the fd-table walk. */
+    if (uflags == 0) {
         return (uint64_t)RDNX_OK;
     }
 
     task_t* task = task_get_current();
-    int* out = (int*)(uintptr_t)user_pipefd_ptr;
+    void* out = (void*)(uintptr_t)user_pipefd_ptr;
     if (!task || !out || !unix_user_range_ok(out, sizeof(int) * 2u)) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    int fd_r = out[0];
-    int fd_w = out[1];
+    int fds2[2];
+    if (unix_copy_from_user(fds2, out, sizeof(fds2)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    int fd_r = fds2[0];
+    int fd_w = fds2[1];
     if (fd_r >= 0 && fd_r < TASK_MAX_FD && task->fd_table[fd_r]) {
-        task->fd_flags[fd_r] |= UNIX_FD_CLOEXEC;
+        if (uflags & UNIX_O_CLOEXEC)  task->fd_flags[fd_r] |= UNIX_FD_CLOEXEC;
+        if (uflags & UNIX_O_NONBLOCK) task->fd_flags[fd_r] |= UNIX_FD_NONBLOCK;
     }
     if (fd_w >= 0 && fd_w < TASK_MAX_FD && task->fd_table[fd_w]) {
-        task->fd_flags[fd_w] |= UNIX_FD_CLOEXEC;
+        if (uflags & UNIX_O_CLOEXEC)  task->fd_flags[fd_w] |= UNIX_FD_CLOEXEC;
+        if (uflags & UNIX_O_NONBLOCK) task->fd_flags[fd_w] |= UNIX_FD_NONBLOCK;
     }
     return (uint64_t)RDNX_OK;
 }

@@ -72,8 +72,9 @@ enum {
     POSIX_SYS_SENDTO = 66,
     POSIX_SYS_RECVFROM = 67,
     POSIX_SYS_PING = 68,
+    POSIX_SYS_OPENAT = 69,
 };
 
-#define POSIX_SYS_LAST 68
+#define POSIX_SYS_LAST 69
 
 #endif /* _RODNIX_POSIX_SYSNUMS_H */

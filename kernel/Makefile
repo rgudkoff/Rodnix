@@ -18,6 +18,7 @@ KERNEL_C_SRCS += \
 	kernel/common/loader.c \
 	kernel/common/kmod.c \
 	kernel/common/bootlog.c \
+	kernel/common/ktrace.c \
 	kernel/common/startup_trace.c \
 	kernel/common/tracev2.c \
 	kernel/common/tty_console.c \

@@ -27,6 +27,10 @@ typedef struct vfs_inode {
     uint8_t* data;
     vm_object_t* mmap_object;
     uint32_t node_gen; /* incremented on vfs_free_node; cache uses this to detect stale entries */
+    /* DAC permissions (P2): set at create time, enforced in vfs_open(). */
+    uint16_t mode;   /* permission bits — S_IRWXU / S_IRWXG / S_IRWXO */
+    uint32_t uid;    /* owner UID */
+    uint32_t gid;    /* owner GID */
 } vfs_inode_t;
 
 typedef struct vfs_node {
@@ -59,6 +63,7 @@ typedef struct vfs_file {
     vfs_node_t* node;
     size_t pos;
     bool writable;
+    int open_flags; /* POSIX O_* flags saved at open(2) time; used by F_GETFL */
 } vfs_file_t;
 
 typedef struct vfs_stat {

@@ -166,13 +166,20 @@ static int ext2_is_reg(const ext2_inode_t* ino)
     return ino && ((ino->mode & 0xF000u) == EXT2_S_IFREG);
 }
 
-static void ext2_mark_node(vfs_node_t* node, uint32_t ino_num)
+static void ext2_mark_node(vfs_node_t* node, uint32_t ino_num,
+                           const ext2_inode_t* ext_ino)
 {
     if (!node || !node->inode) {
         return;
     }
     node->inode->fs_tag = VFS_FS_TAG_EXT2;
     node->inode->fs_ino = (uint64_t)ino_num;
+    if (ext_ino) {
+        /* Copy on-disk DAC fields; strip file-type bits from mode. */
+        node->inode->mode = (uint16_t)(ext_ino->mode & 0x0FFFu);
+        node->inode->uid  = ext_ino->uid;
+        node->inode->gid  = ext_ino->gid;
+    }
 }
 
 static int ext2_read_bytes(ext2_mount_ctx_t* ctx, uint64_t offset, void* out, uint32_t len)
@@ -1172,7 +1179,7 @@ static int ext2_init_lazy_inode(uint32_t ino_num, const ext2_inode_t* ino, vfs_n
     node->inode->size     = (size_t)ext2_inode_size_bytes(ino);
     node->inode->capacity = 0;
     node->inode->data     = NULL;
-    ext2_mark_node(node, ino_num);
+    ext2_mark_node(node, ino_num, ino);
     return RDNX_OK;
 }
 
@@ -1243,7 +1250,7 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
                             vfs_node_t* child = vfs_fs_alloc_node(name, nt);
                             if (child) {
                                 if (vfs_fs_add_child(parent, child) == RDNX_OK) {
-                                    ext2_mark_node(child, de->inode);
+                                    ext2_mark_node(child, de->inode, &child_ino);
                                     ctx->node_budget--;
                                     if (nt == VFS_NODE_DIR) {
                                         (void)ext2_build_dir(ctx, child, de->inode, &child_ino, depth + 1u);
@@ -1542,7 +1549,7 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
     ctx.node_budget = EXT2_MAX_TREE_NODES;
     (void)ext2_build_dir(&ctx, root, EXT2_ROOT_INO, &root_ino, 0);
 
-    ext2_mark_node(root, EXT2_ROOT_INO);
+    ext2_mark_node(root, EXT2_ROOT_INO, &root_ino);
     *out_root = root;
 
     spinlock_lock(&g_ext2_rw_lock);

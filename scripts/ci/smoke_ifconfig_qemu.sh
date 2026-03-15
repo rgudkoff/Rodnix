@@ -7,6 +7,7 @@ cd "$ROOT_DIR"
 LOG_FILE="${LOG_FILE:-boot.log}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-20}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
+QEMU_DISPLAY="${QEMU_DISPLAY:--display none}"
 QEMU_NET_FLAGS="${QEMU_NET_FLAGS:--netdev user,id=net0 -device e1000,netdev=net0}"
 ARCH="${ARCH:-x86_64}"
 BUILD_DIR="${BUILD_DIR:-build/${ARCH}}"
@@ -51,7 +52,7 @@ if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
 fi
 
 set +e
-"$QEMU_BIN" -m 1G -boot d -cdrom "$ISO_PATH" -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
+"$QEMU_BIN" -m 1G -boot d -cdrom "$ISO_PATH" ${QEMU_DISPLAY} -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
   -drive file="$DISK_IMG",if=ide,format=raw,index=0,media=disk ${QEMU_NET_FLAGS} &
 QEMU_PID=$!
 set -e

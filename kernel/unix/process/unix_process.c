@@ -27,7 +27,8 @@ enum {
     UNIX_SIG_DFL = 0,
     UNIX_SIG_IGN = 1,
     UNIX_SIG_MAX = 31,
-    UNIX_SIGKILL = 9
+    UNIX_SIGKILL = 9,
+    UNIX_SIGCHLD  = 17
 };
 
 enum {
@@ -136,7 +137,8 @@ static uint64_t unix_signal_restore_frame(task_t* task, interrupt_frame_t* frame
     frame->r15 = task->sig_saved.r15;
 
     task->sig_in_handler = 0;
-    task->sig_pending = 0;
+    /* Do not clear sig_pending: other signals may have accumulated during the
+     * handler and will be delivered on the next signal checkpoint. */
     return frame->rax;
 }
 
@@ -185,6 +187,13 @@ uint64_t unix_proc_exit(uint64_t status)
         task->exit_code = (int32_t)status;
         task->exited = 1;
         unix_proc_notify_waiters(task->parent_task_id);
+        /* Send SIGCHLD to parent — use bitmask so it's never lost. */
+        if (task->parent_task_id) {
+            task_t* parent = task_find_by_id(task->parent_task_id);
+            if (parent) {
+                parent->sig_pending |= (1u << UNIX_SIGCHLD);
+            }
+        }
     }
     thread_t* cur = thread_get_current();
     if (bootlog_is_verbose()) {
@@ -202,11 +211,22 @@ void unix_proc_signal_checkpoint(void)
     if (!task || !thr) {
         return;
     }
-    if (task->sig_pending == 0 || task->sig_pending > UNIX_SIG_MAX || task->sig_in_handler) {
+    if (!task->sig_pending || task->sig_in_handler) {
         return;
     }
 
-    uint32_t sig = task->sig_pending;
+    /* Find the lowest-numbered pending signal (bitmask model). */
+    uint32_t sig = 0;
+    for (uint32_t i = 1; i <= (uint32_t)UNIX_SIG_MAX; i++) {
+        if (task->sig_pending & (1u << i)) {
+            sig = i;
+            break;
+        }
+    }
+    if (sig == 0) {
+        return;
+    }
+
     uint64_t handler = task->sigaction[sig].handler;
     uint64_t restorer = task->sigaction[sig].restorer;
     interrupt_frame_t* frame = (interrupt_frame_t*)thr->arch_specific;
@@ -214,8 +234,10 @@ void unix_proc_signal_checkpoint(void)
         return;
     }
 
+    /* Clear this signal from the pending bitmask before potential re-entry. */
+    task->sig_pending &= ~(1u << sig);
+
     if (handler == UNIX_SIG_IGN) {
-        task->sig_pending = 0;
         return;
     }
 
@@ -242,7 +264,7 @@ void unix_proc_signal_checkpoint(void)
     frame->rip = handler;
     frame->rdi = sig;
     task->sig_in_handler = 1;
-    task->sig_pending = 0;
+    /* sig_pending already has this signal cleared; other signals remain queued. */
 }
 
 uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
@@ -264,7 +286,7 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
         return (uint64_t)RDNX_OK;
     }
 
-    target->sig_pending = (uint32_t)sig;
+    target->sig_pending |= (1u << (uint32_t)sig);
     if (target == self) {
         unix_proc_signal_checkpoint();
     }
@@ -275,30 +297,36 @@ uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t us
 {
     task_t* task = task_get_current();
     int sig = (int)signum;
-    unix_sigaction_u_t* new_act = (unix_sigaction_u_t*)(uintptr_t)user_act_ptr;
-    unix_sigaction_u_t* old_act = (unix_sigaction_u_t*)(uintptr_t)user_oldact_ptr;
     if (!task || sig <= 0 || sig > UNIX_SIG_MAX || sig == UNIX_SIGKILL) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    if (old_act) {
-        if (!unix_user_range_ok(old_act, sizeof(*old_act))) {
+    if (user_oldact_ptr) {
+        if (!unix_user_range_ok((void*)(uintptr_t)user_oldact_ptr, sizeof(unix_sigaction_u_t))) {
             return (uint64_t)RDNX_E_INVALID;
         }
-        old_act->sa_handler = task->sigaction[sig].handler;
-        old_act->sa_flags = task->sigaction[sig].flags;
-        old_act->sa_restorer = task->sigaction[sig].restorer;
-        old_act->sa_mask = task->sigaction[sig].mask;
+        unix_sigaction_u_t kold;
+        kold.sa_handler  = task->sigaction[sig].handler;
+        kold.sa_flags    = task->sigaction[sig].flags;
+        kold.sa_restorer = task->sigaction[sig].restorer;
+        kold.sa_mask     = task->sigaction[sig].mask;
+        if (unix_copy_to_user((void*)(uintptr_t)user_oldact_ptr, &kold, sizeof(kold)) != RDNX_OK) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
     }
 
-    if (new_act) {
-        if (!unix_user_range_ok(new_act, sizeof(*new_act))) {
+    if (user_act_ptr) {
+        if (!unix_user_range_ok((void*)(uintptr_t)user_act_ptr, sizeof(unix_sigaction_u_t))) {
             return (uint64_t)RDNX_E_INVALID;
         }
-        task->sigaction[sig].handler = new_act->sa_handler;
-        task->sigaction[sig].flags = new_act->sa_flags;
-        task->sigaction[sig].restorer = new_act->sa_restorer;
-        task->sigaction[sig].mask = new_act->sa_mask;
+        unix_sigaction_u_t knew;
+        if (unix_copy_from_user(&knew, (const void*)(uintptr_t)user_act_ptr, sizeof(knew)) != RDNX_OK) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        task->sigaction[sig].handler  = knew.sa_handler;
+        task->sigaction[sig].flags    = knew.sa_flags;
+        task->sigaction[sig].restorer = knew.sa_restorer;
+        task->sigaction[sig].mask     = knew.sa_mask;
     }
 
     return (uint64_t)RDNX_OK;
@@ -323,8 +351,7 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    int* user_status = (int*)(uintptr_t)user_status_ptr;
-    if (user_status && !unix_user_range_ok(user_status, sizeof(int))) {
+    if (user_status_ptr && !unix_user_range_ok((void*)(uintptr_t)user_status_ptr, sizeof(int))) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
@@ -359,8 +386,9 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
     }
 
     child->waited = 1;
-    if (user_status) {
-        *user_status = child->exit_code;
+    if (user_status_ptr) {
+        int code = child->exit_code;
+        (void)unix_copy_to_user((void*)(uintptr_t)user_status_ptr, &code, sizeof(int));
     }
     bool destroy_now = (child->thread_count == 0);
     if (destroy_now) {
@@ -428,22 +456,25 @@ uint64_t unix_proc_fork(void)
 
 uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr)
 {
-    const unix_timespec_u_t* req = (const unix_timespec_u_t*)(uintptr_t)user_req_ptr;
-    unix_timespec_u_t* rem = (unix_timespec_u_t*)(uintptr_t)user_rem_ptr;
-    if (!req || !unix_user_range_ok(req, sizeof(*req))) {
+    if (!user_req_ptr || !unix_user_range_ok((void*)(uintptr_t)user_req_ptr, sizeof(unix_timespec_u_t))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if (rem && !unix_user_range_ok(rem, sizeof(*rem))) {
-        return (uint64_t)RDNX_E_INVALID;
-    }
-    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL) {
+    if (user_rem_ptr && !unix_user_range_ok((void*)(uintptr_t)user_rem_ptr, sizeof(unix_timespec_u_t))) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    uint64_t ms_from_sec = (uint64_t)req->tv_sec * 1000ULL;
-    uint64_t ms_from_nsec = (uint64_t)req->tv_nsec / 1000000ULL;
+    unix_timespec_u_t kreq;
+    if (unix_copy_from_user(&kreq, (const void*)(uintptr_t)user_req_ptr, sizeof(kreq)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (kreq.tv_sec < 0 || kreq.tv_nsec < 0 || kreq.tv_nsec >= 1000000000LL) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    uint64_t ms_from_sec = (uint64_t)kreq.tv_sec * 1000ULL;
+    uint64_t ms_from_nsec = (uint64_t)kreq.tv_nsec / 1000000ULL;
     uint64_t total_ms = ms_from_sec + ms_from_nsec;
-    if ((req->tv_nsec % 1000000LL) != 0) {
+    if ((kreq.tv_nsec % 1000000LL) != 0) {
         total_ms++;
     }
 
@@ -453,9 +484,9 @@ uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr)
         scheduler_yield();
     }
 
-    if (rem) {
-        rem->tv_sec = 0;
-        rem->tv_nsec = 0;
+    if (user_rem_ptr) {
+        unix_timespec_u_t krem = {0, 0};
+        (void)unix_copy_to_user((void*)(uintptr_t)user_rem_ptr, &krem, sizeof(krem));
     }
     return (uint64_t)RDNX_OK;
 }

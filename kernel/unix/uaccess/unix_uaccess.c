@@ -1,6 +1,7 @@
 #include "../unix_layer.h"
 #include "../../arch/config.h"
 #include "../../../include/error.h"
+#include "../../../include/common.h"
 
 #define UNIX_USER_MIN_VA 0x1000ULL
 
@@ -23,6 +24,30 @@ bool unix_user_range_ok(const void* ptr, size_t len)
         return false;
     }
     return end <= ARCH_USER_CANON_MAX && end < ARCH_KERNEL_VIRT_BASE;
+}
+
+int unix_copy_from_user(void* kdst, const void* usrc, size_t len)
+{
+    if (!kdst || !usrc || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(usrc, len)) {
+        return RDNX_E_INVALID;
+    }
+    memcpy(kdst, usrc, len);
+    return RDNX_OK;
+}
+
+int unix_copy_to_user(void* udst, const void* ksrc, size_t len)
+{
+    if (!udst || !ksrc || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(udst, len)) {
+        return RDNX_E_INVALID;
+    }
+    memcpy(udst, ksrc, len);
+    return RDNX_OK;
 }
 
 int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src)

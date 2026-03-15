@@ -10,6 +10,8 @@
 #include "../fabric/service/block_service.h"
 #include "../common/tty_console.h"
 #include "../common/heap.h"
+#include "../common/security.h"
+#include "../core/task.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
 #include "../../include/error.h"
@@ -113,6 +115,13 @@ static vfs_inode_t* vfs_alloc_inode(vfs_node_type_t type)
     }
     memset(inode, 0, sizeof(*inode));
     inode->type = type;
+    /* Set default DAC permissions and ownership. */
+    inode->mode = (type == VFS_NODE_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT;
+    task_t* creator = task_get_current();
+    if (creator) {
+        inode->uid = creator->euid;
+        inode->gid = creator->egid;
+    }
     return inode;
 }
 
@@ -827,6 +836,31 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     if (node->type != VFS_NODE_FILE || !node->inode) {
         return RDNX_E_INVALID;
     }
+
+    /* DAC permission check (P2). */
+    {
+        task_t* caller = task_get_current();
+        uint32_t euid = caller ? caller->euid : 0;
+        uint32_t egid = caller ? caller->egid : 0;
+        int access = SEC_ACCESS_READ;
+        if (flags & VFS_OPEN_WRITE) {
+            access |= SEC_ACCESS_WRITE;
+        }
+        /* Device inodes (console, null, zero) are always accessible. */
+        bool is_dev = (node->inode->flags &
+                       (VFS_INODE_CONSOLE | VFS_INODE_DEV_NULL |
+                        VFS_INODE_DEV_ZERO | VFS_INODE_CHARDEV |
+                        VFS_INODE_BLOCKDEV)) != 0;
+        if (!is_dev && node->inode->mode != 0) {
+            if (security_vfs_access(node->inode->mode,
+                                    node->inode->uid,
+                                    node->inode->gid,
+                                    access, euid, egid) != SEC_OK) {
+                return RDNX_E_DENIED;
+            }
+        }
+    }
+
     vfs_node_retain(node);   /* file descriptor holds a reference */
     out_file->node = node;
     out_file->pos = 0;

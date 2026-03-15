@@ -411,11 +411,7 @@ int apic_init(void)
     __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-5] Setup LAPIC access backend\n");
-    __asm__ volatile ("" ::: "memory");
-    extern void kprint_hex(uint64_t value);
-    kputs("[APIC-5.1] Base phys = ");
-    kprint_hex(apic_base_phys);
-    kputs("\n");
+    kprintf("[APIC-5.1] Base phys = 0x%llx\n", (unsigned long long)apic_base_phys);
     __asm__ volatile ("" ::: "memory");
 
     if (lapic_access_init(apic_base_phys, true) != 0) {

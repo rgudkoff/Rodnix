@@ -34,5 +34,6 @@ uint64_t posix_bind(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t
 uint64_t posix_connect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_sendto(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_recvfrom(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_openat(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 
 #endif /* _RODNIX_POSIX_SYS_FILE_H */

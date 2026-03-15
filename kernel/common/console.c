@@ -389,11 +389,21 @@ static bool line_filter_is_noisy_prefix(const char* s)
         "[IDT-",
         "[MEM-",
         "[APIC-",
+        "[IOAPIC-",
+        "[PIC]",
         "[PCI]",
         "[PS2-BUS]",
         "[HID-KBD]",
         "[FABRIC-IRQ]",
         "[fabric]",
+        "[fabric-",
+        "[FABRIC]",
+        "[InputCore]",
+        "[VNET]",
+        "[E1000]",
+        "[VGA]",
+        "[IDE]",
+        "[NET]",
         "[VFS] initrd: entries=",
         "[VFS] initrd entry:"
     };
@@ -850,6 +860,14 @@ void kprintf(const char* fmt, ...)
     va_end(args);
 }
 
+/* Write exactly len chars from buf via kputc (avoids kputs noisy-prefix filter). */
+static void kvprintf_write(const char* buf, int len)
+{
+    for (int i = 0; i < len; i++) {
+        kputc(buf[i]);
+    }
+}
+
 void kvprintf(const char* fmt, va_list args)
 {
     if (!console_verbose_mode() && fmt && line_filter_is_noisy_prefix(fmt)) {
@@ -857,96 +875,146 @@ void kvprintf(const char* fmt, va_list args)
     }
 
     while (*fmt) {
-        if (*fmt == '%') {
+        if (*fmt != '%') {
+            kputc(*fmt++);
+            continue;
+        }
+        fmt++; /* skip '%' */
+
+        /* Flags */
+        bool flag_left = false;
+        bool flag_zero = false;
+        while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '0') {
+            if (*fmt == '-') { flag_left = true; }
+            if (*fmt == '0') { flag_zero = true; }
             fmt++;
-            
-            /* Handle length modifiers (ll, l, h, hh) */
-            int is_long = 0;
-            if (*fmt == 'l') {
+        }
+
+        /* Width */
+        int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            fmt++;
+        }
+
+        /* Precision */
+        int prec = -1;
+        if (*fmt == '.') {
+            fmt++;
+            prec = 0;
+            while (*fmt >= '0' && *fmt <= '9') {
+                prec = prec * 10 + (*fmt - '0');
                 fmt++;
-                if (*fmt == 'l') {
-                    is_long = 2; /* ll */
-                    fmt++;
+            }
+        }
+
+        /* Length modifier */
+        int is_long = 0;
+        if (*fmt == 'l') {
+            fmt++;
+            if (*fmt == 'l') { is_long = 2; fmt++; }
+            else { is_long = 1; }
+        } else if (*fmt == 'h') {
+            fmt++;
+            if (*fmt == 'h') { fmt++; }
+        }
+
+        char pad = (flag_zero && !flag_left) ? '0' : ' ';
+        char numbuf[32];
+        int nlen;
+
+        switch (*fmt) {
+            case 'd':
+            case 'i': {
+                int64_t val;
+                if (is_long == 2)      { val = (int64_t)va_arg(args, int64_t); }
+                else if (is_long == 1) { val = (int64_t)va_arg(args, long); }
+                else                   { val = (int64_t)va_arg(args, int); }
+                bool neg = (val < 0);
+                uint64_t uval = neg ? (uint64_t)(-val) : (uint64_t)val;
+                nlen = 0;
+                if (uval == 0) { numbuf[nlen++] = '0'; }
+                else { while (uval) { numbuf[nlen++] = (char)('0' + uval % 10u); uval /= 10u; } }
+                if (neg) { numbuf[nlen++] = '-'; }
+                for (int i = 0, j = nlen-1; i < j; i++, j--) { char t = numbuf[i]; numbuf[i] = numbuf[j]; numbuf[j] = t; }
+                if (!flag_left && flag_zero && neg) {
+                    /* Sign precedes zero-padding: -0000001, not 000000-1 */
+                    kputc('-');
+                    for (int i = nlen; i < width; i++) { kputc('0'); }
+                    kvprintf_write(numbuf + 1, nlen - 1); /* digits only, skip '-' */
                 } else {
-                    is_long = 1; /* l */
+                    if (!flag_left) { for (int i = nlen; i < width; i++) { kputc(pad); } }
+                    kvprintf_write(numbuf, nlen);
+                    if (flag_left) { for (int i = nlen; i < width; i++) { kputc(' '); } }
                 }
+                break;
             }
-            
-            switch (*fmt) {
-                case 'd':
-                case 'i': {
-                    int64_t val;
-                    if (is_long == 2) {
-                        val = (int64_t)va_arg(args, int64_t);
-                    } else if (is_long == 1) {
-                        val = (int64_t)va_arg(args, long);
-                    } else {
-                        val = (int64_t)va_arg(args, int);
-                    }
-                    if (val < 0) {
-                        kputc('-');
-                        val = -val;
-                    }
-                    kprint_uint((uint64_t)val, 10);
-                    break;
-                }
-                case 'u': {
-                    uint64_t val;
-                    if (is_long == 2) {
-                        val = va_arg(args, uint64_t);
-                    } else if (is_long == 1) {
-                        val = (uint64_t)va_arg(args, unsigned long);
-                    } else {
-                        val = (uint64_t)va_arg(args, unsigned int);
-                    }
-                    kprint_uint(val, 10);
-                    break;
-                }
-                case 'x':
-                case 'X': {
-                    uint64_t val;
-                    if (is_long == 2) {
-                        val = va_arg(args, uint64_t);
-                    } else if (is_long == 1) {
-                        val = (uint64_t)va_arg(args, unsigned long);
-                    } else {
-                        val = (uint64_t)va_arg(args, unsigned int);
-                    }
-                    kprint_hex(val);
-                    break;
-                }
-                case 's': {
-                    const char* str = va_arg(args, const char*);
-                    kputs(str ? str : "(null)");
-                    break;
-                }
-                case 'p': {
-                    void* ptr = va_arg(args, void*);
-                    kprint_hex((uint64_t)(uintptr_t)ptr);
-                    break;
-                }
-                case 'c': {
-                    char c = (char)va_arg(args, int);
-                    kputc(c);
-                    break;
-                }
-                case '%': {
-                    kputc('%');
-                    break;
-                }
-                default:
-                    kputc('%');
-                    if (is_long == 2) {
-                        kputc('l');
-                        kputc('l');
-                    } else if (is_long == 1) {
-                        kputc('l');
-                    }
-                    kputc(*fmt);
-                    break;
+            case 'u': {
+                uint64_t val;
+                if (is_long == 2)      { val = va_arg(args, uint64_t); }
+                else if (is_long == 1) { val = (uint64_t)va_arg(args, unsigned long); }
+                else                   { val = (uint64_t)va_arg(args, unsigned int); }
+                nlen = 0;
+                if (val == 0) { numbuf[nlen++] = '0'; }
+                else { while (val) { numbuf[nlen++] = (char)('0' + val % 10u); val /= 10u; } }
+                for (int i = 0, j = nlen-1; i < j; i++, j--) { char t = numbuf[i]; numbuf[i] = numbuf[j]; numbuf[j] = t; }
+                if (!flag_left) { for (int i = nlen; i < width; i++) { kputc(pad); } }
+                kvprintf_write(numbuf, nlen);
+                if (flag_left)  { for (int i = nlen; i < width; i++) { kputc(' '); } }
+                break;
             }
-        } else {
-            kputc(*fmt);
+            case 'x':
+            case 'X': {
+                uint64_t val;
+                if (is_long == 2)      { val = va_arg(args, uint64_t); }
+                else if (is_long == 1) { val = (uint64_t)va_arg(args, unsigned long); }
+                else                   { val = (uint64_t)va_arg(args, unsigned int); }
+                const char* hex = (*fmt == 'X') ? "0123456789ABCDEF" : "0123456789abcdef";
+                nlen = 0;
+                if (val == 0) { numbuf[nlen++] = '0'; }
+                else { while (val) { numbuf[nlen++] = hex[val & 0xFu]; val >>= 4; } }
+                for (int i = 0, j = nlen-1; i < j; i++, j--) { char t = numbuf[i]; numbuf[i] = numbuf[j]; numbuf[j] = t; }
+                if (!flag_left) { for (int i = nlen; i < width; i++) { kputc(pad); } }
+                kvprintf_write(numbuf, nlen);
+                if (flag_left)  { for (int i = nlen; i < width; i++) { kputc(' '); } }
+                break;
+            }
+            case 's': {
+                const char* str = va_arg(args, const char*);
+                if (!str) { str = "(null)"; }
+                int slen = 0;
+                for (const char* p = str; *p; p++) { slen++; }
+                if (prec >= 0 && slen > prec) { slen = prec; }
+                if (!flag_left) { for (int i = slen; i < width; i++) { kputc(' '); } }
+                kvprintf_write(str, slen);
+                if (flag_left)  { for (int i = slen; i < width; i++) { kputc(' '); } }
+                break;
+            }
+            case 'p': {
+                void* ptr = va_arg(args, void*);
+                uint64_t val = (uint64_t)(uintptr_t)ptr;
+                kputc('0'); kputc('x');
+                nlen = 0;
+                if (val == 0) { numbuf[nlen++] = '0'; }
+                else { while (val) { numbuf[nlen++] = "0123456789abcdef"[val & 0xFu]; val >>= 4; } }
+                for (int i = 0, j = nlen-1; i < j; i++, j--) { char t = numbuf[i]; numbuf[i] = numbuf[j]; numbuf[j] = t; }
+                kvprintf_write(numbuf, nlen);
+                break;
+            }
+            case 'c': {
+                char c = (char)va_arg(args, int);
+                if (!flag_left) { for (int i = 1; i < width; i++) { kputc(' '); } }
+                kputc(c);
+                if (flag_left)  { for (int i = 1; i < width; i++) { kputc(' '); } }
+                break;
+            }
+            case '%':
+                kputc('%');
+                break;
+            default:
+                kputc('%');
+                kputc(*fmt);
+                break;
         }
         fmt++;
     }

@@ -424,3 +424,17 @@ uint64_t posix_readdir(uint64_t a1,
     (void)a6;
     return unix_fs_readdir(a1, a2, a3);
 }
+
+uint64_t posix_openat(uint64_t a1,
+                             uint64_t a2,
+                             uint64_t a3,
+                             uint64_t a4,
+                             uint64_t a5,
+                             uint64_t a6)
+{
+    (void)a4;
+    (void)a5;
+    (void)a6;
+    /* a1 = dirfd, a2 = path ptr, a3 = flags; mode (a4) is ignored for now */
+    return unix_fs_openat(a1, a2, a3);
+}
