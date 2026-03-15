@@ -87,7 +87,7 @@ Implemented and working today:
 - interrupts and LAPIC timer
 - preemptive scheduler
 - VFS layer with RAMFS / initrd
-- EXT2 read-only mount path
+- EXT2 mount + write path (`write`/`truncate`, direct + single indirect)
 - Fabric device / driver / service model
 - system event stream
 - IDE disk discovery and block service (`disk0`)
@@ -142,8 +142,8 @@ High-impact contribution areas:
 
 - POSIX ABI hardening: pointer validation, syscall behavior parity, edge case
   testing
-- File systems and storage: EXT2 write path, block I/O reliability, caching
-  and buffering improvements
+- File systems and storage: crash-consistency hardening for EXT2, block I/O
+  reliability, caching and buffering improvements
 - Fabric evolution: richer service lifecycle, improved service/subsystem
   boundaries, event stream extensions
 - Userland: libc-lite expansion, shell improvements, additional utilities
