@@ -35,26 +35,25 @@
   (минимальный line discipline: echo, backspace, `Ctrl-U`, `Ctrl-C`, `Ctrl-D`,
   canonical line mode).
 
-## `/dev` и `devfs` (план)
+## `/dev` и `devfs`
 
-Текущее состояние уже виртуализирует `/dev`, но это пока часть общего VFS/RAMFS
-кода, а не отдельная файловая система устройств.
+`devfs` реализован как отдельная файловая система (`kernel/fs/devfs.c`),
+монтируется в `/dev` на этапе boot.
 
-Целевое состояние:
+Текущее состояние:
 
-- Ввести отдельный тип ФС `devfs`.
-- Монтировать `devfs` в `/dev` на раннем этапе boot.
-- Перенести создание `console/stdin/stdout/stderr` из общего VFS в `devfs`.
-- Добавить `devfs`-пространство `/dev/fd/{0,1,2}`.
-- Оформить `stdin/stdout/stderr` как alias-ссылки на `/dev/fd/0,1,2`.
-- Добавить единый API динамической публикации устройств
-  (например, `devfs_register_chrdev(...)`).
+- `devfs` монтируется в `/dev` через `vfs_mount("devfs", NULL, "/dev")`.
+- Символы: `console`, `stdin`, `stdout`, `stderr` (chardev, CONSOLE flag),
+  `null` (DEV_NULL), `zero` (DEV_ZERO).
+- Блочные устройства регистрируются через `devfs_register_blockdev(name)` —
+  вызывается Fabric при attach `disk0` и т.п.
+- Динамическая регистрация до mount: устройства ставятся в pending-очередь
+  и добавляются при монтировании devfs.
 
-Практический эффект:
+Ещё не реализовано:
 
-- `/dev` становится явно виртуальным и независимым от initrd/rootfs контента.
-- Упрощается регистрация драйверов и создание device nodes при attach/detach.
-- Архитектура ближе к подходу с управлением device namespace внутри ядра.
+- `/dev/fd/{0,1,2}` как ссылки на открытые fd.
+- Динамический detach (удаление device node при отсоединении устройства).
 
 ## Инварианты
 

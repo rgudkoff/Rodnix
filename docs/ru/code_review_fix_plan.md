@@ -1,8 +1,8 @@
 # RodNIX — План устранения замечаний code review
 
 Дата: 2026-03-15
-Ветка: `fs`
-Статус: к выполнению
+Ветка: `fs` → `dev`
+Статус: **ВЫПОЛНЕНО** (коммит `576927d`, ветка `dev`)
 
 ---
 
@@ -686,24 +686,24 @@ ino.size_high = (uint32_t)(final_size >> 32);
 
 ## Сводная таблица
 
-| # | Фикс | Файл | Сложность | Риск | Фаза |
-|---|------|------|-----------|------|------|
-| 0-A | spinlock в `ext2_mount_ctx_t` | `ext2.c` | малая | нулевой | 0 |
-| 0-B | `g_port_table_lock` | `ipc.c` | малая | нулевой | 0 |
-| 0-C | per-CPU locals array | `task.c` | средняя | низкий | 0 |
-| 0-D | thread-list в `task_t` / `thread_t` | `task.h`, `task.c` | малая | низкий | 0 |
-| P0-1 | ext2 writeback spinlock | `ext2.c` | средняя | средний | 1 |
-| P0-2 | IPC refcount атомарен с push | `ipc.c` | средняя | средний | 1 |
-| P0-3 | per-CPU аксессоры в scheduler | `task.c`, `control.c` | средняя | средний | 1 |
-| P0-4 | `task_destroy` → `thread_destroy` | `task.c` | малая | низкий | 1 |
-| P2-10 | vfs_write error passthrough | `vfs.c` | тривиальная | низкий | 1 |
-| P1-5a | loader stack rollback | `loader.c` | средняя | средний | 2 |
-| P1-5b | ext2 resize rollback log | `ext2.c` | малая | нулевой | 2 |
-| P1-6A | VFS cache gen stamp | `vfs.c`, `vfs.h` | малая | низкий | 2 |
-| P2-9 | inherit_stack depth 8 + overflow flag | `task.h`, `control.c` | малая | низкий | 2 |
-| P2-8 | ext2 size_high | `ext2.c` | малая | низкий | 3 |
-| P1-7 | locking documentation | все | малая | нулевой | попутно |
-| P1-6B | VFS full refcounting | `vfs.c`, `vfs.h` | большая | высокий | 4 |
+| # | Фикс | Файл | Сложность | Риск | Фаза | Статус |
+|---|------|------|-----------|------|------|--------|
+| 0-A | spinlock в `ext2_mount_ctx_t` | `ext2.c` | малая | нулевой | 0 | ✅ |
+| 0-B | `g_port_table_lock` | `ipc.c` | малая | нулевой | 0 | ✅ |
+| 0-C | per-CPU locals array | `task.c` | средняя | низкий | 0 | ✅ |
+| 0-D | thread-list в `task_t` / `thread_t` | `task.h`, `task.c` | малая | низкий | 0 | ✅ |
+| P0-1 | ext2 writeback spinlock | `ext2.c` | средняя | средний | 1 | ✅ |
+| P0-2 | IPC refcount атомарен с push | `ipc.c` | средняя | средний | 1 | ✅ |
+| P0-3 | per-CPU аксессоры в scheduler | `task.c`, `control.c` | средняя | средний | 1 | ✅ |
+| P0-4 | `task_destroy` → `thread_destroy` | `task.c` | малая | низкий | 1 | ✅ |
+| P2-10 | vfs_write error passthrough | `vfs.c` | тривиальная | низкий | 1 | ✅ |
+| P1-5a | loader stack rollback | `loader.c` | средняя | средний | 2 | ✅ |
+| P1-5b | ext2 resize rollback log | `ext2.c` | малая | нулевой | 2 | ✅ |
+| P1-6A | VFS cache gen stamp | `vfs.c`, `vfs.h` | малая | низкий | 2 | ✅ |
+| P2-9 | inherit_stack depth 8 + overflow flag | `task.h`, `control.c` | малая | низкий | 2 | ✅ |
+| P2-8 | ext2 size_high | `ext2.c` | малая | низкий | 3 | ✅ |
+| P1-7 | locking documentation | все | малая | нулевой | попутно | ✅ |
+| P1-6B | VFS full refcounting | `vfs.c`, `vfs.h` | большая | высокий | 4 | ✅ |
 
 ---
 

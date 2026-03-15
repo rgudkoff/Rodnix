@@ -22,7 +22,8 @@
 - MLQ с 3 уровнями (low/normal/high).
 - TIMESHARE/REALTIME + динамический приоритет для TIMESHARE.
 - boost при пробуждении, penalty для CPU-bound, clamping.
-- базовое IPC priority inheritance (best-effort).
+- IPC priority inheritance: стек глубиной 8 (`inherit_stack[8]`),
+  при переполнении `has_inherit_overflow` → безопасный откат к `base_priority`.
 - deferred reaper + отдельный reaper-thread + базовые метрики reaper/stack-cache.
 - единый `waitq`-путь ожидания для sleep/IPC с timeout-list.
 
