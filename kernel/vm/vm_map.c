@@ -385,6 +385,47 @@ long vm_task_mmap_file(task_t* task,
     return (long)addr;
 }
 
+long vm_task_mmap_file_backing(task_t* task,
+                               uint64_t addr_hint,
+                               uint64_t len,
+                               uint32_t prot,
+                               uint32_t flags,
+                               vm_file_backing_t* fb,
+                               uint64_t file_offset)
+{
+    if (!task || !task->vm_map || len == 0 || !fb) {
+        return (long)RDNX_E_INVALID;
+    }
+    uint64_t alen = vm_align_up(len);
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    uint64_t addr = 0;
+
+    if ((flags & VM_MAP_F_FIXED) != 0) {
+        addr = vm_align_down(addr_hint);
+        (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
+    } else {
+        uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
+        addr = vm_find_gap(map, hint, alen);
+    }
+    if (!addr) {
+        return (long)RDNX_E_NOMEM;
+    }
+
+    vm_object_t* obj = vm_object_create(VM_OBJECT_FILE, alen);
+    if (!obj) {
+        return (long)RDNX_E_NOMEM;
+    }
+    obj->pager_private = fb;
+
+    int rc = vm_map_add(map, addr, alen, prot, flags | VM_MAP_F_LAZY, obj, file_offset);
+    vm_object_unref(obj);
+    if (rc != RDNX_OK) {
+        return (long)rc;
+    }
+    task->vm_mmap_hint = addr + alen;
+    return (long)addr;
+}
+
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
 {
     if (!task || !task->vm_map || !task->address_space) {

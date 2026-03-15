@@ -23,6 +23,11 @@ typedef struct vm_file_backing {
     const uint8_t* data;
     uint64_t size;
     uint64_t file_offset;
+    /* Optional demand-paging callback: fills one VM_OBJECT_PAGE_SIZE page.
+     * page_off is the byte offset from the start of the file (page-aligned).
+     * Returns RDNX_OK on success. */
+    int (*read_page)(void* pager_priv, uint64_t page_off, void* page_buf);
+    void* pager_priv;
 } vm_file_backing_t;
 
 vm_object_t* vm_object_create(vm_object_type_t type, uint64_t size);

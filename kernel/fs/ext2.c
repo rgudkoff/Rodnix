@@ -1055,75 +1055,125 @@ static int ext2_trim_inode_blocks(ext2_mount_ctx_t* ctx, uint32_t ino_num, ext2_
     return ext2_write_inode(ctx, ino_num, ino);
 }
 
-static int ext2_load_file(ext2_mount_ctx_t* ctx, uint32_t ino_num, const ext2_inode_t* ino, vfs_node_t* node)
+/* -------------------------------------------------------------------------
+ * Demand-paging / lazy inode support
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+    uint32_t ino_num;
+} ext2_pager_ctx_t;
+
+/**
+ * Read an arbitrary byte range from an ext2 file directly from disk.
+ * Used for lazy vfs_read() and as a building block for ext2_pager_read_page().
+ * Returns number of bytes read (>= 0) or negative error code.
+ */
+int ext2_read_file_range(uint64_t ino_num, uint64_t offset, void* buf, size_t len)
 {
-    if (!ctx || !ino || !node) {
-        return RDNX_E_INVALID;
+    if (!buf || len == 0) {
+        return 0;
+    }
+    ext2_inode_t ino;
+    if (ext2_read_inode(&g_ext2_live, (uint32_t)ino_num, &ino) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+    uint64_t fsize = ext2_inode_size_bytes(&ino);
+    if (offset >= fsize) {
+        return 0;
+    }
+    if (offset + (uint64_t)len > fsize) {
+        len = (size_t)(fsize - offset);
     }
 
-    uint64_t fsize64 = ext2_inode_size_bytes(ino);
-    uint32_t fsize = (fsize64 > UINT32_MAX) ? UINT32_MAX : (uint32_t)fsize64;
-    if (fsize > EXT2_MAX_FILE_BYTES) {
-        fsize = EXT2_MAX_FILE_BYTES;
-    }
-
-    if (fsize == 0) {
-        int zrc = vfs_fs_set_file_data(node, NULL, 0);
-        if (zrc == RDNX_OK) {
-            ext2_mark_node(node, ino_num);
-        }
-        return zrc;
-    }
-
-    uint8_t* data = (uint8_t*)kmalloc(fsize);
-    uint8_t* blk = (uint8_t*)kmalloc(ctx->block_size);
-    if (!data || !blk) {
-        if (data) {
-            kfree(data);
-        }
-        if (blk) {
-            kfree(blk);
-        }
+    uint8_t* blk_buf = (uint8_t*)kmalloc(g_ext2_live.block_size);
+    if (!blk_buf) {
         return RDNX_E_NOMEM;
     }
 
-    uint32_t done = 0;
-    uint32_t lbn = 0;
-    while (done < fsize) {
+    uint8_t* dst = (uint8_t*)buf;
+    size_t done = 0;
+    while (done < len) {
+        uint64_t abs_off = offset + (uint64_t)done;
+        uint32_t lbn     = (uint32_t)(abs_off / (uint64_t)g_ext2_live.block_size);
+        uint32_t in_blk  = (uint32_t)(abs_off % (uint64_t)g_ext2_live.block_size);
+
         uint32_t pblk = 0;
-        int rc = ext2_inode_get_block(ctx, ino, lbn, &pblk);
-        if (rc != RDNX_OK) {
-            kfree(blk);
-            kfree(data);
-            return rc;
+        if (ext2_inode_get_block(&g_ext2_live, &ino, lbn, &pblk) != RDNX_OK) {
+            break;
         }
         if (pblk == 0) {
-            memset(blk, 0, ctx->block_size);
-        } else {
-            rc = ext2_read_block(ctx, pblk, blk);
-            if (rc != RDNX_OK) {
-                kfree(blk);
-                kfree(data);
-                return rc;
-            }
+            memset(blk_buf, 0, g_ext2_live.block_size);
+        } else if (ext2_read_block(&g_ext2_live, pblk, blk_buf) != RDNX_OK) {
+            break;
         }
 
-        uint32_t chunk = ctx->block_size;
-        if (chunk > (fsize - done)) {
-            chunk = fsize - done;
+        size_t chunk = (size_t)g_ext2_live.block_size - (size_t)in_blk;
+        if (chunk > len - done) {
+            chunk = len - done;
         }
-        memcpy(&data[done], blk, chunk);
+        memcpy(dst + done, blk_buf + in_blk, chunk);
         done += chunk;
-        lbn++;
     }
 
-    int rc = vfs_fs_set_file_data(node, data, fsize);
-    if (rc == RDNX_OK) {
-        ext2_mark_node(node, ino_num);
+    kfree(blk_buf);
+    return (int)done;
+}
+
+/**
+ * vm_file_backing read_page callback — fills one VM_OBJECT_PAGE_SIZE page
+ * from an ext2 file identified by ino_num in pager_priv.
+ */
+static int ext2_pager_read_page(void* pager_priv, uint64_t page_off, void* page_buf)
+{
+    ext2_pager_ctx_t* pctx = (ext2_pager_ctx_t*)pager_priv;
+    memset(page_buf, 0, 4096u);
+    int n = ext2_read_file_range((uint64_t)pctx->ino_num, page_off, page_buf, 4096u);
+    return (n >= 0) ? RDNX_OK : n;
+}
+
+/**
+ * Allocate a vm_file_backing_t wired to an ext2 inode for demand-paged mmap.
+ * Caller transfers ownership to a vm_object (which will free it on unref).
+ */
+#include "../vm/vm_object.h"
+vm_file_backing_t* ext2_file_backing_create(vfs_inode_t* inode)
+{
+    if (!inode || inode->fs_tag != VFS_FS_TAG_EXT2) {
+        return NULL;
     }
-    kfree(blk);
-    kfree(data);
-    return rc;
+    ext2_pager_ctx_t* pctx = (ext2_pager_ctx_t*)kmalloc(sizeof(ext2_pager_ctx_t));
+    if (!pctx) {
+        return NULL;
+    }
+    pctx->ino_num = (uint32_t)inode->fs_ino;
+
+    vm_file_backing_t* fb = (vm_file_backing_t*)kmalloc(sizeof(vm_file_backing_t));
+    if (!fb) {
+        kfree(pctx);
+        return NULL;
+    }
+    fb->data        = NULL;
+    fb->size        = (uint64_t)inode->size;
+    fb->file_offset = 0;
+    fb->read_page   = ext2_pager_read_page;
+    fb->pager_priv  = pctx;
+    return fb;
+}
+
+/**
+ * Lazy inode init — records size/ino, leaves data = NULL so reads go
+ * through ext2_read_file_range() and mmaps use demand paging.
+ */
+static int ext2_init_lazy_inode(uint32_t ino_num, const ext2_inode_t* ino, vfs_node_t* node)
+{
+    if (!ino || !node || !node->inode) {
+        return RDNX_E_INVALID;
+    }
+    node->inode->size     = (size_t)ext2_inode_size_bytes(ino);
+    node->inode->capacity = 0;
+    node->inode->data     = NULL;
+    ext2_mark_node(node, ino_num);
+    return RDNX_OK;
 }
 
 static int ext2_build_dir(ext2_mount_ctx_t* ctx,
@@ -1198,7 +1248,7 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
                                     if (nt == VFS_NODE_DIR) {
                                         (void)ext2_build_dir(ctx, child, de->inode, &child_ino, depth + 1u);
                                     } else if (ext2_is_reg(&child_ino)) {
-                                        (void)ext2_load_file(ctx, de->inode, &child_ino, child);
+                                        (void)ext2_init_lazy_inode(de->inode, &child_ino, child);
                                     }
                                 }
                             }

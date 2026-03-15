@@ -1,7 +1,9 @@
 #include "posix_sys_vm.h"
 #include "posix_syscall.h"
 #include "../fs/vfs.h"
+#include "../fs/ext2.h"
 #include "../vm/vm_map.h"
+#include "../vm/vm_object.h"
 #include "../unix/unix_layer.h"
 #include "../common/heap.h"
 #include "../../include/error.h"
@@ -80,10 +82,20 @@ uint64_t posix_mmap(uint64_t a1,
     if ((off & (VM_PAGE_SIZE - 1u)) != 0) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    const uint8_t* data = file->node->inode->data;
-    uint64_t data_size = (uint64_t)file->node->inode->size;
+    vfs_inode_t* mmap_inode = file->node->inode;
+    const uint8_t* data = mmap_inode->data;
+    uint64_t data_size = (uint64_t)mmap_inode->size;
     if (!data) {
-        return (uint64_t)RDNX_E_INVALID;
+        /* No in-RAM buffer — try demand-paged mmap for ext2 files. */
+        if (mmap_inode->fs_tag != VFS_FS_TAG_EXT2) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        vm_file_backing_t* fb = ext2_file_backing_create(mmap_inode);
+        if (!fb) {
+            return (uint64_t)RDNX_E_NOMEM;
+        }
+        long ret = vm_task_mmap_file_backing(task, a1, a2, prot, flags, fb, off);
+        return (uint64_t)ret;
     }
     if (is_shared) {
         vm_object_t* obj = file->node->inode->mmap_object;

@@ -926,6 +926,17 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
     }
     size_t avail = inode->size - file->pos;
     size_t to_read = size < avail ? size : avail;
+    if (!inode->data) {
+        if (inode->fs_tag == VFS_FS_TAG_EXT2) {
+            int n = ext2_read_file_range(inode->fs_ino, (uint64_t)file->pos, buffer, to_read);
+            if (n < 0) {
+                return n;
+            }
+            file->pos += (size_t)n;
+            return n;
+        }
+        return RDNX_E_INVALID;
+    }
     memcpy(buffer, inode->data + file->pos, to_read);
     file->pos += to_read;
     return (int)to_read;

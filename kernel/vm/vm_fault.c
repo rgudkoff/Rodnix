@@ -89,14 +89,15 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
             }
             if (e->object && e->object->type == VM_OBJECT_FILE && e->object->pager_private) {
                 vm_file_backing_t* fb = (vm_file_backing_t*)e->object->pager_private;
-                if (fb->data && fb->size > 0) {
-                    uint64_t rel = va - e->start;
-                    uint64_t off = fb->file_offset + e->object_offset + rel;
-                    if (off < fb->size) {
-                        uint64_t avail = fb->size - off;
-                        uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
-                        memcpy(ARCH_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
-                    }
+                uint64_t rel = va - e->start;
+                uint64_t off = fb->file_offset + e->object_offset + rel;
+                if (fb->read_page) {
+                    /* Demand-paging: load one page from the backing store. */
+                    (void)fb->read_page(fb->pager_priv, off, ARCH_PHYS_TO_VIRT(phys));
+                } else if (fb->data && fb->size > 0 && off < fb->size) {
+                    uint64_t avail = fb->size - off;
+                    uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
+                    memcpy(ARCH_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
                 }
             }
             if (e->object) {

@@ -54,6 +54,14 @@ long vm_task_mmap_file(task_t* task,
                        const uint8_t* data,
                        uint64_t data_size,
                        uint64_t file_offset);
+/* Takes ownership of fb (freed via vm_object_unref when the mapping is torn down). */
+long vm_task_mmap_file_backing(task_t* task,
+                               uint64_t addr_hint,
+                               uint64_t len,
+                               uint32_t prot,
+                               uint32_t flags,
+                               vm_file_backing_t* fb,
+                               uint64_t file_offset);
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len);
 int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags);
 int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot);

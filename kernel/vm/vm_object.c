@@ -77,6 +77,10 @@ void vm_object_unref(vm_object_t* obj)
             obj->resident_pages = NULL;
         }
         if (obj->pager_private) {
+            vm_file_backing_t* fb2 = (vm_file_backing_t*)obj->pager_private;
+            if (fb2->pager_priv) {
+                kfree(fb2->pager_priv);
+            }
             kfree(obj->pager_private);
             obj->pager_private = NULL;
         }
