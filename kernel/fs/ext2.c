@@ -122,7 +122,7 @@ static int g_ext2_live_ready = 0;
 static const ext2_fs_caps_t g_ext2_caps = {
     .write_in_place = 1,
     .write_extend = 1,
-    .truncate = 0,
+    .truncate = 1,
 };
 
 static uint64_t ext2_inode_size_bytes(const ext2_inode_t* ino)
@@ -396,6 +396,61 @@ static int ext2_alloc_block(ext2_mount_ctx_t* ctx, uint32_t* out_blk)
     return RDNX_E_GENERIC;
 }
 
+static int ext2_free_block(ext2_mount_ctx_t* ctx, uint32_t blk)
+{
+    if (!ctx || !ctx->gdt || ctx->block_size == 0) {
+        return RDNX_E_INVALID;
+    }
+    if (blk < ctx->sb.first_data_block || blk >= ctx->sb.blocks_count) {
+        return RDNX_E_INVALID;
+    }
+
+    uint32_t rel = blk - ctx->sb.first_data_block;
+    uint32_t total_data_blocks = ctx->sb.blocks_count - ctx->sb.first_data_block;
+    if (rel >= total_data_blocks || ctx->sb.blocks_per_group == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint32_t g = rel / ctx->sb.blocks_per_group;
+    uint32_t bi = rel % ctx->sb.blocks_per_group;
+    if (g >= ctx->group_count || ctx->gdt[g].block_bitmap == 0) {
+        return RDNX_E_INVALID;
+    }
+
+    uint8_t* bmap = (uint8_t*)kmalloc(ctx->block_size);
+    if (!bmap) {
+        return RDNX_E_NOMEM;
+    }
+
+    int rc = ext2_read_block(ctx, ctx->gdt[g].block_bitmap, bmap);
+    if (rc != RDNX_OK) {
+        kfree(bmap);
+        return rc;
+    }
+
+    uint32_t byte = bi >> 3;
+    uint8_t mask = (uint8_t)(1u << (bi & 7u));
+    if ((bmap[byte] & mask) == 0) {
+        kfree(bmap);
+        return RDNX_OK;
+    }
+    bmap[byte] &= (uint8_t)~mask;
+
+    rc = ext2_write_block(ctx, ctx->gdt[g].block_bitmap, bmap);
+    kfree(bmap);
+    if (rc != RDNX_OK) {
+        return rc;
+    }
+
+    if (ctx->gdt[g].free_blocks_count != UINT16_MAX) {
+        ctx->gdt[g].free_blocks_count++;
+    }
+    if (ctx->sb.free_blocks_count != UINT32_MAX) {
+        ctx->sb.free_blocks_count++;
+    }
+    return ext2_sync_super_and_gdt(ctx);
+}
+
 static int ext2_zero_block(ext2_mount_ctx_t* ctx, uint32_t block_no)
 {
     if (!ctx || block_no == 0) {
@@ -557,6 +612,39 @@ static int ext2_inode_get_or_alloc_block(ext2_mount_ctx_t* ctx,
     *out_blk = blk;
     kfree(ibuf);
     return RDNX_OK;
+}
+
+static uint32_t ext2_count_allocated_blocks(ext2_mount_ctx_t* ctx, const ext2_inode_t* ino)
+{
+    if (!ctx || !ino) {
+        return 0;
+    }
+
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < EXT2_NDIR_BLOCKS; i++) {
+        if (ino->block[i] != 0) {
+            total++;
+        }
+    }
+
+    if (ino->block[12] != 0) {
+        total++; /* indirect block itself */
+        uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!ibuf) {
+            return total;
+        }
+        if (ext2_read_block(ctx, ino->block[12], ibuf) == RDNX_OK) {
+            uint32_t per_block = ctx->block_size / sizeof(uint32_t);
+            const uint32_t* table = (const uint32_t*)ibuf;
+            for (uint32_t i = 0; i < per_block; i++) {
+                if (table[i] != 0) {
+                    total++;
+                }
+            }
+        }
+        kfree(ibuf);
+    }
+    return total;
 }
 
 static int ext2_load_file(ext2_mount_ctx_t* ctx, uint32_t ino_num, const ext2_inode_t* ino, vfs_node_t* node)
@@ -844,26 +932,129 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
     }
 
     uint64_t disk_size = ext2_inode_size_bytes(&ino);
-    if ((uint64_t)new_size < disk_size) {
-        return RDNX_E_UNSUPPORTED;
-    }
     if ((uint64_t)new_size == disk_size) {
         return RDNX_OK;
     }
 
     uint32_t old_blocks = (uint32_t)((disk_size + g_ext2_live.block_size - 1u) / g_ext2_live.block_size);
     uint32_t new_blocks = (uint32_t)(((uint64_t)new_size + g_ext2_live.block_size - 1u) / g_ext2_live.block_size);
-    int inode_dirty = 0;
-    for (uint32_t lbn = old_blocks; lbn < new_blocks; lbn++) {
-        uint32_t pblk = 0;
-        int rc = ext2_inode_get_or_alloc_block(&g_ext2_live,
-                                               (uint32_t)node->inode->fs_ino,
-                                               &ino, lbn, 1, &pblk, &inode_dirty);
-        if (rc != RDNX_OK || pblk == 0) {
-            return RDNX_E_UNSUPPORTED;
+
+    if ((uint64_t)new_size > disk_size) {
+        int inode_dirty = 0;
+        for (uint32_t lbn = old_blocks; lbn < new_blocks; lbn++) {
+            uint32_t pblk = 0;
+            int rc = ext2_inode_get_or_alloc_block(&g_ext2_live,
+                                                   (uint32_t)node->inode->fs_ino,
+                                                   &ino, lbn, 1, &pblk, &inode_dirty);
+            if (rc != RDNX_OK || pblk == 0) {
+                return RDNX_E_UNSUPPORTED;
+            }
+        }
+    } else {
+        uint32_t per_block = g_ext2_live.block_size / sizeof(uint32_t);
+        uint8_t* ibuf = NULL;
+        uint32_t* table = NULL;
+        int ibuf_dirty = 0;
+        int ibuf_loaded = 0;
+
+        for (uint32_t lbn = old_blocks; lbn > new_blocks; lbn--) {
+            uint32_t idx = lbn - 1u;
+            if (idx < EXT2_NDIR_BLOCKS) {
+                uint32_t blk = ino.block[idx];
+                if (blk != 0) {
+                    int frc = ext2_free_block(&g_ext2_live, blk);
+                    if (frc != RDNX_OK) {
+                        if (ibuf) {
+                            kfree(ibuf);
+                        }
+                        return frc;
+                    }
+                    ino.block[idx] = 0;
+                }
+                continue;
+            }
+
+            uint32_t iidx = idx - EXT2_NDIR_BLOCKS;
+            if (iidx >= per_block || ino.block[12] == 0) {
+                continue;
+            }
+
+            if (!ibuf_loaded) {
+                ibuf = (uint8_t*)kmalloc(g_ext2_live.block_size);
+                if (!ibuf) {
+                    return RDNX_E_NOMEM;
+                }
+                int rrc = ext2_read_block(&g_ext2_live, ino.block[12], ibuf);
+                if (rrc != RDNX_OK) {
+                    kfree(ibuf);
+                    return rrc;
+                }
+                table = (uint32_t*)ibuf;
+                ibuf_loaded = 1;
+            }
+
+            uint32_t blk = table[iidx];
+            if (blk != 0) {
+                int frc = ext2_free_block(&g_ext2_live, blk);
+                if (frc != RDNX_OK) {
+                    kfree(ibuf);
+                    return frc;
+                }
+                table[iidx] = 0;
+                ibuf_dirty = 1;
+            }
+        }
+
+        if (ibuf_loaded && ibuf_dirty && ino.block[12] != 0) {
+            int wrc = ext2_write_block(&g_ext2_live, ino.block[12], ibuf);
+            if (wrc != RDNX_OK) {
+                kfree(ibuf);
+                return wrc;
+            }
+        }
+
+        if (ino.block[12] != 0) {
+            if (!ibuf_loaded) {
+                ibuf = (uint8_t*)kmalloc(g_ext2_live.block_size);
+                if (!ibuf) {
+                    return RDNX_E_NOMEM;
+                }
+                int rrc = ext2_read_block(&g_ext2_live, ino.block[12], ibuf);
+                if (rrc != RDNX_OK) {
+                    kfree(ibuf);
+                    return rrc;
+                }
+                table = (uint32_t*)ibuf;
+                ibuf_loaded = 1;
+            }
+
+            int any = 0;
+            for (uint32_t i = 0; i < per_block; i++) {
+                if (table[i] != 0) {
+                    any = 1;
+                    break;
+                }
+            }
+            if (!any) {
+                uint32_t ind = ino.block[12];
+                ino.block[12] = 0;
+                int frc = ext2_free_block(&g_ext2_live, ind);
+                if (frc != RDNX_OK) {
+                    kfree(ibuf);
+                    return frc;
+                }
+            }
+        }
+
+        if (ibuf) {
+            kfree(ibuf);
         }
     }
+
     ino.size_lo = (uint32_t)new_size;
+    uint32_t sectors_per_block = g_ext2_live.block_size / 512u;
+    uint32_t alloc_blocks = ext2_count_allocated_blocks(&g_ext2_live, &ino);
+    ino.blocks = alloc_blocks * sectors_per_block;
     return ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
 }
 
