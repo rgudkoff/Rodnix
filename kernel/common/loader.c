@@ -168,10 +168,25 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
         uint64_t va = out_img->stack_bottom + (uint64_t)i * USER_PAGE_SIZE;
         uint64_t phys = pmm_alloc_page_in_zone(PMM_ZONE_NORMAL);
         if (!phys) {
+            /* Rollback pages already mapped (P1-5a) */
+            for (uint32_t j = 0; j < i; j++) {
+                paging_unmap_page_pml4(pml4_phys,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmm_free_page(out_img->stack_phys[j]);
+                out_img->stack_phys[j] = 0;
+            }
             return RDNX_E_NOMEM;
         }
         uint64_t flags = PTE_PRESENT | PTE_USER | PTE_RW;
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
+            /* Free the unmap-failed page, then rollback prior pages */
+            pmm_free_page(phys);
+            for (uint32_t j = 0; j < i; j++) {
+                paging_unmap_page_pml4(pml4_phys,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmm_free_page(out_img->stack_phys[j]);
+                out_img->stack_phys[j] = 0;
+            }
             return RDNX_E_GENERIC;
         }
         memset(X86_64_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);

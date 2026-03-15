@@ -26,6 +26,7 @@ typedef struct vfs_inode {
     size_t capacity;
     uint8_t* data;
     vm_object_t* mmap_object;
+    uint32_t node_gen; /* incremented on vfs_free_node; cache uses this to detect stale entries */
 } vfs_inode_t;
 
 typedef struct vfs_node {
@@ -35,6 +36,16 @@ typedef struct vfs_node {
     struct vfs_node* sibling;
     struct vfs_node* children;
     vfs_inode_t* inode;
+    /*
+     * Refcounting (P1-6B):
+     *   ref_count = 1 at alloc (tree holds one reference).
+     *   +1 per open vfs_file_t (vfs_open / vfs_close).
+     *   vfs_unlink drops the tree reference; the node is freed when
+     *   the last vfs_file_t holding it is closed.
+     *   unlinked = true once the node has been removed from the namespace.
+     */
+    uint32_t ref_count;
+    bool     unlinked;
 } vfs_node_t;
 
 typedef struct vfs_mount {
@@ -96,6 +107,9 @@ int vfs_mount_initrd_root(void);
 vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type);
 int vfs_fs_add_child(vfs_node_t* parent, vfs_node_t* child);
 int vfs_fs_set_file_data(vfs_node_t* node, const void* data, size_t size);
+/* Release a node allocated with vfs_fs_alloc_node that was never added to the
+ * tree (or was added and later removed). Drops the tree reference. */
+void vfs_fs_free_node(vfs_node_t* node);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);
@@ -104,6 +118,9 @@ int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file);
 int vfs_close(vfs_file_t* file);
+/* Duplicate an open file descriptor — retains node so both src and dst
+ * hold independent references. dst must not already be open. */
+int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
 int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);

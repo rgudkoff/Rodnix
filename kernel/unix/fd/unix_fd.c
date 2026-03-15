@@ -313,7 +313,10 @@ static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
         if (!copy) {
             return RDNX_E_NOMEM;
         }
-        *copy = *(vfs_file_t*)task->fd_table[oldfd];
+        if (vfs_file_dup((vfs_file_t*)task->fd_table[oldfd], copy) != RDNX_OK) {
+            kfree(copy);
+            return RDNX_E_INVALID;
+        }
         task->fd_table[newfd] = copy;
         task->fd_kind[newfd] = UNIX_FD_KIND_VFS;
         task->fd_flags[newfd] = 0;
@@ -401,7 +404,15 @@ int unix_clone_fds_for_spawn(const task_t* parent, task_t* child)
                 }
                 return RDNX_E_NOMEM;
             }
-            *copy = *(vfs_file_t*)src;
+            if (vfs_file_dup((vfs_file_t*)src, copy) != RDNX_OK) {
+                kfree(copy);
+                for (int i = 0; i < TASK_MAX_FD; i++) {
+                    if (child->fd_table[i]) {
+                        unix_fd_release(child, i);
+                    }
+                }
+                return RDNX_E_INVALID;
+            }
             child->fd_table[fd] = copy;
             child->fd_kind[fd] = UNIX_FD_KIND_VFS;
             child->fd_flags[fd] = parent->fd_flags[fd];

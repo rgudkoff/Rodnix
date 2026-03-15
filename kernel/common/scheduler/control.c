@@ -200,8 +200,12 @@ void scheduler_inherit_priority(thread_t* target, const thread_t* donor)
         return;
     }
     int donor_prio = thread_effective_priority(donor);
-    if (target->inherit_depth < 4) {
+    if (target->inherit_depth < 8) {
         target->inherit_stack[target->inherit_depth++] = target->inherited_priority;
+    } else {
+        target->has_inherit_overflow = 1;
+        kprintf("[SCHED] priority inheritance overflow on thread %llu\n",
+                (unsigned long long)target->thread_id);
     }
     if (!target->has_inherited || target->inherited_priority < donor_prio) {
         target->inherited_priority = donor_prio;
@@ -214,7 +218,12 @@ void scheduler_clear_inherit(thread_t* target)
     if (!target) {
         return;
     }
-    if (target->inherit_depth > 0) {
+    if (target->has_inherit_overflow) {
+        /* Stack was overflowed — restore to base priority conservatively */
+        target->inherited_priority = target->base_priority;
+        target->inherit_depth = 0;
+        target->has_inherit_overflow = 0;
+    } else if (target->inherit_depth > 0) {
         target->inherited_priority = target->inherit_stack[--target->inherit_depth];
     } else {
         target->inherited_priority = target->dyn_priority;

@@ -38,6 +38,7 @@ static int devfs_add_chardev(vfs_node_t* root, const char* name, uint32_t extra_
     node->inode->flags |= VFS_INODE_CHARDEV | extra_flags;
     int rc = vfs_fs_add_child(root, node);
     if (rc != RDNX_OK) {
+        vfs_fs_free_node(node);
         return rc;
     }
     return RDNX_OK;
@@ -58,6 +59,7 @@ static int devfs_add_blockdev(vfs_node_t* root, const char* name)
     node->inode->flags |= VFS_INODE_BLOCKDEV;
     int rc = vfs_fs_add_child(root, node);
     if (rc != RDNX_OK) {
+        vfs_fs_free_node(node);
         return rc;
     }
     return RDNX_OK;

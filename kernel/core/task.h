@@ -153,8 +153,9 @@ typedef struct thread {
     int16_t dyn_priority;      /* Динамический приоритет (с учётом boost/penalty) */
     int16_t inherited_priority;/* Приоритет по наследованию */
     uint8_t has_inherited;     /* Флаг наследования */
-    int16_t inherit_stack[4];  /* Стек наследованных приоритетов */
+    int16_t inherit_stack[8];  /* Стек наследованных приоритетов */
     uint8_t inherit_depth;     /* Глубина стека наследования */
+    uint8_t has_inherit_overflow; /* Флаг переполнения стека наследования */
     uint32_t sched_usage;      /* Счётчик использования CPU */
     uint64_t last_sleep_tick;  /* Последний тик блокировки */
     void (*entry)(void*);      /* Точка входа потока */

@@ -13,6 +13,7 @@
 #include "../fabric/spin.h"
 #include "../fabric/service/block_service.h"
 #include "../../../include/common.h"
+#include "../../include/console.h"
 #include "../../include/error.h"
 
 #include <stdbool.h>
@@ -118,6 +119,15 @@ typedef struct {
     uint32_t node_budget;
 } ext2_mount_ctx_t;
 
+/*
+ * LOCKING: g_ext2_rw_lock (spinlock_t)
+ *   Protects: g_ext2_live (all fields), g_ext2_live_ready,
+ *             ext2_alloc_block, ext2_free_block, ext2_sync_super_and_gdt,
+ *             ext2_writeback_file, ext2_resize_file.
+ *   Lock order: g_ext2_rw_lock -> (no inner locks held by ext2 code).
+ *   Callers of ext2_alloc_block / ext2_free_block / ext2_trim_inode_blocks
+ *   must already hold g_ext2_rw_lock (caller-holds convention).
+ */
 static ext2_mount_ctx_t g_ext2_live;
 static int g_ext2_live_ready = 0;
 static spinlock_t g_ext2_rw_lock;
@@ -129,7 +139,20 @@ static const ext2_fs_caps_t g_ext2_caps = {
 
 static uint64_t ext2_inode_size_bytes(const ext2_inode_t* ino)
 {
-    uint64_t sz = ino ? (uint64_t)ino->size_lo : 0;
+    if (!ino) { return 0; }
+    /*
+     * size_high is valid for regular files in ext2 rev >= 1 with
+     * RO_COMPAT_LARGE_FILE.  For directories the same field is dir_acl —
+     * callers that traverse directory blocks only look at size_lo anyway,
+     * and well-formed images keep dir_acl == 0.
+     */
+    uint64_t sz = (uint64_t)ino->size_lo | ((uint64_t)ino->size_high << 32);
+    if (sz > (1ULL << 40)) {
+        /* Sanity cap: 1 TB.  Likely a corrupted inode — ignore size_high. */
+        kprintf("[EXT2] suspicious inode size 0x%llx, ignoring size_high\n",
+                (unsigned long long)sz);
+        return (uint64_t)ino->size_lo;
+    }
     return sz;
 }
 
@@ -987,7 +1010,8 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
     }
 
     if ((uint64_t)final_size > disk_size) {
-        ino.size_lo = (uint32_t)final_size;
+        ino.size_lo   = (uint32_t)(final_size & 0xFFFFFFFFu);
+        ino.size_high = (uint32_t)(final_size >> 32);
         inode_dirty = 1;
     }
     if (inode_dirty) {
@@ -1057,13 +1081,19 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
                                                    (uint32_t)node->inode->fs_ino,
                                                    &ino, lbn, 1, &pblk, &inode_dirty);
             if (rc != RDNX_OK || pblk == 0) {
-                (void)ext2_trim_inode_blocks(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino, old_blocks);
+                int trim_rc = ext2_trim_inode_blocks(&g_ext2_live,
+                    (uint32_t)node->inode->fs_ino, &ino, old_blocks);
+                if (trim_rc != RDNX_OK) {
+                    kprintf("[EXT2] resize rollback failed: alloc_err=%d trim_err=%d ino=%u\n",
+                            rc, trim_rc, (uint32_t)node->inode->fs_ino);
+                }
                 spinlock_unlock(&g_ext2_rw_lock);
                 return (rc != RDNX_OK) ? rc : RDNX_E_UNSUPPORTED;
             }
         }
 
-        ino.size_lo = (uint32_t)new_size;
+        ino.size_lo   = (uint32_t)(new_size & 0xFFFFFFFFu);
+        ino.size_high = (uint32_t)(new_size >> 32);
         uint32_t sectors_per_block = g_ext2_live.block_size / 512u;
         uint32_t alloc_blocks = ext2_count_allocated_blocks(&g_ext2_live, &ino);
         ino.blocks = alloc_blocks * sectors_per_block;
@@ -1072,7 +1102,8 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
         return rc;
     } else {
         /* Crash-safer shrink: size first, then free tail blocks. */
-        ino.size_lo = (uint32_t)new_size;
+        ino.size_lo   = (uint32_t)(new_size & 0xFFFFFFFFu);
+        ino.size_high = (uint32_t)(new_size >> 32);
         int rc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
         if (rc != RDNX_OK) {
             spinlock_unlock(&g_ext2_rw_lock);

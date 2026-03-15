@@ -32,6 +32,20 @@ typedef struct {
 } cpu_local_t;
 static cpu_local_t g_cpu_locals[MAX_CPUS];
 
+/*
+ * LOCKING: task registry — protected by IRQL_HIGH (task_registry_lock / task_registry_unlock).
+ *   Protects: all_tasks_head, all_tasks_by_id, next_task_id, next_thread_id.
+ *   Mechanism: raises IRQL to IRQL_HIGH (disables interrupts on UP), effectively
+ *              acting as a spinlock on uniprocessor.
+ *   Lock order: task_registry_lock -> (no inner locks; must NOT acquire ipc locks).
+ *
+ * LOCKING: stack_cache — protected by IRQL_HIGH (task_stack_cache_lock / task_stack_cache_unlock).
+ *   Protects: stack_cache[], stack_cache_count, stack_cache_hits, stack_cache_misses.
+ *
+ * LOCKING: g_cpu_locals[] — each slot written only by the owning CPU.
+ *   On UP (current target) cpu_get_id() always returns 0; no explicit lock needed.
+ *   On SMP: each CPU accesses only its own slot; cross-CPU reads are advisory only.
+ */
 static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
 static task_t* all_tasks_head = NULL;
@@ -291,6 +305,14 @@ void task_destroy(task_t* task)
     }
     (void)RB_REMOVE(task_id_index, &all_tasks_by_id, task);
     task_registry_unlock(old);
+    /* Destroy all threads still attached to this task (P0-4).
+     * The current thread is handled by the reaper and is not in the list
+     * at this point, so iterating the full list is safe. */
+    thread_t* thr;
+    thread_t* tmp;
+    TAILQ_FOREACH_SAFE(thr, &task->threads, task_link, tmp) {
+        thread_destroy(thr);
+    }
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         if (task->fd_table[i]) {
             unix_fd_release(task, (int)i);
