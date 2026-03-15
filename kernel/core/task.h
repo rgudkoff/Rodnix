@@ -100,6 +100,18 @@ typedef struct {
  * Задача (адресное пространство + ресурсы)
  * ============================================================================ */
 
+/* ============================================================================
+ * Embedded wait queue (defined here to break circular include with waitq.h)
+ * ============================================================================ */
+
+TAILQ_HEAD(waitq_thread_head, thread);
+
+typedef struct waitq {
+    struct waitq_thread_head threads;
+    const char* name;
+    uint32_t count;
+} waitq_t;
+
 typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
     uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
@@ -160,6 +172,7 @@ typedef struct task {
     RB_ENTRY(task) task_id_link; /* Узел task_id-индекса */
     void* arch_specific;       /* Архитектурно-зависимые данные */
     thread_group_t thread_group; /* CPU-учёт группы для планировщика */
+    waitq_t child_waitq;       /* Parent sleeps here while waiting for a child to exit */
 } task_t;
 
 /* ============================================================================

@@ -38,6 +38,7 @@ uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt);
 
 /* User address space helpers */
 uint64_t paging_create_user_pml4(void);
+void paging_free_user_pml4(uint64_t pml4_phys);
 int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags);
 void paging_switch_pml4(uint64_t pml4_phys);
 

@@ -1,6 +1,7 @@
 #include "../unix_layer.h"
 #include "../../common/bootlog.h"
 #include "../../common/scheduler.h"
+#include "../../common/waitq.h"
 #include "../../fabric/spin.h"
 #include "../../core/interrupts.h"
 #include "../../arch/interrupt_frame.h"
@@ -155,7 +156,13 @@ static int unix_signal_may_send(const task_t* sender, const task_t* target)
 
 void unix_proc_notify_waiters(uint64_t parent_task_id)
 {
-    (void)parent_task_id;
+    if (!parent_task_id) {
+        return;
+    }
+    task_t* parent = task_find_by_id(parent_task_id);
+    if (parent) {
+        waitq_wake_all(&parent->child_waitq);
+    }
 }
 
 void unix_proc_close_fds(task_t* task)
@@ -177,7 +184,6 @@ uint64_t unix_proc_exit(uint64_t status)
         unix_proc_close_fds(task);
         task->exit_code = (int32_t)status;
         task->exited = 1;
-        task->state = TASK_STATE_ZOMBIE;
         unix_proc_notify_waiters(task->parent_task_id);
     }
     thread_t* cur = thread_get_current();
@@ -330,12 +336,24 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         return (uint64_t)RDNX_E_DENIED;
     }
 
-    bool child_exited = child->exited ||
-                        (child->state == TASK_STATE_ZOMBIE) ||
-                        (child->state == TASK_STATE_DEAD);
-    if (!child_exited) {
-        return (uint64_t)RDNX_E_BUSY;
+    /* Block until child exits. Wake-up is delivered via unix_proc_notify_waiters()
+     * which calls waitq_wake_all(&self->child_waitq) when a child transitions
+     * to ZOMBIE. Re-check after each wakeup in case of spurious wakeups or
+     * multiple children. Timeout of 5 s prevents deadlock if notification is missed. */
+    for (;;) {
+        bool child_exited = child->exited ||
+                            (child->state == TASK_STATE_ZOMBIE) ||
+                            (child->state == TASK_STATE_DEAD);
+        if (child_exited) {
+            break;
+        }
+        /* Check child is still in the registry (not freed by a race) */
+        if (!task_find_by_id(pid)) {
+            return (uint64_t)RDNX_E_NOTFOUND;
+        }
+        (void)waitq_wait(&self->child_waitq, 5000);
     }
+
     if (child->waited) {
         return (uint64_t)RDNX_E_NOTFOUND;
     }

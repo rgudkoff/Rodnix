@@ -574,6 +574,10 @@ void vm_task_destroy(task_t* task)
         vm_map_destroy(map);
         task->vm_map = NULL;
     }
+    if (task->address_space) {
+        paging_free_user_pml4((uint64_t)(uintptr_t)task->address_space);
+        task->address_space = NULL;
+    }
     task->vm_brk_base = 0;
     task->vm_brk_end = 0;
     task->vm_mmap_base = 0;

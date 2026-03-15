@@ -6,6 +6,8 @@
 #include "../core/task.h"
 #include "../vm/vm_map.h"
 #include "heap.h"
+#include "scheduler.h"
+#include "waitq.h"
 #include "../core/cpu.h"
 #include "../arch/interrupt_frame.h"
 #include "../core/interrupts.h"
@@ -126,11 +128,8 @@ static void thread_trampoline(void)
     self->state = THREAD_STATE_RUNNING;
     self->entry(self->arg);
 
-    /* Thread finished */
-    self->state = THREAD_STATE_DEAD;
-    for (;;) {
-        cpu_idle();
-    }
+    /* Thread finished — hand off to scheduler for proper teardown. */
+    scheduler_exit_current();
 }
 
 void* task_kernel_stack_acquire(void)
@@ -275,6 +274,7 @@ task_t* task_create(void)
     task->main_thread = NULL;
     TAILQ_INIT(&task->threads);
     task->thread_count = 0;
+    waitq_init(&task->child_waitq, "child_wait");
     task->ref_count = 1;
     task->task_id_link.rbe_link[0] = NULL;
     task->task_id_link.rbe_link[1] = NULL;

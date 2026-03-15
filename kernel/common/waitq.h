@@ -11,13 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-TAILQ_HEAD(waitq_thread_head, thread);
-
-typedef struct waitq {
-    struct waitq_thread_head threads;
-    const char* name;
-    uint32_t count;
-} waitq_t;
+/* waitq_t and waitq_thread_head are defined in task.h to break the
+ * circular-include cycle (task.h <- waitq.h <- task.h). */
 
 void waitq_init(waitq_t* q, const char* name);
 bool waitq_contains(const waitq_t* q, const thread_t* t);

@@ -226,6 +226,52 @@ uint64_t paging_create_user_pml4(void)
     return phys;
 }
 
+/**
+ * Free the page-table structure for a user address space.
+ * Only the page-table pages themselves (PML4/PDPT/PD/PT) are freed here;
+ * user data pages are already released by vm_map_remove() → vm_page_ref_release().
+ * Kernel-half entries (PML4[256..511]) are shared and must NOT be freed.
+ */
+void paging_free_user_pml4(uint64_t pml4_phys)
+{
+    if (!pml4_phys) {
+        return;
+    }
+    uint64_t* pml4 = (uint64_t*)(pml4_phys + X86_64_KERNEL_VIRT_BASE);
+    for (int i = 0; i < 256; i++) {
+        if (!(pml4[i] & PTE_PRESENT)) {
+            continue;
+        }
+        uint64_t pdpt_phys = pml4[i] & ~0xFFFULL;
+        uint64_t* pdpt = (uint64_t*)(pdpt_phys + X86_64_KERNEL_VIRT_BASE);
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & PTE_PRESENT)) {
+                continue;
+            }
+            if (pdpt[j] & (1ULL << 7)) {
+                /* 1 GB huge page — data freed by vm_map, skip */
+                continue;
+            }
+            uint64_t pd_phys = pdpt[j] & ~0xFFFULL;
+            uint64_t* pd = (uint64_t*)(pd_phys + X86_64_KERNEL_VIRT_BASE);
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & PTE_PRESENT)) {
+                    continue;
+                }
+                if (pd[k] & (1ULL << 7)) {
+                    /* 2 MB huge page — skip */
+                    continue;
+                }
+                uint64_t pt_phys = pd[k] & ~0xFFFULL;
+                pmm_free_page(pt_phys);
+            }
+            pmm_free_page(pd_phys);
+        }
+        pmm_free_page(pdpt_phys);
+    }
+    pmm_free_page(pml4_phys);
+}
+
 static uint64_t* paging_get_pdpt_for(uint64_t* pml4, uint64_t pml4_entry)
 {
     (void)pml4;
