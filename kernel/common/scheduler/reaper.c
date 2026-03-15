@@ -117,6 +117,9 @@ void scheduler_reap_dead_threads(void)
         }
         dead->reap_queued = 0;
         task_t* owner = dead->task;
+        if (owner) {
+            TAILQ_REMOVE(&owner->threads, dead, task_link);
+        }
         if (owner && owner->thread_count > 0) {
             owner->thread_count--;
         }
@@ -183,5 +186,6 @@ void scheduler_reaper_start(void)
         return;
     }
     reaper_thread->priority = 16;
+    scheduler_set_bucket(reaper_thread, SCHED_BUCKET_BACKGROUND);
     scheduler_add_thread(reaper_thread);
 }

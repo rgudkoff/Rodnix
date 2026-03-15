@@ -313,7 +313,10 @@ static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
         if (!copy) {
             return RDNX_E_NOMEM;
         }
-        *copy = *(vfs_file_t*)task->fd_table[oldfd];
+        if (vfs_file_dup((vfs_file_t*)task->fd_table[oldfd], copy) != RDNX_OK) {
+            kfree(copy);
+            return RDNX_E_INVALID;
+        }
         task->fd_table[newfd] = copy;
         task->fd_kind[newfd] = UNIX_FD_KIND_VFS;
         task->fd_flags[newfd] = 0;
@@ -401,7 +404,15 @@ int unix_clone_fds_for_spawn(const task_t* parent, task_t* child)
                 }
                 return RDNX_E_NOMEM;
             }
-            *copy = *(vfs_file_t*)src;
+            if (vfs_file_dup((vfs_file_t*)src, copy) != RDNX_OK) {
+                kfree(copy);
+                for (int i = 0; i < TASK_MAX_FD; i++) {
+                    if (child->fd_table[i]) {
+                        unix_fd_release(child, i);
+                    }
+                }
+                return RDNX_E_INVALID;
+            }
             child->fd_table[fd] = copy;
             child->fd_kind[fd] = UNIX_FD_KIND_VFS;
             child->fd_flags[fd] = parent->fd_flags[fd];
@@ -470,9 +481,10 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
     if (!file) {
         return (uint64_t)RDNX_E_NOMEM;
     }
-    if (vfs_open(path_buf, (int)flags, file) != RDNX_OK) {
+    int orc = vfs_open(path_buf, (int)flags, file);
+    if (orc != RDNX_OK) {
         kfree(file);
-        return (uint64_t)RDNX_E_NOTFOUND;
+        return (uint64_t)orc;
     }
 
     task_t* task = task_get_current();
@@ -602,7 +614,7 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
     if (task->fd_kind[fdi] == UNIX_FD_KIND_VFS) {
         vfs_file_t* file = (vfs_file_t*)h;
         int ret = vfs_read(file, buf, n);
-        return (ret < 0) ? (uint64_t)RDNX_E_GENERIC : (uint64_t)ret;
+        return (uint64_t)ret;
     }
 
     if (task->fd_kind[fdi] == UNIX_FD_KIND_PIPE_R) {
@@ -673,7 +685,7 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
     if (task->fd_kind[fdi] == UNIX_FD_KIND_VFS) {
         vfs_file_t* file = (vfs_file_t*)h;
         int ret = vfs_write(file, buf, n);
-        return (ret < 0) ? (uint64_t)RDNX_E_GENERIC : (uint64_t)ret;
+        return (uint64_t)ret;
     }
 
     if (task->fd_kind[fdi] == UNIX_FD_KIND_PIPE_W) {

@@ -7,7 +7,7 @@
 #include "../vm/vm_map.h"
 #include "heap.h"
 #include "../core/cpu.h"
-#include "../arch/x86_64/interrupt_frame.h"
+#include "../arch/interrupt_frame.h"
 #include "../core/interrupts.h"
 #include "../fs/vfs.h"
 #include "../unix/unix_layer.h"
@@ -18,8 +18,34 @@
 #define KERNEL_STACK_SIZE (32 * 1024)
 #define STACK_POISON_BYTE 0xCC
 
-static task_t* current_task = NULL;
-static thread_t* current_thread = NULL;
+/*
+ * LOCKING: per-CPU locals — no lock needed.
+ *   Each CPU reads/writes only its own slot via cpu_get_id().
+ *   On UP (single CPU) cpu_get_id() always returns 0.
+ *   On SMP cpu_get_id() must return the correct APIC id before
+ *   the scheduler starts (currently always 0 — see cpu.c TODO).
+ */
+#define MAX_CPUS 8
+typedef struct {
+    task_t*   task;
+    thread_t* thread;
+} cpu_local_t;
+static cpu_local_t g_cpu_locals[MAX_CPUS];
+
+/*
+ * LOCKING: task registry — protected by IRQL_HIGH (task_registry_lock / task_registry_unlock).
+ *   Protects: all_tasks_head, all_tasks_by_id, next_task_id, next_thread_id.
+ *   Mechanism: raises IRQL to IRQL_HIGH (disables interrupts on UP), effectively
+ *              acting as a spinlock on uniprocessor.
+ *   Lock order: task_registry_lock -> (no inner locks; must NOT acquire ipc locks).
+ *
+ * LOCKING: stack_cache — protected by IRQL_HIGH (task_stack_cache_lock / task_stack_cache_unlock).
+ *   Protects: stack_cache[], stack_cache_count, stack_cache_hits, stack_cache_misses.
+ *
+ * LOCKING: g_cpu_locals[] — each slot written only by the owning CPU.
+ *   On UP (current target) cpu_get_id() always returns 0; no explicit lock needed.
+ *   On SMP: each CPU accesses only its own slot; cross-CPU reads are advisory only.
+ */
 static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
 static task_t* all_tasks_head = NULL;
@@ -89,7 +115,7 @@ static bool stack_has_poison(const void* stack)
 
 static void thread_trampoline(void)
 {
-    thread_t* self = current_thread;
+    thread_t* self = thread_get_current();
     interrupts_enable();
     if (!self || !self->entry) {
         for (;;) {
@@ -173,22 +199,22 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
 
 task_t* task_get_current(void)
 {
-    return current_task;
+    return g_cpu_locals[cpu_get_id()].task;
 }
 
 void task_set_current(task_t* task)
 {
-    current_task = task;
+    g_cpu_locals[cpu_get_id()].task = task;
 }
 
 thread_t* thread_get_current(void)
 {
-    return current_thread;
+    return g_cpu_locals[cpu_get_id()].thread;
 }
 
 void thread_set_current(thread_t* thread)
 {
-    current_thread = thread;
+    g_cpu_locals[cpu_get_id()].thread = thread;
 }
 
 void thread_set_priority(thread_t* thread, uint8_t priority)
@@ -247,6 +273,7 @@ task_t* task_create(void)
         }
     }
     task->main_thread = NULL;
+    TAILQ_INIT(&task->threads);
     task->thread_count = 0;
     task->ref_count = 1;
     task->task_id_link.rbe_link[0] = NULL;
@@ -278,6 +305,14 @@ void task_destroy(task_t* task)
     }
     (void)RB_REMOVE(task_id_index, &all_tasks_by_id, task);
     task_registry_unlock(old);
+    /* Destroy all threads still attached to this task (P0-4).
+     * The current thread is handled by the reaper and is not in the list
+     * at this point, so iterating the full list is safe. */
+    thread_t* thr;
+    thread_t* tmp;
+    TAILQ_FOREACH_SAFE(thr, &task->threads, task_link, tmp) {
+        thread_destroy(thr);
+    }
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         if (task->fd_table[i]) {
             unix_fd_release(task, (int)i);
@@ -436,6 +471,8 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->arg = arg;
     thread->stack = stack;
     thread->stack_size = KERNEL_STACK_SIZE;
+    thread->task_link.tqe_next = NULL;
+    thread->task_link.tqe_prev = NULL;
     thread->sched_link.tqe_next = NULL;
     thread->sched_link.tqe_prev = NULL;
     thread->ready_queued = 0;
@@ -452,6 +489,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->reap_after_tick = 0;
     thread->arch_specific = NULL;
     task->thread_count++;
+    TAILQ_INSERT_TAIL(&task->threads, thread, task_link);
     if (!task->main_thread) {
         task->main_thread = thread;
     }
@@ -505,6 +543,8 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     thread->arg = NULL;
     thread->stack = stack;
     thread->stack_size = KERNEL_STACK_SIZE;
+    thread->task_link.tqe_next = NULL;
+    thread->task_link.tqe_prev = NULL;
     thread->sched_link.tqe_next = NULL;
     thread->sched_link.tqe_prev = NULL;
     thread->ready_queued = 0;
@@ -521,6 +561,7 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     thread->reap_after_tick = 0;
     thread->arch_specific = NULL;
     task->thread_count++;
+    TAILQ_INSERT_TAIL(&task->threads, thread, task_link);
     if (!task->main_thread) {
         task->main_thread = thread;
     }
@@ -533,8 +574,11 @@ void thread_destroy(thread_t* thread)
     if (!thread) {
         return;
     }
-    if (thread->task && thread->task->thread_count > 0) {
-        thread->task->thread_count--;
+    if (thread->task) {
+        TAILQ_REMOVE(&thread->task->threads, thread, task_link);
+        if (thread->task->thread_count > 0) {
+            thread->task->thread_count--;
+        }
     }
     if (thread->stack) {
         task_kernel_stack_retire(thread->stack, thread->stack_size);

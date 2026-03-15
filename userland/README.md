@@ -19,6 +19,7 @@ legacy entry `int 0x80` сохранён как fallback.
   - `sh> echo hello world`
 - `/bin/ls`, `/bin/cat`, `/bin/true` — внешние userland-заготовки
   (MVP-утилиты для модели "не builtin").
+- `/bin/cpuinfo` — подробный отчёт по CPU topology, частоте и CPUID feature flags.
 - `/bin/diskinfo` — диагностика блочных устройств (`diskinfo`, `diskinfo -r <dev> <lba>`).
 - `/bin/kmodctl` — управление реестром модулей (`kmodctl ls|load|unload`).
 - `/etc` в rootfs:

@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "../tracev2.h"
 #include "../bootlog.h"
-#include "../../arch/x86_64/paging.h"
+#include "../../arch/paging.h"
 #include "../../../include/debug.h"
 
 static uint64_t scheduler_kernel_pml4 = 0;
@@ -44,26 +44,26 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     in_scheduler = true;
     static int log_count = 0;
+    thread_t* cur = thread_get_current();
     if (bootlog_is_verbose() && log_count < 8) {
         kprintf("[SCHED] irq switch: resched=%d current=%llu state=%d ready=%llu\n",
                 resched_pending ? 1 : 0,
-                (unsigned long long)(current_thread ? current_thread->thread_id : 0),
-                (current_thread ? (int)current_thread->state : -1),
+                (unsigned long long)(cur ? cur->thread_id : 0),
+                (cur ? (int)cur->state : -1),
                 (unsigned long long)stats.ready_tasks);
         log_count++;
     }
     TRACE_EVENT("sched: switch_from_irq");
     /* If no reschedule is pending and we already have a current thread, keep running */
-    if (current_thread && !resched_pending) {
+    if (cur && !resched_pending) {
         in_scheduler = false;
         return frame;
     }
     resched_pending = false;
 
-    if (!current_thread) {
+    if (!cur) {
         thread_t* first = ready_dequeue();
         PANIC_IF(!first, "scheduler: no runnable threads on first switch");
-        current_thread = first;
         thread_set_current(first);
         if (first->task) {
             task_set_current(first->task);
@@ -78,16 +78,16 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         return (interrupt_frame_t*)(uintptr_t)first->context.stack_pointer;
     }
 
-    current_thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
-    if (current_thread->state == THREAD_STATE_RUNNING) {
-        scheduler_thread_set_state(current_thread, THREAD_STATE_READY, "switch_preempt");
-        ready_enqueue(current_thread);
+    cur->context.stack_pointer = (uint64_t)(uintptr_t)frame;
+    if (cur->state == THREAD_STATE_RUNNING) {
+        scheduler_thread_set_state(cur, THREAD_STATE_READY, "switch_preempt");
+        ready_enqueue(cur);
     }
 
     thread_t* next = ready_dequeue();
-    if (!next || next == current_thread) {
-        if (current_thread && current_thread->state != THREAD_STATE_DEAD) {
-            scheduler_thread_set_state(current_thread, THREAD_STATE_RUNNING, "switch_continue_current");
+    if (!next || next == cur) {
+        if (cur && cur->state != THREAD_STATE_DEAD) {
+            scheduler_thread_set_state(cur, THREAD_STATE_RUNNING, "switch_continue_current");
             in_scheduler = false;
             return frame;
         }
@@ -100,8 +100,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         return frame;
     }
 
-    thread_t* prev = current_thread;
-    current_thread = next;
+    thread_t* prev = cur;
     thread_set_current(next);
     if (next->task) {
         task_set_current(next->task);

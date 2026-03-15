@@ -8,7 +8,7 @@
 #include "../core/task.h"
 #include "../fs/vfs.h"
 #include "../unix/unix_layer.h"
-#include "../arch/x86_64/pmm.h"
+#include "../arch/pmm.h"
 #include "../vm/vm_map.h"
 #include "../../include/error.h"
 #include "../../include/common.h"
@@ -611,7 +611,7 @@ uint64_t linux_compat_dispatch(uint64_t num,
             return (uint64_t)(-LINUX_EINVAL);
         }
         const char* buf = (const char*)(uintptr_t)a1;
-        size_t n = strlen(buf) + 1u; /* Linux syscall returns length incl. NUL. */
+        size_t n = strlen(buf) + 1u; /* Guest ABI returns the length including the NUL byte. */
         return (uint64_t)n;
     }
     case 80: /* chdir */

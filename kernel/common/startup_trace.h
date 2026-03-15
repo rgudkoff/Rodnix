@@ -1,6 +1,6 @@
 /**
  * @file startup_trace.h
- * @brief FreeBSD-style startup/sysinit trace helpers.
+ * @brief Startup and init-order trace helpers.
  */
 
 #ifndef _RODNIX_COMMON_STARTUP_TRACE_H

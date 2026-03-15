@@ -254,7 +254,9 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
 static int cmd_spawn_autorun(int argc, char** argv, long* pid_out)
 {
     char path_buf[SH_PATH_MAX];
+    char resolved[SH_PATH_MAX];
     char* run_argv[SH_ARG_MAX + 1];
+    const char* check_path = NULL;
 
     if (argc <= 0 || !argv || !argv[0]) {
         return -1;
@@ -287,6 +289,18 @@ static int cmd_spawn_autorun(int argc, char** argv, long* pid_out)
         }
         path_buf[p] = '\0';
         run_argv[0] = path_buf;
+        check_path = path_buf;
+    } else {
+        resolve_path(argv[0], resolved, (int)sizeof(resolved));
+        check_path = resolved;
+    }
+
+    if (check_path && check_path[0] != '\0') {
+        int fd = open(check_path, O_RDONLY);
+        if (fd < 0) {
+            return -1;
+        }
+        (void)close(fd);
     }
 
     return cmd_spawn_raw(argc, run_argv, pid_out);

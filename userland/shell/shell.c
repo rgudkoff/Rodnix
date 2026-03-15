@@ -524,6 +524,10 @@ int main(void)
         if (argc <= 0) {
             continue;
         }
+        sanitize_cmd_token(argv[0]);
+        if (!argv[0] || argv[0][0] == '\0') {
+            continue;
+        }
 
         if (str_eq(argv[0], "help")) {
             cmd_help();
@@ -596,7 +600,9 @@ int main(void)
             (void)posix_exit(0);
         } else {
             if (cmd_autorun(argc, argv) < 0) {
-                (void)write_str("command not found or failed\n");
+                (void)write_str("sh: ");
+                (void)write_str(argv[0]);
+                (void)write_str(": not found\n");
             }
         }
     }

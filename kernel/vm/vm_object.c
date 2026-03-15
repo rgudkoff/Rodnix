@@ -1,7 +1,7 @@
 #include "vm_object.h"
 #include "vm_page_ref.h"
 #include "../common/heap.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/config.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
 
@@ -62,7 +62,7 @@ void vm_object_unref(vm_object_t* obj)
                 }
                 uint64_t avail = fb->size - off;
                 uint64_t copy = (avail > VM_OBJECT_PAGE_SIZE) ? VM_OBJECT_PAGE_SIZE : avail;
-                memcpy(dst + off, X86_64_PHYS_TO_VIRT(phys), (size_t)copy);
+                memcpy(dst + off, ARCH_PHYS_TO_VIRT(phys), (size_t)copy);
             }
         }
         if (obj->resident_pages) {

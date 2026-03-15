@@ -180,6 +180,15 @@ void scheduler_set_priority(thread_t* thread, uint8_t priority);
  */
 int scheduler_set_policy(sched_policy_t policy);
 
+/**
+ * Assign a QoS bucket to a thread.
+ * Must be called before scheduler_add_thread() to take effect;
+ * can also be called while the thread is running (re-enqueue on next preemption).
+ * @param thread Target thread
+ * @param bucket QoS bucket (sched_bucket_t)
+ */
+void scheduler_set_bucket(thread_t* thread, sched_bucket_t bucket);
+
 /* ============================================================================
  * Timer tick handler
  * ============================================================================ */

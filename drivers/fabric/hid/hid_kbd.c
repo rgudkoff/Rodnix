@@ -13,8 +13,8 @@
 #include "../../../kernel/fabric/service/service.h"
 #include "../../../kernel/core/interrupts.h"
 #include "../../../kernel/input/input.h"
-#include "../../../kernel/arch/x86_64/pic.h"
-#include "../../../kernel/arch/x86_64/apic.h"
+#include "../../../kernel/arch/pic.h"
+#include "../../../kernel/arch/apic.h"
 #include "../../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>

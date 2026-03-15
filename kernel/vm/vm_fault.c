@@ -2,8 +2,8 @@
 #include "vm_map.h"
 #include "vm_pager.h"
 #include "vm_page_ref.h"
-#include "../arch/x86_64/paging.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/paging.h"
+#include "../arch/config.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
 
@@ -29,7 +29,7 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
         /* Kernel-mode fault: let trap path handle it as fatal. */
         return RDNX_E_DENIED;
     }
-    if (fault_addr < 0x1000 || fault_addr >= X86_64_KERNEL_VIRT_BASE) {
+    if (fault_addr < 0x1000 || fault_addr >= ARCH_KERNEL_VIRT_BASE) {
         return RDNX_E_DENIED;
     }
 
@@ -60,7 +60,7 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
         if (!new_phys) {
             return RDNX_E_NOMEM;
         }
-        memcpy(X86_64_PHYS_TO_VIRT(new_phys), X86_64_PHYS_TO_VIRT(current_phys), VM_PAGE_SIZE);
+        memcpy(ARCH_PHYS_TO_VIRT(new_phys), ARCH_PHYS_TO_VIRT(current_phys), VM_PAGE_SIZE);
         (void)paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,
                                        va,
                                        new_phys,
@@ -95,7 +95,7 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
                     if (off < fb->size) {
                         uint64_t avail = fb->size - off;
                         uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
-                        memcpy(X86_64_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
+                        memcpy(ARCH_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
                     }
                 }
             }

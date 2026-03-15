@@ -1,8 +1,8 @@
 #include "vm_map.h"
 #include "vm_pager.h"
 #include "vm_page_ref.h"
-#include "../arch/x86_64/paging.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/paging.h"
+#include "../arch/config.h"
 #include "../common/heap.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
@@ -51,7 +51,7 @@ static int vm_range_valid(uint64_t start, uint64_t end)
     if (start < VM_USER_MIN || end <= start || end > VM_USER_MAX) {
         return 0;
     }
-    if (start >= X86_64_KERNEL_VIRT_BASE || end >= X86_64_KERNEL_VIRT_BASE) {
+    if (start >= ARCH_KERNEL_VIRT_BASE || end >= ARCH_KERNEL_VIRT_BASE) {
         return 0;
     }
     return 1;
@@ -277,7 +277,7 @@ long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot,
 
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
-        /* Linux MAP_FIXED semantics: replace overlapping mappings in range. */
+        /* Fixed mappings replace overlapping ranges in place. */
         (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
@@ -583,7 +583,7 @@ int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
             }
             uint64_t avail = fb->size - off;
             uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
-            memcpy(dst + off, X86_64_PHYS_TO_VIRT(phys), (size_t)copy);
+            memcpy(dst + off, ARCH_PHYS_TO_VIRT(phys), (size_t)copy);
             did = 1;
         }
     }

@@ -74,6 +74,29 @@ enum {
 };
 
 /* ============================================================================
+ * QoS bucket (иерархический планировщик v1)
+ * Значение = индекс в ready_queues[]; выше — приоритетнее.
+ * ============================================================================ */
+
+typedef enum {
+    SCHED_BUCKET_BACKGROUND  = 0, /* фоновые задачи, batch */
+    SCHED_BUCKET_UTILITY     = 1, /* фоновые сервисы */
+    SCHED_BUCKET_DEFAULT     = 2, /* обычные процессы */
+    SCHED_BUCKET_INTERACTIVE = 3, /* интерактивные, латентно-чувствительные */
+    SCHED_BUCKET_COUNT       = 4,
+} sched_bucket_t;
+
+/* ============================================================================
+ * Группа потоков (CPU-учёт на уровне задачи)
+ * Встраивается в task_t; все потоки задачи разделяют одну группу.
+ * ============================================================================ */
+
+typedef struct {
+    uint64_t cpu_ticks;      /* суммарные тики CPU всех потоков группы */
+    uint64_t last_run_tick;  /* последний тик, когда группа получила CPU */
+} thread_group_t;
+
+/* ============================================================================
  * Задача (адресное пространство + ресурсы)
  * ============================================================================ */
 
@@ -130,11 +153,13 @@ typedef struct task {
         uint64_t r15;
     } sig_saved;
     struct thread* main_thread;/* Основной поток процесса */
+    TAILQ_HEAD(thread_list, thread) threads; /* Список всех потоков задачи */
     uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */
     struct task* next_all;     /* Связный список всех задач */
     RB_ENTRY(task) task_id_link; /* Узел task_id-индекса */
     void* arch_specific;       /* Архитектурно-зависимые данные */
+    thread_group_t thread_group; /* CPU-учёт группы для планировщика */
 } task_t;
 
 /* ============================================================================
@@ -152,14 +177,18 @@ typedef struct thread {
     int16_t dyn_priority;      /* Динамический приоритет (с учётом boost/penalty) */
     int16_t inherited_priority;/* Приоритет по наследованию */
     uint8_t has_inherited;     /* Флаг наследования */
-    int16_t inherit_stack[4];  /* Стек наследованных приоритетов */
+    int16_t inherit_stack[8];  /* Стек наследованных приоритетов */
     uint8_t inherit_depth;     /* Глубина стека наследования */
+    uint8_t has_inherit_overflow; /* Флаг переполнения стека наследования */
+    uint8_t sched_bucket;          /* sched_bucket_t: QoS-бакет (устанавливается до add_thread) */
+    uint8_t sched_bucket_explicit; /* 1 — бакет задан явно; 0 — scheduler_add_thread назначит DEFAULT */
     uint32_t sched_usage;      /* Счётчик использования CPU */
     uint64_t last_sleep_tick;  /* Последний тик блокировки */
     void (*entry)(void*);      /* Точка входа потока */
     void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
+    TAILQ_ENTRY(thread) task_link;  /* Узел списка потоков задачи (task_t.threads) */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
     uint8_t ready_queued;      /* Поток находится в ready queue */
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */

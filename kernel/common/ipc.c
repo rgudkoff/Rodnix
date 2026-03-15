@@ -24,6 +24,15 @@ static port_set_t* all_port_sets_head = NULL;
 #define IPC_MAX_PORTS 1024
 static port_t* port_table[IPC_MAX_PORTS];
 
+/*
+ * LOCKING: g_port_table_lock (spinlock_t)
+ *   Protects: port_table[], next_port_id, and port->ref_count mutations.
+ *   Lock order: g_port_table_lock -> ipc_queue_t.lock (never reverse).
+ *   Holders: port_allocate, port_deallocate, port_insert_send_right,
+ *            port_insert_receive_right, ipc_send (refcount bump+push sequence).
+ */
+static spinlock_t g_port_table_lock;
+
 typedef struct ipc_msg_node {
     ipc_message_t msg;
     struct ipc_msg_node* next;
@@ -194,7 +203,7 @@ int ipc_init(void)
     if (ipc_initialized) {
         return RDNX_OK;
     }
-    
+
     next_port_id = 1;
     next_set_id = 1;
 
@@ -202,6 +211,7 @@ int ipc_init(void)
         port_table[i] = NULL;
     }
 
+    spinlock_init(&g_port_table_lock);
     ipc_initialized = true;
     /* Reserve bootstrap port (placeholder, no protocol yet) */
     bootstrap_port = port_allocate(PORT_TYPE_CONTROL);
@@ -252,18 +262,34 @@ void port_deallocate(port_t* port)
     if (!port) {
         return;
     }
-    
-    port->ref_count--;
-    
+
+    spinlock_lock(&g_port_table_lock);
+
     if (port->ref_count == 0) {
+        /* Underflow guard: caller has a bug. */
+        spinlock_unlock(&g_port_table_lock);
+        return;
+    }
+
+    port->ref_count--;
+    bool do_free = (port->ref_count == 0);
+
+    if (do_free) {
         port->active = false;
-        waitq_wake_all(&port->waiters);
-        ipc_queue_destroy((ipc_queue_t*)port->queue);
-        port->queue = NULL;
         int idx = port_table_index(port->port_id);
         if (idx >= 0 && port_table[idx] == port) {
             port_table[idx] = NULL;
         }
+    }
+
+    spinlock_unlock(&g_port_table_lock);
+
+    if (do_free) {
+        /* Wake waiters and destroy queue outside the lock:
+         * waitq_wake_all and ipc_queue_destroy may acquire other locks. */
+        waitq_wake_all(&port->waiters);
+        ipc_queue_destroy((ipc_queue_t*)port->queue);
+        port->queue = NULL;
         kfree(port);
     }
 }
@@ -347,24 +373,34 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     if (!port->queue) {
         return RDNX_E_INVALID;
     }
+    /* Hold g_port_table_lock across validate-bump-push to prevent races
+     * with concurrent port_deallocate calls.  Rollback on any failure. */
+    spinlock_lock(&g_port_table_lock);
     uint32_t bumped = 0;
     for (uint32_t i = 0; i < message->port_count; i++) {
         port_t* p = port_lookup(message->ports[i]);
         if (!p || !p->active) {
+            /* Roll back refs already bumped in this loop */
+            for (uint32_t j = 0; j < bumped; j++) {
+                port_t* q = port_lookup(message->ports[j]);
+                if (q) q->ref_count--;
+            }
+            spinlock_unlock(&g_port_table_lock);
             return RDNX_E_INVALID;
         }
         p->ref_count++;
         bumped++;
     }
-    if (ipc_queue_push((ipc_queue_t*)port->queue, message) != 0) {
+    int qrc = ipc_queue_push((ipc_queue_t*)port->queue, message);
+    if (qrc != 0) {
         for (uint32_t i = 0; i < bumped; i++) {
             port_t* p = port_lookup(message->ports[i]);
-            if (p && p->ref_count > 0) {
-                p->ref_count--;
-            }
+            if (p) p->ref_count--;
         }
+        spinlock_unlock(&g_port_table_lock);
         return RDNX_E_BUSY;
     }
+    spinlock_unlock(&g_port_table_lock);
 
     (void)waitq_wake_one(&port->waiters);
     ipc_wake_port_sets_for_port(port);

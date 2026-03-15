@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: BSD-3-Clause
  *
- * FreeBSD-derived cat, reduced to raw mode for RodNIX libc-lite.
+ * Compact cat implementation reduced to raw mode for RodNIX libc-lite.
  */
 
 #include <fcntl.h>

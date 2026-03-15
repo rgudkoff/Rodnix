@@ -2,7 +2,7 @@
 #define _RODNIX_COMPAT_NET_IF_VAR_H
 
 /*
- * FreeBSD-style if_var compatibility header.
+ * Network interface compatibility header.
  * Internal backend: kernel/net/bsd_ifnet.*
  */
 
