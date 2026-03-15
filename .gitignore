@@ -56,8 +56,9 @@ desktop.ini
 # Debug files
 *.gdb
 *.gdbsession
-core
-core.*
+# Unix core dump files (only at root or named exactly "core", not directories)
+/core
+core.[0-9]*
 
 # Documentation builds
 docs/_build/
