@@ -1,20 +1,26 @@
 # RodNIX Documentation
 
-This directory is organized into three zones:
+The `docs/` tree is intentionally split into three zones:
 
-- `docs/ru/` - active documentation set (current source of truth).
-- `docs/en/` - English mirror index for active docs.
-- `docs/archive/` and `docs/ru/archive/` - legacy or historical documents.
+- `docs/ru/` — active Russian-language documentation;
+- `docs/en/` — English-language documentation and navigation mirrors;
+- `docs/archive/` and `docs/ru/archive/` — historical and archived material.
 
 ## Start Here
 
-- `docs/ru/README.md` - map of active documents.
-- `docs/en/README.md` - English mirror of the documentation map.
-- `docs/ru/overview.md` - project scope and principles.
-- `docs/ru/execution_plan_os_foundation.md` - executable delivery plan.
-- `docs/ru/p0_focus_plan.md` - current P0 stabilization focus.
+- `docs/ru/README.md` — active Russian documentation map;
+- `docs/en/README.md` — English documentation index;
+- `docs/ru/overview.md` — project scope and principles;
+- `docs/ru/architecture.md` — current architecture map;
+- `docs/ru/build_run.md` — practical build and run guide;
+- `docs/ru/debugging.md` — diagnostics and debug workflow.
 
-## Policy
+## Rules
 
-- New decisions and process contracts go only to active docs.
-- Historical plans stay in archive and must not be treated as current baseline.
+- new decisions and process contracts belong only in the active documentation
+  zones;
+- archive material must not be treated as the current specification;
+- when system behavior changes, the related active documentation must be updated
+  in the same changeset;
+- entry-point and operational documents should favor precision, reproducibility,
+  and production-ready wording.

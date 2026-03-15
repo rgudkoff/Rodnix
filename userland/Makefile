@@ -1,10 +1,30 @@
 SHELL := /bin/bash
 
+ARCH ?= x86_64
+
+ifeq ($(ARCH),x86_64)
 CC = x86_64-elf-gcc
 AS = nasm
 LD = x86_64-elf-ld
+ARCH_CFLAGS = -m64
+ARCH_ASFLAGS = -f elf64
+else ifeq ($(ARCH),arm64)
+CC = aarch64-elf-gcc
+AS = $(CC)
+LD = aarch64-elf-ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+else ifeq ($(ARCH),riscv64)
+CC = riscv64-elf-gcc
+AS = $(CC)
+LD = riscv64-elf-ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+else
+$(error Unsupported ARCH '$(ARCH)')
+endif
 
-CFLAGS = -m64 \
+CFLAGS = $(ARCH_CFLAGS) \
          -ffreestanding \
          -fno-builtin \
          -fno-stack-protector \
@@ -15,10 +35,11 @@ CFLAGS = -m64 \
          -Wextra \
          -I./include
 
-ASFLAGS = -f elf64
+ASFLAGS = $(ARCH_ASFLAGS)
 LDFLAGS = -T link.ld
 
-BUILD_DIR = build
+BUILD_ROOT = build
+BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
 ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 

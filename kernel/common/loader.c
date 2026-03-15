@@ -5,10 +5,10 @@
 
 #include "loader.h"
 #include "elf.h"
-#include "../arch/x86_64/usermode.h"
-#include "../arch/x86_64/paging.h"
-#include "../arch/x86_64/pmm.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/usermode.h"
+#include "../arch/paging.h"
+#include "../arch/pmm.h"
+#include "../arch/config.h"
 #include "../fs/vfs.h"
 #include "../core/task.h"
 #include "../vm/vm_map.h"
@@ -19,7 +19,7 @@
 #include "../../include/common.h"
 
 #define USER_STACK_TOP 0x0000000080000000ULL
-#define USER_PAGE_SIZE X86_64_PAGE_SIZE_4KB
+#define USER_PAGE_SIZE ARCH_PAGE_SIZE_4KB
 #define LOADER_ARG_MAX 16
 #define LOADER_ENV_MAX 32
 #define LOADER_ARG_STR_MAX 128
@@ -123,7 +123,7 @@ static int loader_map_segment(uint64_t pml4_phys,
             return RDNX_E_GENERIC;
         }
 
-        uint8_t* dst = (uint8_t*)X86_64_PHYS_TO_VIRT(phys);
+        uint8_t* dst = (uint8_t*)ARCH_PHYS_TO_VIRT(phys);
         memset(dst, 0, USER_PAGE_SIZE);
 
         if (va < seg_start) {
@@ -189,7 +189,7 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
             }
             return RDNX_E_GENERIC;
         }
-        memset(X86_64_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);
+        memset(ARCH_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);
         out_img->stack_phys[i] = phys;
     }
 
@@ -222,7 +222,7 @@ static int loader_stack_write(const loader_image_t* img, uint64_t user_va, const
         if (chunk > rem) {
             chunk = rem;
         }
-        uint8_t* dst = (uint8_t*)X86_64_PHYS_TO_VIRT(img->stack_phys[page_idx]) + in_page;
+        uint8_t* dst = (uint8_t*)ARCH_PHYS_TO_VIRT(img->stack_phys[page_idx]) + in_page;
         memcpy(dst, in, chunk);
         cur += chunk;
         in += chunk;
@@ -396,7 +396,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         if (ph[i].p_type != PT_LOAD) {
             continue;
         }
-        if (ph[i].p_vaddr >= X86_64_KERNEL_VIRT_BASE) {
+        if (ph[i].p_vaddr >= ARCH_KERNEL_VIRT_BASE) {
             return RDNX_E_INVALID;
         }
         int ret = loader_map_segment(pml4_phys, image, size, &ph[i], out);

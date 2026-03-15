@@ -1,7 +1,7 @@
 #include "internal.h"
 #include "../tracev2.h"
 #include "../bootlog.h"
-#include "../../arch/x86_64/paging.h"
+#include "../../arch/paging.h"
 #include "../../../include/debug.h"
 
 static uint64_t scheduler_kernel_pml4 = 0;

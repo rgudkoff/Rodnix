@@ -44,22 +44,6 @@ KERNEL_C_SRCS += \
 	kernel/common/string.c \
 	kernel/common/heap.c \
 	kernel/common/shell.c \
-	kernel/arch/x86_64/interrupts.c \
-	kernel/arch/x86_64/idt.c \
-	kernel/arch/x86_64/pic.c \
-	kernel/arch/x86_64/lapic_access.c \
-	kernel/arch/x86_64/apic.c \
-	kernel/arch/x86_64/isr_handlers.c \
-	kernel/arch/x86_64/cpu.c \
-	kernel/arch/x86_64/gdt.c \
-	kernel/arch/x86_64/pmm.c \
-	kernel/arch/x86_64/paging.c \
-	kernel/arch/x86_64/pit.c \
-	kernel/arch/x86_64/memory.c \
-	kernel/arch/x86_64/boot.c \
-	kernel/arch/x86_64/acpi.c \
-	kernel/arch/x86_64/syscall_fast.c \
-	kernel/arch/x86_64/usermode.c \
 	kernel/net/net.c \
 	kernel/net/bsd_inet.c \
 	kernel/net/bsd_ether.c \
@@ -79,8 +63,41 @@ KERNEL_C_SRCS += \
 	kernel/fabric/bus/ps2.c \
 	kernel/input/input_core.c
 
+KERNEL_ARCH_X86_64_C_SRCS := \
+	kernel/arch/x86_64/interrupts.c \
+	kernel/arch/x86_64/idt.c \
+	kernel/arch/x86_64/pic.c \
+	kernel/arch/x86_64/lapic_access.c \
+	kernel/arch/x86_64/apic.c \
+	kernel/arch/x86_64/isr_handlers.c \
+	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/gdt.c \
+	kernel/arch/x86_64/pmm.c \
+	kernel/arch/x86_64/paging.c \
+	kernel/arch/x86_64/pit.c \
+	kernel/arch/x86_64/memory.c \
+	kernel/arch/x86_64/boot.c \
+	kernel/arch/x86_64/acpi.c \
+	kernel/arch/x86_64/syscall_fast.c \
+	kernel/arch/x86_64/usermode.c
+
+KERNEL_ARCH_ARM64_C_SRCS := \
+	kernel/arch/arm64/interrupts.c
+
+KERNEL_ARCH_RISCV64_C_SRCS := \
+	kernel/arch/riscv64/interrupts.c
+
 include kernel/fs/Makefile
 
-KERNEL_ASM_SRCS += \
+KERNEL_ARCH_X86_64_ASM_SRCS := \
 	kernel/arch/x86_64/isr_stubs.S \
 	kernel/arch/x86_64/syscall_fast_entry.S
+
+ifeq ($(ARCH),x86_64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_X86_64_C_SRCS)
+KERNEL_ASM_SRCS += $(KERNEL_ARCH_X86_64_ASM_SRCS)
+else ifeq ($(ARCH),arm64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_ARM64_C_SRCS)
+else ifeq ($(ARCH),riscv64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_RISCV64_C_SRCS)
+endif

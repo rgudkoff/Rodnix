@@ -16,7 +16,7 @@
 #include "../../include/utsname.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/config.h"
 #include <stddef.h>
 
 uint64_t posix_uname(uint64_t a1,
@@ -41,7 +41,7 @@ uint64_t posix_uname(uint64_t a1,
     strncpy(u->nodename, RODNIX_NODENAME, sizeof(u->nodename) - 1);
     strncpy(u->release, RODNIX_RELEASE, sizeof(u->release) - 1);
     strncpy(u->version, RODNIX_VERSION, sizeof(u->version) - 1);
-    strncpy(u->machine, X86_64_MACHINE, sizeof(u->machine) - 1);
+    strncpy(u->machine, ARCH_MACHINE, sizeof(u->machine) - 1);
     return (uint64_t)RDNX_OK;
 }
 
@@ -259,7 +259,7 @@ uint64_t posix_sysinfo(uint64_t a1,
     strncpy(out->sysname, RODNIX_SYSNAME, sizeof(out->sysname) - 1);
     strncpy(out->release, RODNIX_RELEASE, sizeof(out->release) - 1);
     strncpy(out->version, RODNIX_VERSION, sizeof(out->version) - 1);
-    strncpy(out->machine, X86_64_MACHINE, sizeof(out->machine) - 1);
+    strncpy(out->machine, ARCH_MACHINE, sizeof(out->machine) - 1);
     out->uptime_us = console_get_uptime_us();
     {
         const char* src = console_get_uptime_source();

@@ -1,7 +1,7 @@
 #include "vm_pager.h"
 #include "vm_page_ref.h"
-#include "../arch/x86_64/pmm.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/pmm.h"
+#include "../arch/config.h"
 #include "../../include/common.h"
 
 uint64_t vm_pager_alloc_zero_page(void)
@@ -10,8 +10,8 @@ uint64_t vm_pager_alloc_zero_page(void)
     if (!phys) {
         return 0;
     }
-    void* dst = X86_64_PHYS_TO_VIRT(phys);
-    memset(dst, 0, X86_64_PAGE_SIZE_4KB);
+    void* dst = ARCH_PHYS_TO_VIRT(phys);
+    memset(dst, 0, ARCH_PAGE_SIZE_4KB);
     (void)vm_page_ref_add_new(phys);
     return phys;
 }

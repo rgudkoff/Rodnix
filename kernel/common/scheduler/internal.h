@@ -3,7 +3,7 @@
 
 #include "../scheduler.h"
 #include "../waitq.h"
-#include "../../arch/x86_64/interrupt_frame.h"
+#include "../../arch/interrupt_frame.h"
 #include "../../../include/bsd/sys/queue.h"
 #include <stdbool.h>
 #include <stdint.h>

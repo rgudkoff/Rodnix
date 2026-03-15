@@ -117,6 +117,9 @@ void scheduler_reap_dead_threads(void)
         }
         dead->reap_queued = 0;
         task_t* owner = dead->task;
+        if (owner) {
+            TAILQ_REMOVE(&owner->threads, dead, task_link);
+        }
         if (owner && owner->thread_count > 0) {
             owner->thread_count--;
         }

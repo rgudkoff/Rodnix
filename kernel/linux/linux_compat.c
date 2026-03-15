@@ -8,7 +8,7 @@
 #include "../core/task.h"
 #include "../fs/vfs.h"
 #include "../unix/unix_layer.h"
-#include "../arch/x86_64/pmm.h"
+#include "../arch/pmm.h"
 #include "../vm/vm_map.h"
 #include "../../include/error.h"
 #include "../../include/common.h"

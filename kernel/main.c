@@ -22,9 +22,9 @@
 #include "common/startup_trace.h"
 #include "common/idl_demo.h"
 #include "core/boot.h"
-#include "arch/x86_64/config.h"
-#include "arch/x86_64/acpi.h"
-#include "arch/x86_64/syscall_fast.h"
+#include "arch/config.h"
+#include "arch/acpi.h"
+#include "arch/syscall_fast.h"
 #include "../include/common.h"
 
 #define USER_INIT_PATH_MAX 128
@@ -354,7 +354,7 @@ static int sysinit_vfs(void)
         kprintf("[INIT-9.6] initrd: start=%llx size=%llu\n",
                 (unsigned long long)bi->initrd_start,
                 (unsigned long long)bi->initrd_size);
-        void* initrd = X86_64_PHYS_TO_VIRT(bi->initrd_start);
+        void* initrd = ARCH_PHYS_TO_VIRT(bi->initrd_start);
         vfs_set_initrd(initrd, (size_t)bi->initrd_size);
     }
     if (vfs_init() != 0) {

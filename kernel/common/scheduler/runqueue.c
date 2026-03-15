@@ -1,5 +1,5 @@
 #include "internal.h"
-#include "../../arch/x86_64/gdt.h"
+#include "../../arch/gdt.h"
 #include "../../../include/debug.h"
 
 void scheduler_update_tss(thread_t* thread)

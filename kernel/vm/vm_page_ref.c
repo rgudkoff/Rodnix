@@ -1,6 +1,6 @@
 #include "vm_page_ref.h"
 #include "../common/heap.h"
-#include "../arch/x86_64/pmm.h"
+#include "../arch/pmm.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
 

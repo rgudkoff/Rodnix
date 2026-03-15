@@ -7,7 +7,7 @@
 #include "../vm/vm_map.h"
 #include "heap.h"
 #include "../core/cpu.h"
-#include "../arch/x86_64/interrupt_frame.h"
+#include "../arch/interrupt_frame.h"
 #include "../core/interrupts.h"
 #include "../fs/vfs.h"
 #include "../unix/unix_layer.h"

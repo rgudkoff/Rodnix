@@ -2,110 +2,36 @@
 
 RodNIX is what Unix might look like if it were designed from scratch today.
 
-RodNIX keeps the parts of the Unix model that still matter: small tools, clear
-interfaces, process isolation, and a system that can be understood end to end.
-What it does not inherit by default is decades of accidental complexity,
-historical layering, and interfaces that survived mainly because they were
-already there.
+RodNIX is an independent 64-bit operating system project focused on explicit
+kernel architecture, subsystem observability, and controlled ABI evolution.
+The primary target platform at this stage is `x86_64` running under `QEMU`.
 
-RodNIX is a practical x86_64 operating system project focused on building a
-small, debuggable Unix-like system with explicit subsystem boundaries. The goal
-is not to imitate an existing kernel line by line. The goal is to keep the
-parts of Unix that aged well and redesign the parts that would be implemented
-more cleanly with today's constraints, hardware, and engineering standards.
+The project is guided by the following principles:
 
-If you enjoy kernel development, low-level debugging, and architectures that
-remain readable as they evolve, RodNIX should feel familiar.
-
-## Architecture
-
-RodNIX introduces a Fabric-based system model.
-
-Instead of scattering discovery logic and driver lifecycle across unrelated
-subsystems, devices, drivers, and services are represented as nodes in a
-unified system fabric.
-
-The Fabric layer provides:
-
-- device discovery
-- driver binding
-- subsystem registration
-- service lifecycle control
-- system-wide event stream
-
-This approach makes hardware discovery and subsystem interaction observable,
-debuggable, and structurally consistent.
-
-## System Overview
-
-```text
-            +----------------------+
-            |       Userland       |
-            |  shell / utilities   |
-            +----------+-----------+
-                       |
-                    POSIX ABI
-                       |
-       +---------------+---------------+
-       |            Kernel Core        |
-       | scheduler | vm | vfs | ipc    |
-       +---------------+---------------+
-                       |
-                     Fabric
-          device / driver / service bus
-                       |
-       +---------------+---------------+
-       | PCI | IDE | platform | virt   |
-       +---------------+---------------+
-```
-
-## Project Goals
-
-RodNIX prioritizes:
-
-- readable kernel architecture
-- explicit subsystem boundaries
-- fast debugging in virtual environments
-- incremental POSIX compatibility
-- experimentation with modern kernel design ideas
-
-RodNIX does not aim to:
-
-- replace Linux
-- replicate historical Unix behavior blindly
-- support every legacy interface
-
-This project exists primarily as a clean kernel architecture experiment.
+- explicit subsystem boundaries;
+- predictable debugging and reproducibility;
+- incremental POSIX-compatible userland growth;
+- minimal historical complexity carried forward by default;
+- engineering documentation treated as part of the product.
 
 ## Current Status
 
-Implemented and working today:
+The repository already includes working implementations of:
 
-- x86_64 boot path (Multiboot2, higher-half mapping)
-- PMM + VM baseline (`mmap`, `munmap`, `brk`)
-- copy-on-write groundwork
-- interrupts and LAPIC timer
-- preemptive scheduler
-- VFS layer with RAMFS / initrd
-- EXT2 mount + write path (`write`/`truncate`, direct + single indirect)
-- Fabric device / driver / service model
-- system event stream
-- IDE disk discovery and block service (`disk0`)
-- userland init and shell
-- pipes and redirects
-- growing POSIX syscall surface
-- `fork`
-- `exec`
-- `wait`
-- signals
-- `poll` / `select`
-- futex
-
-Primary development platform: x86_64 + QEMU.
+- `x86_64` boot via Multiboot2;
+- baseline memory management: PMM, VM, `mmap`, `munmap`, `brk`;
+- interrupts, LAPIC timer, and baseline IRQ routing;
+- a preemptive scheduler;
+- VFS, `initrd`, EXT2 mount, and the write path;
+- the Fabric model for devices, drivers, and services;
+- userland bootstrap, shell, and diagnostic utilities;
+- `fork`, `exec`, `wait`, signals, `poll`, `select`, and futex;
+- system utilities such as `hostinfo`, `sysinfo`, `cpuinfo`, `diskinfo`,
+  `hwlist`, `fabricls`, `fabricevents`, and `scstat`.
 
 ## Quick Start
 
-Build and run the system:
+Basic build and run:
 
 ```bash
 make clean
@@ -114,87 +40,83 @@ make iso
 make run
 ```
 
-Verbose boot output:
+Run with verbose diagnostics:
 
 ```bash
 make run-verbose
 ```
 
-## Useful Shell Commands
+Run with an overridden CPU model and vCPU count:
 
-Inside RodNIX:
+```bash
+make run QEMU_CPU=max QEMU_SMP=2
+```
 
-- `hostinfo` / `sysinfo`
-- `hwlist`
-- `fabricls`
-- `fabricevents`
-- `scstat -a`
-- `diskinfo`
-- `fsapitest`
-- `syscalltest`
-- `sigtest`
+Important:
 
-These utilities help inspect kernel subsystems and test interfaces.
+- `QEMU_SMP=1` remains the safe default;
+- `QEMU_SMP>1` is useful for CPU topology inspection and SMP bring-up work,
+  but it should not yet be treated as the kernel production default.
 
-## Where Help Is Needed
+## Useful Commands Inside RodNIX
 
-High-impact contribution areas:
+- `hostinfo` — compact system summary;
+- `sysinfo` — extended kernel/system report;
+- `cpuinfo` — detailed CPU topology and feature report;
+- `hwlist` — discovered hardware inventory;
+- `fabricls` — Fabric object listing;
+- `fabricevents` — system event stream;
+- `diskinfo` — block device diagnostics;
+- `scstat -a` — syscall path statistics;
+- `fsapitest`, `syscalltest`, `sigtest` — targeted userland test tools.
 
-- POSIX ABI hardening: pointer validation, syscall behavior parity, edge case
-  testing
-- File systems and storage: crash-consistency hardening for EXT2, block I/O
-  reliability, caching and buffering improvements
-- Fabric evolution: richer service lifecycle, improved service/subsystem
-  boundaries, event stream extensions
-- Userland: libc-lite expansion, shell improvements, additional utilities
-- Testing: regression tests, subsystem contract tests, CI pipeline improvements
+## Repository Layout
 
-## First Contribution (1-2 Hours)
+- `boot/` — early boot and bootloader integration;
+- `kernel/` — kernel core, architecture code, and subsystems;
+- `drivers/` — drivers and Fabric-facing integration;
+- `include/` — shared headers used by kernel and userland;
+- `userland/` — shell, utilities, and runtime support;
+- `scripts/` — build, CI, and developer tooling;
+- `docs/` — active documentation plus archive;
+- `third_party/` — imported external material;
+- `build/`, `iso/` — local build artifacts.
 
-A typical first contribution looks like this:
+## Documentation
 
-1. Pick one small bug or missing validation check.
-2. Reproduce the issue using a command or test.
-3. Implement the smallest correct fix.
-4. Run baseline checks.
+The documentation language split is intentional:
+
+- top-level documents in the repository root are in English;
+- `docs/ru/` contains the Russian active documentation set;
+- `docs/en/` contains English documentation and navigation mirrors;
+- archived materials stay under `docs/archive/` and `docs/ru/archive/`.
+
+Recommended starting points:
+
+1. `docs/README.md`
+2. `docs/en/README.md`
+3. `docs/ru/README.md`
+4. `docs/ru/overview.md`
+5. `docs/ru/architecture.md`
+6. `docs/ru/build_run.md`
+
+## Contributing
+
+Contribution rules are documented in `CONTRIBUTING.md`.
+
+Minimum baseline before submitting changes:
 
 ```bash
 make
-scripts/ci/smoke_qemu.sh
+make -C userland
 ```
-5. Open a Pull Request describing:
 
-- the problem
-- what changed
-- how it was validated
+For behavior changes, also run the relevant smoke or contract checks from
+`scripts/ci/`.
 
-Small, focused patches are strongly preferred.
+## Security
 
-## Repository Structure
-
-- `boot/` - bootloader integration and early boot code
-- `kernel/` - kernel core, architecture code, and subsystems
-- `drivers/` - hardware drivers and Fabric-facing device support
-- `include/` - shared headers used across kernel and userland components
-- `userland/` - userspace binaries, runtime pieces, and shell
-- `scripts/` - build, CI, and development helper scripts
-- `docs/` - project documentation in English and Russian
-- `third_party/` - imported external code and vendor sources
-- `build/` - local build artifacts generated during compilation
-- `iso/` - files staged into the bootable ISO image
-
-## Development
-Contribution guidelines:
-
-- `CONTRIBUTING.md`
-
-Architecture and planning:
-
-- `ARCHITECTURE.md`
-- `ROADMAP.md`
-- `docs/README.md`
-- `docs/en/README.md`
-- `docs/ru/README.md`
+The vulnerability reporting process is described in `SECURITY.md`.
 
 ## License
 
@@ -202,3 +124,4 @@ See:
 
 - `LICENSE`
 - `ENTERPRISE_LICENSE.md`
+- `THIRD_PARTY_NOTICES.md`

@@ -1,9 +1,8 @@
 #include "../unix_layer.h"
-#include "../../arch/x86_64/config.h"
+#include "../../arch/config.h"
 #include "../../../include/error.h"
 
 #define UNIX_USER_MIN_VA 0x1000ULL
-#define UNIX_USER_CANON_MAX 0x00007FFFFFFFFFFFULL
 
 bool unix_user_range_ok(const void* ptr, size_t len)
 {
@@ -12,8 +11,8 @@ bool unix_user_range_ok(const void* ptr, size_t len)
     }
     uintptr_t start = (uintptr_t)ptr;
     if (start < UNIX_USER_MIN_VA ||
-        start > UNIX_USER_CANON_MAX ||
-        start >= X86_64_KERNEL_VIRT_BASE) {
+        start > ARCH_USER_CANON_MAX ||
+        start >= ARCH_KERNEL_VIRT_BASE) {
         return false;
     }
     if (len == 0) {
@@ -23,7 +22,7 @@ bool unix_user_range_ok(const void* ptr, size_t len)
     if (__builtin_add_overflow(start, len - 1, &end)) {
         return false;
     }
-    return end <= UNIX_USER_CANON_MAX && end < X86_64_KERNEL_VIRT_BASE;
+    return end <= ARCH_USER_CANON_MAX && end < ARCH_KERNEL_VIRT_BASE;
 }
 
 int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src)
@@ -33,13 +32,13 @@ int unix_copy_user_cstr(char* dst, size_t dst_size, const char* user_src)
     }
     uintptr_t base = (uintptr_t)user_src;
     if (base < UNIX_USER_MIN_VA ||
-        base > UNIX_USER_CANON_MAX ||
-        base >= X86_64_KERNEL_VIRT_BASE) {
+        base > ARCH_USER_CANON_MAX ||
+        base >= ARCH_KERNEL_VIRT_BASE) {
         return RDNX_E_INVALID;
     }
     for (size_t i = 0; i < dst_size; i++) {
         uintptr_t cur = base + i;
-        if (cur > UNIX_USER_CANON_MAX || cur >= X86_64_KERNEL_VIRT_BASE) {
+        if (cur > ARCH_USER_CANON_MAX || cur >= ARCH_KERNEL_VIRT_BASE) {
             return RDNX_E_INVALID;
         }
         char c = user_src[i];

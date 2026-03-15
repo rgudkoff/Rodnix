@@ -10,9 +10,9 @@
 #include "../../../kernel/net/net.h"
 #include "../../../kernel/net/socket.h"
 #include "../../../kernel/common/heap.h"
-#include "../../../kernel/arch/x86_64/config.h"
-#include "../../../kernel/arch/x86_64/paging.h"
-#include "../../../kernel/arch/x86_64/pmm.h"
+#include "../../../kernel/arch/config.h"
+#include "../../../kernel/arch/paging.h"
+#include "../../../kernel/arch/pmm.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
@@ -201,10 +201,10 @@ static int e1000_alloc_dma_rings(e1000_slot_t* slot)
         return RDNX_E_NOMEM;
     }
 
-    slot->tx_desc = (struct e1000_tx_desc*)X86_64_PHYS_TO_VIRT(slot->tx_desc_phys);
-    slot->rx_desc = (struct e1000_rx_desc*)X86_64_PHYS_TO_VIRT(slot->rx_desc_phys);
-    slot->tx_buf = (uint8_t*)X86_64_PHYS_TO_VIRT(slot->tx_buf_phys);
-    slot->rx_buf = (uint8_t*)X86_64_PHYS_TO_VIRT(slot->rx_buf_phys);
+    slot->tx_desc = (struct e1000_tx_desc*)ARCH_PHYS_TO_VIRT(slot->tx_desc_phys);
+    slot->rx_desc = (struct e1000_rx_desc*)ARCH_PHYS_TO_VIRT(slot->rx_desc_phys);
+    slot->tx_buf = (uint8_t*)ARCH_PHYS_TO_VIRT(slot->tx_buf_phys);
+    slot->rx_buf = (uint8_t*)ARCH_PHYS_TO_VIRT(slot->rx_buf_phys);
     if (!slot->tx_desc || !slot->rx_desc || !slot->tx_buf || !slot->rx_buf) {
         return RDNX_E_NOMEM;
     }
