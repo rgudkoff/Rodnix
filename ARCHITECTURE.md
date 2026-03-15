@@ -93,7 +93,7 @@ CPU
 - [x] Task scheduler (preemptive, TIMESHARE/REALTIME, priority inheritance)
 - [x] Memory management (PMM, VM map, vm_object, page fault, COW groundwork)
 - [x] IPC subsystem (ports, queues, refcounted rights)
-- [x] VFS + RAMFS/initrd + EXT2 read/write (direct + single indirect)
+- [x] VFS + RAMFS/initrd + EXT2 read/write (direct + single + double indirect)
 - [x] Device drivers via Fabric (HID keyboard, IDE storage, virtio-net stub)
 - [x] POSIX syscall surface (fork, exec, wait, signals, poll, futex, pipes)
 - [x] Userland init and shell with utilities

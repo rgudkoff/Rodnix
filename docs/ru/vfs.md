@@ -27,7 +27,8 @@
   - чтение superblock/group descriptors;
   - чтение inode/directories и построение дерева VFS при mount;
   - write-path реализован для regular files (`write`, `truncate`, `ftruncate`);
-  - поддержаны direct + single indirect blocks;
+  - поддержаны direct + single + double indirect blocks (файлы до ~4 ГБ);
+  - preload-лимит при mount: 64 МБ (файлы большего размера обрезаются при загрузке в VFS-кэш);
   - освобождение блоков при shrink и обновление счетчиков group/superblock.
 - Узлы `/dev` сейчас создаются ядром виртуально (не читаются с диска):
   `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.

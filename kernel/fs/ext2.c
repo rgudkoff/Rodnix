@@ -30,7 +30,7 @@
 #define EXT2_MAX_INODE_SIZE 512u
 #define EXT2_MAX_TREE_DEPTH 4u
 #define EXT2_MAX_TREE_NODES 2048u
-#define EXT2_MAX_FILE_BYTES (1024u * 1024u)
+#define EXT2_MAX_FILE_BYTES (64u * 1024u * 1024u) /* preload cap; files > 64 MB truncated at mount */
 
 #define EXT2_FEATURE_INCOMPAT_FILETYPE 0x0002u
 #define EXT2_FEATURE_INCOMPAT_SUPP (EXT2_FEATURE_INCOMPAT_FILETYPE)
@@ -506,25 +506,56 @@ static int ext2_inode_get_block(ext2_mount_ctx_t* ctx,
 
     uint32_t per_block = ctx->block_size / sizeof(uint32_t);
     uint32_t idx = lbn - EXT2_NDIR_BLOCKS;
-    if (idx >= per_block) {
-        return RDNX_E_UNSUPPORTED;
-    }
-    if (ino->block[12] == 0) {
-        *out_blk = 0;
-        return RDNX_OK;
+
+    /* Single indirect: block[12] */
+    if (idx < per_block) {
+        if (ino->block[12] == 0) {
+            *out_blk = 0;
+            return RDNX_OK;
+        }
+        uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!ibuf) {
+            return RDNX_E_NOMEM;
+        }
+        int rc = ext2_read_block(ctx, ino->block[12], ibuf);
+        if (rc == RDNX_OK) {
+            *out_blk = ((const uint32_t*)ibuf)[idx];
+        }
+        kfree(ibuf);
+        return rc;
     }
 
-    uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
-    if (!ibuf) {
-        return RDNX_E_NOMEM;
+    /* Double indirect: block[13] */
+    idx -= per_block;
+    if (idx < per_block * per_block) {
+        if (ino->block[13] == 0) {
+            *out_blk = 0;
+            return RDNX_OK;
+        }
+        uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!ibuf) {
+            return RDNX_E_NOMEM;
+        }
+        int rc = ext2_read_block(ctx, ino->block[13], ibuf);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+        uint32_t di_blk = ((const uint32_t*)ibuf)[idx / per_block];
+        if (di_blk == 0) {
+            kfree(ibuf);
+            *out_blk = 0;
+            return RDNX_OK;
+        }
+        rc = ext2_read_block(ctx, di_blk, ibuf);
+        if (rc == RDNX_OK) {
+            *out_blk = ((const uint32_t*)ibuf)[idx % per_block];
+        }
+        kfree(ibuf);
+        return rc;
     }
-    int rc = ext2_read_block(ctx, ino->block[12], ibuf);
-    if (rc == RDNX_OK) {
-        const uint32_t* table = (const uint32_t*)ibuf;
-        *out_blk = table[idx];
-    }
-    kfree(ibuf);
-    return rc;
+
+    return RDNX_E_UNSUPPORTED;
 }
 
 static int ext2_inode_get_or_alloc_block(ext2_mount_ctx_t* ctx,
@@ -570,24 +601,95 @@ static int ext2_inode_get_or_alloc_block(ext2_mount_ctx_t* ctx,
 
     uint32_t per_block = ctx->block_size / sizeof(uint32_t);
     uint32_t idx = lbn - EXT2_NDIR_BLOCKS;
-    if (idx >= per_block) {
+
+    /* Single indirect: block[12] */
+    if (idx < per_block) {
+        if (ino->block[12] == 0) {
+            if (!alloc) {
+                return RDNX_OK;
+            }
+            uint32_t ind_blk = 0;
+            int rc = ext2_alloc_block(ctx, &ind_blk);
+            if (rc != RDNX_OK) {
+                return rc;
+            }
+            rc = ext2_zero_block(ctx, ind_blk);
+            if (rc != RDNX_OK) {
+                return rc;
+            }
+            ino->block[12] = ind_blk;
+            ino->blocks += sectors_per_block;
+            *out_inode_dirty = 1;
+            rc = ext2_write_inode(ctx, ino_num, ino);
+            if (rc != RDNX_OK) {
+                return rc;
+            }
+        }
+
+        uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!ibuf) {
+            return RDNX_E_NOMEM;
+        }
+        int rc = ext2_read_block(ctx, ino->block[12], ibuf);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+        uint32_t* table = (uint32_t*)ibuf;
+        uint32_t blk = table[idx];
+        if (blk == 0 && alloc) {
+            rc = ext2_alloc_block(ctx, &blk);
+            if (rc != RDNX_OK) {
+                kfree(ibuf);
+                return rc;
+            }
+            rc = ext2_zero_block(ctx, blk);
+            if (rc != RDNX_OK) {
+                kfree(ibuf);
+                return rc;
+            }
+            table[idx] = blk;
+            rc = ext2_write_block(ctx, ino->block[12], ibuf);
+            if (rc != RDNX_OK) {
+                kfree(ibuf);
+                return rc;
+            }
+            ino->blocks += sectors_per_block;
+            *out_inode_dirty = 1;
+            rc = ext2_write_inode(ctx, ino_num, ino);
+            if (rc != RDNX_OK) {
+                kfree(ibuf);
+                return rc;
+            }
+        }
+        *out_blk = blk;
+        kfree(ibuf);
+        return RDNX_OK;
+    }
+
+    /* Double indirect: block[13] */
+    uint32_t idx2  = idx - per_block;
+    uint32_t di_idx = idx2 / per_block;
+    uint32_t si_idx = idx2 % per_block;
+    if (idx2 >= per_block * per_block) {
         return RDNX_E_UNSUPPORTED;
     }
 
-    if (ino->block[12] == 0) {
+    /* Ensure double indirect table block exists */
+    if (ino->block[13] == 0) {
         if (!alloc) {
             return RDNX_OK;
         }
-        uint32_t ind_blk = 0;
-        int rc = ext2_alloc_block(ctx, &ind_blk);
+        uint32_t dind_blk = 0;
+        int rc = ext2_alloc_block(ctx, &dind_blk);
         if (rc != RDNX_OK) {
             return rc;
         }
-        rc = ext2_zero_block(ctx, ind_blk);
+        rc = ext2_zero_block(ctx, dind_blk);
         if (rc != RDNX_OK) {
             return rc;
         }
-        ino->block[12] = ind_blk;
+        ino->block[13] = dind_blk;
         ino->blocks += sectors_per_block;
         *out_inode_dirty = 1;
         rc = ext2_write_inode(ctx, ino_num, ino);
@@ -601,13 +703,55 @@ static int ext2_inode_get_or_alloc_block(ext2_mount_ctx_t* ctx,
         return RDNX_E_NOMEM;
     }
 
-    int rc = ext2_read_block(ctx, ino->block[12], ibuf);
+    /* Read double indirect table */
+    int rc = ext2_read_block(ctx, ino->block[13], ibuf);
     if (rc != RDNX_OK) {
         kfree(ibuf);
         return rc;
     }
-    uint32_t* table = (uint32_t*)ibuf;
-    uint32_t blk = table[idx];
+    uint32_t* di_table = (uint32_t*)ibuf;
+    uint32_t si_blk = di_table[di_idx];
+
+    /* Ensure single indirect sub-block exists */
+    if (si_blk == 0) {
+        if (!alloc) {
+            kfree(ibuf);
+            return RDNX_OK;
+        }
+        rc = ext2_alloc_block(ctx, &si_blk);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+        rc = ext2_zero_block(ctx, si_blk);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+        di_table[di_idx] = si_blk;
+        rc = ext2_write_block(ctx, ino->block[13], ibuf);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+        ino->blocks += sectors_per_block;
+        *out_inode_dirty = 1;
+        rc = ext2_write_inode(ctx, ino_num, ino);
+        if (rc != RDNX_OK) {
+            kfree(ibuf);
+            return rc;
+        }
+    }
+
+    /* Read single indirect sub-table */
+    rc = ext2_read_block(ctx, si_blk, ibuf);
+    if (rc != RDNX_OK) {
+        kfree(ibuf);
+        return rc;
+    }
+    uint32_t* si_table = (uint32_t*)ibuf;
+    uint32_t blk = si_table[si_idx];
+
     if (blk == 0 && alloc) {
         rc = ext2_alloc_block(ctx, &blk);
         if (rc != RDNX_OK) {
@@ -619,8 +763,8 @@ static int ext2_inode_get_or_alloc_block(ext2_mount_ctx_t* ctx,
             kfree(ibuf);
             return rc;
         }
-        table[idx] = blk;
-        rc = ext2_write_block(ctx, ino->block[12], ibuf);
+        si_table[si_idx] = blk;
+        rc = ext2_write_block(ctx, si_blk, ibuf);
         if (rc != RDNX_OK) {
             kfree(ibuf);
             return rc;
@@ -652,14 +796,15 @@ static uint32_t ext2_count_allocated_blocks(ext2_mount_ctx_t* ctx, const ext2_in
         }
     }
 
+    uint32_t per_block = ctx->block_size / sizeof(uint32_t);
+
     if (ino->block[12] != 0) {
-        total++; /* indirect block itself */
+        total++; /* single indirect block itself */
         uint8_t* ibuf = (uint8_t*)kmalloc(ctx->block_size);
         if (!ibuf) {
             return total;
         }
         if (ext2_read_block(ctx, ino->block[12], ibuf) == RDNX_OK) {
-            uint32_t per_block = ctx->block_size / sizeof(uint32_t);
             const uint32_t* table = (const uint32_t*)ibuf;
             for (uint32_t i = 0; i < per_block; i++) {
                 if (table[i] != 0) {
@@ -669,6 +814,37 @@ static uint32_t ext2_count_allocated_blocks(ext2_mount_ctx_t* ctx, const ext2_in
         }
         kfree(ibuf);
     }
+
+    if (ino->block[13] != 0) {
+        total++; /* double indirect table itself */
+        uint8_t* di_buf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!di_buf) {
+            return total;
+        }
+        if (ext2_read_block(ctx, ino->block[13], di_buf) == RDNX_OK) {
+            const uint32_t* di_table = (const uint32_t*)di_buf;
+            uint8_t* si_buf = (uint8_t*)kmalloc(ctx->block_size);
+            if (si_buf) {
+                for (uint32_t i = 0; i < per_block; i++) {
+                    if (di_table[i] == 0) {
+                        continue;
+                    }
+                    total++; /* single indirect sub-block */
+                    if (ext2_read_block(ctx, di_table[i], si_buf) == RDNX_OK) {
+                        const uint32_t* si_table = (const uint32_t*)si_buf;
+                        for (uint32_t j = 0; j < per_block; j++) {
+                            if (si_table[j] != 0) {
+                                total++;
+                            }
+                        }
+                    }
+                }
+                kfree(si_buf);
+            }
+        }
+        kfree(di_buf);
+    }
+
     return total;
 }
 
@@ -751,6 +927,126 @@ static int ext2_trim_inode_blocks(ext2_mount_ctx_t* ctx, uint32_t ino_num, ext2_
             }
         }
         kfree(ibuf);
+    }
+
+    /* Double indirect: block[13] */
+    if (ino->block[13] != 0) {
+        uint32_t di_data_keep = (target_blocks > EXT2_NDIR_BLOCKS + per_block)
+                                ? (target_blocks - EXT2_NDIR_BLOCKS - per_block) : 0;
+
+        uint8_t* di_buf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!di_buf) {
+            return RDNX_E_NOMEM;
+        }
+        int rc = ext2_read_block(ctx, ino->block[13], di_buf);
+        if (rc != RDNX_OK) {
+            kfree(di_buf);
+            return rc;
+        }
+        uint32_t* di_table = (uint32_t*)di_buf;
+        int di_dirty = 0;
+
+        uint8_t* si_buf = (uint8_t*)kmalloc(ctx->block_size);
+        if (!si_buf) {
+            kfree(di_buf);
+            return RDNX_E_NOMEM;
+        }
+
+        for (int di_i = (int)per_block - 1; di_i >= 0; di_i--) {
+            uint32_t si_blk = di_table[(uint32_t)di_i];
+            if (si_blk == 0) {
+                continue;
+            }
+            uint32_t di_base = (uint32_t)di_i * per_block;
+
+            if (di_data_keep <= di_base) {
+                /* Free entire sub-table */
+                if (ext2_read_block(ctx, si_blk, si_buf) == RDNX_OK) {
+                    uint32_t* si_table = (uint32_t*)si_buf;
+                    for (uint32_t si_i = 0; si_i < per_block; si_i++) {
+                        if (si_table[si_i] != 0) {
+                            int frc = ext2_free_block(ctx, si_table[si_i]);
+                            if (frc != RDNX_OK) {
+                                kfree(si_buf);
+                                kfree(di_buf);
+                                return frc;
+                            }
+                            si_table[si_i] = 0;
+                        }
+                    }
+                }
+                int frc = ext2_free_block(ctx, si_blk);
+                if (frc != RDNX_OK) {
+                    kfree(si_buf);
+                    kfree(di_buf);
+                    return frc;
+                }
+                di_table[(uint32_t)di_i] = 0;
+                di_dirty = 1;
+            } else if (di_data_keep < di_base + per_block) {
+                /* Partial trim of sub-table */
+                uint32_t si_keep = di_data_keep - di_base;
+                rc = ext2_read_block(ctx, si_blk, si_buf);
+                if (rc != RDNX_OK) {
+                    kfree(si_buf);
+                    kfree(di_buf);
+                    return rc;
+                }
+                uint32_t* si_table = (uint32_t*)si_buf;
+                int si_dirty = 0;
+                for (int si_i = (int)per_block - 1; si_i >= 0; si_i--) {
+                    if ((uint32_t)si_i < si_keep) {
+                        continue;
+                    }
+                    if (si_table[(uint32_t)si_i] != 0) {
+                        int frc = ext2_free_block(ctx, si_table[(uint32_t)si_i]);
+                        if (frc != RDNX_OK) {
+                            kfree(si_buf);
+                            kfree(di_buf);
+                            return frc;
+                        }
+                        si_table[(uint32_t)si_i] = 0;
+                        si_dirty = 1;
+                    }
+                }
+                if (si_dirty) {
+                    int wrc = ext2_write_block(ctx, si_blk, si_buf);
+                    if (wrc != RDNX_OK) {
+                        kfree(si_buf);
+                        kfree(di_buf);
+                        return wrc;
+                    }
+                }
+            }
+            /* else: keep entire sub-table */
+        }
+
+        kfree(si_buf);
+
+        /* Free double indirect table if now empty */
+        int any = 0;
+        for (uint32_t i = 0; i < per_block; i++) {
+            if (di_table[i] != 0) {
+                any = 1;
+                break;
+            }
+        }
+        if (!any) {
+            uint32_t dind = ino->block[13];
+            ino->block[13] = 0;
+            int frc = ext2_free_block(ctx, dind);
+            if (frc != RDNX_OK) {
+                kfree(di_buf);
+                return frc;
+            }
+        } else if (di_dirty) {
+            int wrc = ext2_write_block(ctx, ino->block[13], di_buf);
+            if (wrc != RDNX_OK) {
+                kfree(di_buf);
+                return wrc;
+            }
+        }
+        kfree(di_buf);
     }
 
     uint32_t sectors_per_block = ctx->block_size / 512u;
