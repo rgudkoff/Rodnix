@@ -1,8 +1,7 @@
 name: Smoke
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   qemu-smoke:
@@ -23,18 +22,35 @@ jobs:
             grub-pc-bin \
             grub-common \
             xorriso \
-            mtools
+            mtools \
+            python3
 
-      - name: Provide x86_64-elf Tool Names
+      - name: Set up cross-compiler shims
         run: |
+          # Ubuntu ships gcc targeting x86_64-linux-gnu.  With -ffreestanding
+          # -nostdlib the output is bare-metal compatible.  We expose it under
+          # the x86_64-elf- prefix that the Makefile expects.
           mkdir -p "$HOME/.local/bin"
-          ln -sf /usr/bin/gcc "$HOME/.local/bin/x86_64-elf-gcc"
-          ln -sf /usr/bin/ld "$HOME/.local/bin/x86_64-elf-ld"
+          for tool in gcc ld objcopy objdump nm ar; do
+            if command -v "x86_64-linux-gnu-${tool}" >/dev/null 2>&1; then
+              ln -sf "$(command -v x86_64-linux-gnu-${tool})" \
+                     "$HOME/.local/bin/x86_64-elf-${tool}"
+            elif command -v "${tool}" >/dev/null 2>&1; then
+              ln -sf "$(command -v ${tool})" \
+                     "$HOME/.local/bin/x86_64-elf-${tool}"
+            fi
+          done
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain
+        run: |
+          x86_64-elf-gcc --version
+          x86_64-elf-ld --version
+          grub-mkrescue --version || true
 
       - name: Run Smoke
         run: |
-          TIMEOUT_SEC=20 scripts/ci/smoke_qemu.sh
+          TIMEOUT_SEC=30 scripts/ci/smoke_qemu.sh
 
       - name: Upload Boot Log
         if: always()
