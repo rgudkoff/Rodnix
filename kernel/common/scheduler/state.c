@@ -17,6 +17,7 @@ struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 scheduler_reap_stats_t reap_stats = {0};
 waitq_t scheduler_sleep_waitq;
+uint64_t bucket_last_run_tick[READY_QUEUE_LEVELS] = {0};
 
 static bool scheduler_thread_transition_valid(thread_state_t from, thread_state_t to)
 {
@@ -108,6 +109,7 @@ int scheduler_init(void)
     scheduler_running = false;
     for (int i = 0; i < READY_QUEUE_LEVELS; i++) {
         TAILQ_INIT(&ready_queues[i]);
+        bucket_last_run_tick[i] = 0;
     }
     waitq_init(&scheduler_sleep_waitq, "scheduler_sleep");
     ticks_per_slice = 1;
@@ -185,6 +187,10 @@ int scheduler_add_thread(thread_t* thread)
     thread->dyn_priority = thread->priority;
     thread->inherited_priority = thread->priority;
     thread->has_inherited = 0;
+    /* Назначить DEFAULT-бакет если не был выставлен явно */
+    if (!thread->sched_bucket_explicit) {
+        thread->sched_bucket = (uint8_t)SCHED_BUCKET_DEFAULT;
+    }
     ready_enqueue(thread);
     stats.total_tasks++;
 

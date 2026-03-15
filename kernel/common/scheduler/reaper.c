@@ -183,5 +183,6 @@ void scheduler_reaper_start(void)
         return;
     }
     reaper_thread->priority = 16;
+    scheduler_set_bucket(reaper_thread, SCHED_BUCKET_BACKGROUND);
     scheduler_add_thread(reaper_thread);
 }

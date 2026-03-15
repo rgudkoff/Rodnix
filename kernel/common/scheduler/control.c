@@ -230,3 +230,15 @@ void scheduler_clear_inherit(thread_t* target)
     }
     target->has_inherited = 0;
 }
+
+void scheduler_set_bucket(thread_t* thread, sched_bucket_t bucket)
+{
+    if (!thread) {
+        return;
+    }
+    if ((int)bucket >= (int)SCHED_BUCKET_COUNT) {
+        return;
+    }
+    thread->sched_bucket = (uint8_t)bucket;
+    thread->sched_bucket_explicit = 1;
+}

@@ -57,20 +57,23 @@ void scheduler_reset_timeslice(const thread_t* thread)
         ticks_until_preempt = REALTIME_QUANTUM_TICKS;
         return;
     }
-    int prio = thread_effective_priority(thread);
     uint32_t base = ticks_per_slice;
     if (base == 0) {
         base = 1;
     }
-    uint32_t prio_extra = (uint32_t)(prio / TIMESHARE_PRIO_STEP);
-    if (prio_extra > TIMESHARE_MAX_BONUS) {
-        prio_extra = TIMESHARE_MAX_BONUS;
+    /* Квант определяется бакетом: INTERACTIVE — короткий (отзывчивость),
+     * BACKGROUND — длинный (меньше переключений). */
+    static const uint32_t bucket_mult[SCHED_BUCKET_COUNT] = {
+        BUCKET_QUANTUM_BACKGROUND,
+        BUCKET_QUANTUM_UTILITY,
+        BUCKET_QUANTUM_DEFAULT,
+        BUCKET_QUANTUM_INTERACTIVE,
+    };
+    uint8_t bucket = thread->sched_bucket;
+    if (bucket >= SCHED_BUCKET_COUNT) {
+        bucket = SCHED_BUCKET_DEFAULT;
     }
-    uint32_t usage_extra = 0;
-    if (thread->sched_usage > CPU_BOUND_THRESHOLD) {
-        usage_extra = CPU_BOUND_EXTRA_TICKS;
-    }
-    ticks_until_preempt = base + prio_extra + usage_extra;
+    ticks_until_preempt = base * bucket_mult[bucket];
     if (ticks_until_preempt == 0) {
         ticks_until_preempt = 1;
     }
@@ -93,62 +96,59 @@ void ready_enqueue(thread_t* thread)
     }
     int q = ready_queue_index_for_thread(thread);
     if (q < 0 || q >= READY_QUEUE_LEVELS) {
-        q = READY_QUEUE_LEVELS - 1;
+        q = (int)SCHED_BUCKET_DEFAULT;
     }
     TAILQ_INSERT_TAIL(&ready_queues[q], thread, sched_link);
     thread->ready_queued = 1;
     stats.ready_tasks++;
 }
 
+/* Вспомогательная функция: извлечь первый поток из очереди q и обновить метрики. */
+static thread_t* dequeue_from(int q)
+{
+    struct ready_queue_head* queue = &ready_queues[q];
+    thread_t* thread = TAILQ_FIRST(queue);
+    if (!thread) {
+        return NULL;
+    }
+    if (thread->state != THREAD_STATE_READY) {
+        DEBUG_WARN("ready_dequeue: thread %llu state=%d",
+                   (unsigned long long)thread->thread_id, thread->state);
+    }
+    TAILQ_REMOVE(queue, thread, sched_link);
+    thread->sched_link.tqe_next = NULL;
+    thread->sched_link.tqe_prev = NULL;
+    thread->ready_queued = 0;
+    if (stats.ready_tasks > 0) {
+        stats.ready_tasks--;
+    }
+    bucket_last_run_tick[q] = sched_ticks;
+    return thread;
+}
+
 thread_t* ready_dequeue(void)
 {
-    int start = READY_QUEUE_LEVELS - 1;
-    int end = 0;
-
+    /* RR/FIFO: всё в DEFAULT-очереди */
     if (current_policy == SCHED_POLICY_RR || current_policy == SCHED_POLICY_FIFO) {
-        start = 1;
-        end = 1;
+        return dequeue_from((int)SCHED_BUCKET_DEFAULT);
     }
 
-    if (start == end) {
-        int q = start;
-        struct ready_queue_head* queue = &ready_queues[q];
-        thread_t* thread = TAILQ_FIRST(queue);
-        if (!thread) {
-            return NULL;
+    /* Starvation avoidance: если нижний бакет не получал CPU давно — дать ему слот.
+     * Проверяем снизу вверх (BACKGROUND → UTILITY → DEFAULT), исключая INTERACTIVE —
+     * он и так всегда имеет приоритет. */
+    for (int b = (int)SCHED_BUCKET_BACKGROUND; b < (int)SCHED_BUCKET_INTERACTIVE; b++) {
+        if (!TAILQ_EMPTY(&ready_queues[b]) &&
+            (sched_ticks - bucket_last_run_tick[b]) >= STARVATION_THRESHOLD_TICKS) {
+            return dequeue_from(b);
         }
-
-        if (thread->state != THREAD_STATE_READY) {
-            DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
-        }
-        TAILQ_REMOVE(queue, thread, sched_link);
-        thread->sched_link.tqe_next = NULL;
-        thread->sched_link.tqe_prev = NULL;
-        thread->ready_queued = 0;
-        if (stats.ready_tasks > 0) {
-            stats.ready_tasks--;
-        }
-        return thread;
     }
 
-    for (int q = start; q >= end; q--) {
-        struct ready_queue_head* queue = &ready_queues[q];
-        thread_t* thread = TAILQ_FIRST(queue);
-        if (!thread) {
-            continue;
+    /* Нормальный путь: выбрать из наиболее приоритетного непустого бакета */
+    for (int q = READY_QUEUE_LEVELS - 1; q >= 0; q--) {
+        thread_t* t = dequeue_from(q);
+        if (t) {
+            return t;
         }
-
-        if (thread->state != THREAD_STATE_READY) {
-            DEBUG_WARN("ready_dequeue: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
-        }
-        TAILQ_REMOVE(queue, thread, sched_link);
-        thread->sched_link.tqe_next = NULL;
-        thread->sched_link.tqe_prev = NULL;
-        thread->ready_queued = 0;
-        if (stats.ready_tasks > 0) {
-            stats.ready_tasks--;
-        }
-        return thread;
     }
 
     return NULL;
@@ -157,20 +157,14 @@ thread_t* ready_dequeue(void)
 int ready_queue_index_for_thread(const thread_t* thread)
 {
     if (!thread) {
-        return READY_QUEUE_LEVELS - 1;
+        return (int)SCHED_BUCKET_DEFAULT;
     }
-
     if (current_policy == SCHED_POLICY_RR || current_policy == SCHED_POLICY_FIFO) {
-        return 1;
+        return (int)SCHED_BUCKET_DEFAULT;
     }
-
-    /* Priority bands: 0-63 (low), 64-191 (normal), 192-255 (high) */
-    int prio = thread_effective_priority(thread);
-    if (prio >= 192) {
-        return 2;
+    int bucket = (int)thread->sched_bucket;
+    if (bucket < 0 || bucket >= READY_QUEUE_LEVELS) {
+        return (int)SCHED_BUCKET_DEFAULT;
     }
-    if (prio >= 64) {
-        return 1;
-    }
-    return 0;
+    return bucket;
 }

@@ -100,5 +100,5 @@ CPU
 - [ ] ARM64 base components
 - [ ] RISC-V64 base components
 - [x] IRQ-based input path through Fabric (IRQ1, polling fallback for disabled-irq paths)
-- [ ] Hierarchical scheduler (bucket → group → thread)
+- [x] Hierarchical scheduler v1 (4 QoS buckets, per-bucket quantum, starvation avoidance, thread_group CPU accounting)
 - [ ] Network: TCP stack + real virtio-net (UDP/ICMP loopback done)

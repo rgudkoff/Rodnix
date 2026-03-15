@@ -8,7 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define READY_QUEUE_LEVELS 3
+/* Число очередей = число QoS-бакетов */
+#define READY_QUEUE_LEVELS ((int)SCHED_BUCKET_COUNT)
 
 #define BOOST_THRESHOLD_TICKS 5
 #define BOOST_MAX 32
@@ -16,10 +17,16 @@
 #define PENALTY_STEP_TICKS 4
 
 #define REALTIME_QUANTUM_TICKS 1
-#define TIMESHARE_PRIO_STEP    64
-#define TIMESHARE_MAX_BONUS    3
-#define CPU_BOUND_THRESHOLD    8
-#define CPU_BOUND_EXTRA_TICKS  2
+
+/* Per-bucket quantum: множитель на ticks_per_slice.
+ * INTERACTIVE — короче (отзывчивость), BACKGROUND — длиннее (меньше переключений). */
+#define BUCKET_QUANTUM_INTERACTIVE 1
+#define BUCKET_QUANTUM_DEFAULT     2
+#define BUCKET_QUANTUM_UTILITY     4
+#define BUCKET_QUANTUM_BACKGROUND  8
+
+/* Starvation avoidance: если бакет не получал CPU N тиков, он получает внеочередной слот. */
+#define STARVATION_THRESHOLD_TICKS 500
 
 extern bool scheduler_initialized;
 extern bool scheduler_running;
@@ -37,6 +44,7 @@ extern struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 extern scheduler_reap_stats_t reap_stats;
 extern waitq_t scheduler_sleep_waitq;
+extern uint64_t bucket_last_run_tick[READY_QUEUE_LEVELS]; /* последний тик каждого бакета */
 
 void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason);
 void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* reason);

@@ -17,9 +17,17 @@
 - интерактивные окна (warp/starvation avoidance),
 - отдельная политика для top-level выбора и thread-level time sharing.
 
-## Текущий статус RodNIX (v0)
+## Текущий статус RodNIX (v1)
 
-- MLQ с 3 уровнями (low/normal/high).
+- **4 QoS-бакета**: `BACKGROUND(0) → UTILITY(1) → DEFAULT(2) → INTERACTIVE(3)`.
+  Каждый бакет — отдельная FIFO-очередь; выше бакет = выше приоритет выбора.
+- **Per-bucket квант**: INTERACTIVE × 1 тик, DEFAULT × 2, UTILITY × 4, BACKGROUND × 8
+  (относительно базового `ticks_per_slice`).
+- **Starvation avoidance**: если бакет не получал CPU 500 тиков — внеочередной слот.
+- **`thread_group_t`** встроена в `task_t`: накапливает `cpu_ticks` и `last_run_tick`
+  для всех потоков задачи (основа для честного распределения внутри бакета в v1.5).
+- **`scheduler_set_bucket()`** — публичный API для явного назначения бакета потоку.
+  Reaper-thread → BACKGROUND; все остальные потоки → DEFAULT по умолчанию.
 - TIMESHARE/REALTIME + динамический приоритет для TIMESHARE.
 - boost при пробуждении, penalty для CPU-bound, clamping.
 - IPC priority inheritance: стек глубиной 8 (`inherit_stack[8]`),

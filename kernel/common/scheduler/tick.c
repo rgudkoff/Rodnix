@@ -12,6 +12,11 @@ void scheduler_tick(void)
     if (cur && cur->state == THREAD_STATE_RUNNING) {
         cur->sched_usage = (cur->sched_usage * 7) / 8;
         cur->sched_usage++;
+        /* Обновить CPU-счётчики группы (task_t.thread_group) */
+        if (cur->task) {
+            cur->task->thread_group.cpu_ticks++;
+            cur->task->thread_group.last_run_tick = sched_ticks;
+        }
         if (cur->sched_class == SCHED_CLASS_TIMESHARE) {
             if ((cur->sched_usage % PENALTY_STEP_TICKS) == 0) {
                 int base = cur->base_priority;
