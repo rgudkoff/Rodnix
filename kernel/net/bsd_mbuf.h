@@ -6,7 +6,7 @@
 
 #define BSD_MBUF_DATA_MAX 2048u
 
-/* FreeBSD-style allocation hints/types (reduced set). */
+/* Reduced allocation hints and buffer kinds used by the compatibility layer. */
 #define BSD_M_NOWAIT 0x0001
 #define BSD_M_WAITOK 0x0002
 
@@ -39,7 +39,7 @@ void bsd_m_freem(bsd_mbuf_t* m);
 int bsd_m_append(bsd_mbuf_t* m, const void* data, size_t len);
 int bsd_m_copydata(const bsd_mbuf_t* m, size_t off, size_t len, void* out);
 
-/* FreeBSD-style aliases for faster driver porting. */
+/* Compatibility aliases retained for imported driver code. */
 typedef bsd_pkthdr_t pkthdr_t;
 typedef bsd_mbuf_t mbuf_t;
 typedef bsd_mbuf_t mbuf;

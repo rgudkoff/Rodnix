@@ -2,8 +2,8 @@
  * @file ext2.c
  * @brief Read-only EXT2 mount driver (inode/dir traversal)
  *
- * Structures and traversal approach are adapted to RodNIX from the compact
- * EXT2 implementation style used in FreeBSD's stand/libsa loader code.
+ * Structures and traversal follow a compact loader-oriented EXT2 layout
+ * adapted for RodNIX.
  */
 
 #include "ext2.h"

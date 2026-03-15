@@ -2,7 +2,7 @@
 #define _RODNIX_COMPAT_NET_NETISR_H
 
 /*
- * FreeBSD-style netisr compatibility header.
+ * Deferred network dispatch compatibility header.
  * Internal backend: kernel/net/bsd_netisr.*
  */
 

@@ -24,6 +24,15 @@ static port_set_t* all_port_sets_head = NULL;
 #define IPC_MAX_PORTS 1024
 static port_t* port_table[IPC_MAX_PORTS];
 
+/*
+ * LOCKING: g_port_table_lock (spinlock_t)
+ *   Protects: port_table[], next_port_id, and port->ref_count mutations.
+ *   Lock order: g_port_table_lock -> ipc_queue_t.lock (never reverse).
+ *   Holders: port_allocate, port_deallocate, port_insert_send_right,
+ *            port_insert_receive_right, ipc_send (refcount bump+push sequence).
+ */
+static spinlock_t g_port_table_lock;
+
 typedef struct ipc_msg_node {
     ipc_message_t msg;
     struct ipc_msg_node* next;
@@ -194,7 +203,7 @@ int ipc_init(void)
     if (ipc_initialized) {
         return RDNX_OK;
     }
-    
+
     next_port_id = 1;
     next_set_id = 1;
 
@@ -202,6 +211,7 @@ int ipc_init(void)
         port_table[i] = NULL;
     }
 
+    spinlock_init(&g_port_table_lock);
     ipc_initialized = true;
     /* Reserve bootstrap port (placeholder, no protocol yet) */
     bootstrap_port = port_allocate(PORT_TYPE_CONTROL);

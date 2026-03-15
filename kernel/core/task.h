@@ -130,6 +130,7 @@ typedef struct task {
         uint64_t r15;
     } sig_saved;
     struct thread* main_thread;/* Основной поток процесса */
+    TAILQ_HEAD(thread_list, thread) threads; /* Список всех потоков задачи */
     uint32_t thread_count;     /* Количество потоков задачи */
     uint32_t ref_count;        /* Счетчик ссылок */
     struct task* next_all;     /* Связный список всех задач */
@@ -160,6 +161,7 @@ typedef struct thread {
     void* arg;                 /* Аргумент для точки входа */
     void* stack;               /* Указатель на стек */
     size_t stack_size;         /* Размер стека */
+    TAILQ_ENTRY(thread) task_link;  /* Узел списка потоков задачи (task_t.threads) */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
     uint8_t ready_queued;      /* Поток находится в ready queue */
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */

@@ -277,7 +277,7 @@ long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot,
 
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
-        /* Linux MAP_FIXED semantics: replace overlapping mappings in range. */
+        /* Fixed mappings replace overlapping ranges in place. */
         (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;

@@ -22,7 +22,7 @@ int bsd_ifnet_attach(bsd_ifnet_t* ifp);
 bsd_ifnet_t* bsd_ifnet_byindex(uint32_t ifindex);
 bsd_ifnet_t* bsd_ifnet_byname(const char* ifname);
 
-/* FreeBSD-style aliases for faster driver porting. */
+/* Compatibility aliases retained for imported driver code. */
 typedef bsd_ifnet_t ifnet_t;
 typedef bsd_ifnet_t ifnet;
 typedef bsd_ifnet_t* if_t;

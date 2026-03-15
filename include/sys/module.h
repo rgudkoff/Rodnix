@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* FreeBSD module event constants (compat). */
+/* Module event constants for the compatibility layer. */
 #define MOD_LOAD 1
 #define MOD_UNLOAD 2
 #define MOD_SHUTDOWN 3
@@ -16,7 +16,7 @@ typedef struct moduledata {
     void* priv;
 } moduledata_t;
 
-/* Registration macros are no-ops in RodNIX compat layer for now. */
+/* Registration macros are no-ops in the current RodNIX compatibility layer. */
 #define DECLARE_MODULE(_name, _data, _sub, _order)
 #define MODULE_VERSION(_name, _ver)
 #define MODULE_DEPEND(_name, _dep, _min, _pref, _max)

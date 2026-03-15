@@ -39,7 +39,8 @@ void scheduler_yield(void)
 
 void scheduler_block(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return;
     }
 
@@ -50,24 +51,24 @@ void scheduler_block(void)
     static int log_count = 0;
     if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block tid=%llu state=%d\n",
-                (unsigned long long)current_thread->thread_id,
-                (int)current_thread->state);
+                (unsigned long long)cur->thread_id,
+                (int)cur->state);
         log_count++;
     }
 
     in_scheduler = true;
 
-    if (current_thread->state != THREAD_STATE_RUNNING) {
-        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)current_thread->thread_id, current_thread->state);
+    if (cur->state != THREAD_STATE_RUNNING) {
+        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)cur->thread_id, cur->state);
     }
-    scheduler_thread_set_state(current_thread, THREAD_STATE_BLOCKED, "scheduler_block");
+    scheduler_thread_set_state(cur, THREAD_STATE_BLOCKED, "scheduler_block");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
-                 current_thread->thread_id, current_thread->state);
-    current_thread->last_sleep_tick = sched_ticks;
+                 cur->thread_id, cur->state);
+    cur->last_sleep_tick = sched_ticks;
     if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block set tid=%llu state=%d\n",
-                (unsigned long long)current_thread->thread_id,
-                (int)current_thread->state);
+                (unsigned long long)cur->thread_id,
+                (int)cur->state);
     }
     stats.blocked_tasks++;
     resched_pending = true;
@@ -135,7 +136,7 @@ void scheduler_wake(thread_t* thread)
         resched_pending = true;
         return;
     }
-    if (!ready_thread_is_queued(thread) && thread != current_thread) {
+    if (!ready_thread_is_queued(thread) && thread != thread_get_current()) {
         ready_enqueue(thread);
         resched_pending = true;
     }
@@ -143,17 +144,18 @@ void scheduler_wake(thread_t* thread)
 
 void scheduler_exit_current(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return;
     }
 
-    scheduler_exit_wake_joiner(current_thread);
-    scheduler_thread_set_state(current_thread, THREAD_STATE_DEAD, "scheduler_exit_current");
+    scheduler_exit_wake_joiner(cur);
+    scheduler_thread_set_state(cur, THREAD_STATE_DEAD, "scheduler_exit_current");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_EXIT,
-                 current_thread->thread_id,
-                 current_thread->task ? current_thread->task->task_id : 0);
-    if (current_thread->task && current_thread->task->state != TASK_STATE_DEAD) {
-        scheduler_task_set_state(current_thread->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
+                 cur->thread_id,
+                 cur->task ? cur->task->task_id : 0);
+    if (cur->task && cur->task->state != TASK_STATE_DEAD) {
+        scheduler_task_set_state(cur->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
     }
     resched_pending = true;
     __asm__ volatile ("int $32");
@@ -164,7 +166,7 @@ void scheduler_exit_current(void)
 
 void scheduler_sleep(uint64_t milliseconds)
 {
-    if (!current_thread) {
+    if (!thread_get_current()) {
         return;
     }
     if (milliseconds == 0) {
