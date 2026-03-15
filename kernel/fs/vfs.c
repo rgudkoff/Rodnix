@@ -883,6 +883,9 @@ int vfs_write(vfs_file_t* file, const void* buffer, size_t size)
         size_t final_size = (end > inode->size) ? end : inode->size;
         int wrc = ext2_writeback_file(file->node, file->pos, buffer, size, final_size);
         if (wrc != RDNX_OK) {
+            if (wrc != RDNX_E_INVALID && wrc != RDNX_E_NOMEM) {
+                return RDNX_E_UNSUPPORTED;
+            }
             return wrc;
         }
         if (inode->data && end > inode->capacity) {
