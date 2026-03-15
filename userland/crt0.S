@@ -10,7 +10,7 @@ _start:
     mov rdi, rax
     ; POSIX_SYS_EXIT
     mov rax, 15
-    syscall
+    int 0x80
 .hang:
     pause
     jmp .hang

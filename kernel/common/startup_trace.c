@@ -1,6 +1,6 @@
 /**
  * @file startup_trace.c
- * @brief FreeBSD-inspired startup trace (bootverbose + verbose_sysinit).
+ * @brief Startup trace support for verbose boot and init-order logging.
  */
 
 #include "startup_trace.h"

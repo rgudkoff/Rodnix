@@ -4,7 +4,6 @@
 
 bool scheduler_initialized = false;
 bool scheduler_running = false;
-thread_t* current_thread = NULL;
 sched_policy_t current_policy = SCHED_POLICY_PRIORITY;
 scheduler_stats_t stats = {0};
 
@@ -104,7 +103,6 @@ int scheduler_init(void)
         return 0;
     }
 
-    current_thread = NULL;
     thread_set_current(NULL);
     current_policy = SCHED_POLICY_PRIORITY;
     scheduler_running = false;
@@ -167,11 +165,11 @@ int scheduler_remove_task(task_t* task)
 
 task_t* scheduler_get_current_task(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return NULL;
     }
-
-    return current_thread->task;
+    return cur->task;
 }
 
 int scheduler_add_thread(thread_t* thread)

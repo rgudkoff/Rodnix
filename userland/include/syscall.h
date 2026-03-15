@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #ifndef RDNX_USE_FAST_SYSCALL
-#define RDNX_USE_FAST_SYSCALL 1
+#define RDNX_USE_FAST_SYSCALL 0
 #endif
 
 static inline long rdnx_syscall6(long n,

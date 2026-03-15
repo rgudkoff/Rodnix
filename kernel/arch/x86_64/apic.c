@@ -373,9 +373,9 @@ int apic_init(void)
     
     kputs("[APIC-1] Check CPUID\n");
     __asm__ volatile ("" ::: "memory");
-    /* XNU-style: доверяем платформе/QEMU и стараемся инициализировать LAPIC
-     * даже если CPUID не выставляет флаг APIC (некоторые конфигурации
-     * виртуализации грешат этим). CPUID используем только для логирования. */
+    /* Trust platform firmware and the virtual machine monitor enough to try
+     * LAPIC initialization even if CPUID does not advertise APIC support.
+     * Some virtualized environments get this flag wrong; CPUID is log-only. */
     bool cpuid_has_apic = apic_check_cpuid();
     if (!cpuid_has_apic) {
         kputs("[APIC-1.1] WARNING: CPUID reports no APIC, forcing APIC init (QEMU/firmware quirk?)\n");
@@ -708,7 +708,7 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     #endif
 
-    /* Зафиксировать на экране текущее состояние ID/VER (даже если они «битые») */
+    /* Preserve the current ID/VER state in logs even if the values are invalid. */
     
     /* Check if Version register is readable */
     if (ver == 0xFFFFFFFF) {

@@ -7,7 +7,7 @@
 #define BSD_NETISR_MAX 16
 #define BSD_NETISR_QDEPTH 64
 
-/* Keep protocol ids aligned with FreeBSD netisr.h subset. */
+/* Keep protocol ids aligned with the imported compatibility subset. */
 #define BSD_NETISR_IP 1u
 
 typedef void (*bsd_netisr_handler_fn_t)(bsd_mbuf_t* m);
@@ -24,7 +24,7 @@ int bsd_netisr_register(const bsd_netisr_handler_t* nh);
 int bsd_netisr_dispatch(uint32_t proto, bsd_mbuf_t* m);
 int bsd_netisr_queue(uint32_t proto, bsd_mbuf_t* m);
 
-/* FreeBSD-style aliases for faster driver porting. */
+/* Compatibility aliases retained for imported driver code. */
 typedef bsd_netisr_handler_t netisr_handler_t;
 
 #define NETISR_IP BSD_NETISR_IP

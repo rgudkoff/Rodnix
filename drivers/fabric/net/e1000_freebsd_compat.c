@@ -1,6 +1,6 @@
 /**
  * @file e1000_freebsd_compat.c
- * @brief RodNIX compatibility hooks required by FreeBSD shared e1000 core.
+ * @brief RodNIX compatibility hooks required by the shared e1000 core.
  */
 
 #include "../../../include/dev/pci/pcireg.h"

@@ -1,8 +1,8 @@
 /*
  * SPDX-License-Identifier: ISC
  *
- * IPv4 text conversion path adapted from the FreeBSD libc inet code
- * (original ISC implementation by Paul Vixie).
+ * IPv4 text conversion path adapted for RodNIX from an ISC-licensed inet
+ * implementation originally written by Paul Vixie.
  */
 
 #include <arpa/inet.h>

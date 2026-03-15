@@ -1,4 +1,4 @@
-# ================== RodNIX Makefile (macOS/Linux friendly, 64-bit) ==================
+# ================== RodNIX Makefile (cross-host, 64-bit) ==================
 
 SHELL := /bin/bash
 
@@ -77,15 +77,14 @@ XORRISO := xorriso
 LIMINE := limine
 
 # QEMU accel
-# По умолчанию не используем аппаратное ускорение (TCG), чтобы избежать
-# проблем с недоступными ускорителями (hvf/kvm). При желании можно
-# переопределить переменную QEMU_ACCEL снаружи:
+# Use software emulation by default to avoid unavailable host accelerators.
+# Override QEMU_ACCEL externally when acceleration is known to be available:
 #   make run QEMU_ACCEL="-accel hvf"
 QEMU_ACCEL ?=
 
 # QEMU serial backend:
-# - По умолчанию используем mon:stdio для интерактивного ввода/вывода в терминале.
-# - Для старого поведения с логом в файл: QEMU_SERIAL="file:boot.log".
+# - Use mon:stdio by default for interactive terminal I/O.
+# - For file-backed logs, set QEMU_SERIAL="file:boot.log".
 QEMU_SERIAL ?= mon:stdio
 # QEMU NIC for first real Fabric backend (e1000).
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
@@ -93,8 +92,8 @@ QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
 QEMU_DISK_SIZE_MB ?= 128
 QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
 #
-# QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
-# Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
+# QEMU flags: enable APIC and keep the legacy PS/2 controller path available.
+# Use -machine pc for stable polling on ports 0x60/0x64.
 QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
                    -drive file=$(QEMU_DISK_IMG),if=ide,format=raw,index=0,media=disk \
                    -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
@@ -216,7 +215,7 @@ _run_impl: iso qemu-disk
 		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
 		  qemu-system-x86_64 $(QEMU_FLAGS) ) 2>&1 | tee boot.log; \
 	else \
-		echo "[!] qemu-system-x86_64 not found. macOS: brew install qemu"; exit 1; \
+		echo "[!] qemu-system-x86_64 not found. Install QEMU with your host package manager."; exit 1; \
 	fi
 
 debug:
@@ -320,7 +319,7 @@ help:
 	@echo "  check-contract - Run contract CI smoke in QEMU"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
-	@echo "  sync-bsd-abi - Sync userland ABI headers from FreeBSD vendor snapshot"
+	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
 	@echo ""

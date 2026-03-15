@@ -2,7 +2,7 @@
 #define _RODNIX_COMPAT_NET_IF_H
 
 /*
- * Minimal FreeBSD-style if.h shim.
+ * Minimal network interface shim.
  */
 
 #include "if_var.h"

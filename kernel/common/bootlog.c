@@ -1,6 +1,6 @@
 /**
  * @file bootlog.c
- * @brief XNU-inspired boot phase logging.
+ * @brief Boot phase logging.
  *
  * Dual channel:
  * - always writes a compact event into debug event ring;

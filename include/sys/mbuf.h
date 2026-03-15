@@ -2,7 +2,7 @@
 #define _RODNIX_COMPAT_SYS_MBUF_H
 
 /*
- * FreeBSD-style mbuf compatibility header.
+ * Packet buffer compatibility header.
  * Internal backend: kernel/net/bsd_mbuf.*
  */
 

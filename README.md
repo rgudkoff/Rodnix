@@ -87,7 +87,7 @@ Implemented and working today:
 - interrupts and LAPIC timer
 - preemptive scheduler
 - VFS layer with RAMFS / initrd
-- EXT2 read-only mount path
+- EXT2 mount + write path (`write`/`truncate`, direct + single indirect)
 - Fabric device / driver / service model
 - system event stream
 - IDE disk discovery and block service (`disk0`)
@@ -117,7 +117,7 @@ make run
 Verbose boot output:
 
 ```bash
-make run -v
+make run-verbose
 ```
 
 ## Useful Shell Commands
@@ -142,8 +142,8 @@ High-impact contribution areas:
 
 - POSIX ABI hardening: pointer validation, syscall behavior parity, edge case
   testing
-- File systems and storage: EXT2 write path, block I/O reliability, caching
-  and buffering improvements
+- File systems and storage: crash-consistency hardening for EXT2, block I/O
+  reliability, caching and buffering improvements
 - Fabric evolution: richer service lifecycle, improved service/subsystem
   boundaries, event stream extensions
 - Userland: libc-lite expansion, shell improvements, additional utilities
@@ -162,7 +162,6 @@ A typical first contribution looks like this:
 make
 scripts/ci/smoke_qemu.sh
 ```
-
 5. Open a Pull Request describing:
 
 - the problem
@@ -173,15 +172,18 @@ Small, focused patches are strongly preferred.
 
 ## Repository Structure
 
-- `boot/` - boot code
-- `kernel/` - kernel core and subsystems
-- `drivers/` - hardware and Fabric drivers
-- `userland/` - userspace binaries and shell
-- `scripts/` - build and CI helpers
-- `docs/` - documentation
+- `boot/` - bootloader integration and early boot code
+- `kernel/` - kernel core, architecture code, and subsystems
+- `drivers/` - hardware drivers and Fabric-facing device support
+- `include/` - shared headers used across kernel and userland components
+- `userland/` - userspace binaries, runtime pieces, and shell
+- `scripts/` - build, CI, and development helper scripts
+- `docs/` - project documentation in English and Russian
+- `third_party/` - imported external code and vendor sources
+- `build/` - local build artifacts generated during compilation
+- `iso/` - files staged into the bootable ISO image
 
 ## Development
-
 Contribution guidelines:
 
 - `CONTRIBUTING.md`

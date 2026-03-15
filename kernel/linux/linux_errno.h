@@ -1,7 +1,7 @@
 #ifndef _RODNIX_LINUX_ERRNO_H
 #define _RODNIX_LINUX_ERRNO_H
 
-/* Minimal Linux errno subset for syscall return values. */
+/* Minimal guest ABI errno subset for syscall return values. */
 #define LINUX_EPERM 1
 #define LINUX_ENOENT 2
 #define LINUX_EIO 5
