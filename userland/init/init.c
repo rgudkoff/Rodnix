@@ -156,6 +156,50 @@ static int file_exists(const char* path)
     return 1;
 }
 
+static void ct_log(const char* id, const char* verdict, const char* msg)
+{
+    (void)write_str("[CT] ");
+    (void)write_str(id);
+    (void)write_str(" ");
+    (void)write_str(verdict);
+    (void)write_str(" ");
+    (void)write_str(msg);
+    (void)write_str("\n");
+}
+
+static int cstr_eq(const char* a, const char* b)
+{
+    uint64_t i = 0;
+    if (!a || !b) {
+        return 0;
+    }
+    while (a[i] && b[i]) {
+        if (a[i] != b[i]) {
+            return 0;
+        }
+        i++;
+    }
+    return a[i] == b[i];
+}
+
+static int cstr_contains(const char* s, const char* needle)
+{
+    uint64_t i = 0;
+    uint64_t j = 0;
+    if (!s || !needle || !needle[0]) {
+        return 0;
+    }
+    for (i = 0; s[i]; i++) {
+        for (j = 0; needle[j] && s[i + j] == needle[j]; j++) {
+            ;
+        }
+        if (!needle[j]) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int file_contains_text(const char* path, const char* needle)
 {
     char buf[512];
@@ -208,50 +252,6 @@ static int write_text_file(const char* path, const char* text)
 static int run_shell_cmd(const char* cmd)
 {
     return system(cmd) == 0;
-}
-
-static void ct_log(const char* id, const char* verdict, const char* msg)
-{
-    (void)write_str("[CT] ");
-    (void)write_str(id);
-    (void)write_str(" ");
-    (void)write_str(verdict);
-    (void)write_str(" ");
-    (void)write_str(msg);
-    (void)write_str("\n");
-}
-
-static int cstr_eq(const char* a, const char* b)
-{
-    uint64_t i = 0;
-    if (!a || !b) {
-        return 0;
-    }
-    while (a[i] && b[i]) {
-        if (a[i] != b[i]) {
-            return 0;
-        }
-        i++;
-    }
-    return a[i] == b[i];
-}
-
-static int cstr_contains(const char* s, const char* needle)
-{
-    uint64_t i = 0;
-    uint64_t j = 0;
-    if (!s || !needle || !needle[0]) {
-        return 0;
-    }
-    for (i = 0; s[i]; i++) {
-        for (j = 0; needle[j] && s[i + j] == needle[j]; j++) {
-            ;
-        }
-        if (!needle[j]) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 static int kmod_find(rodnix_kmod_info_t* mods, uint32_t n, const char* name)

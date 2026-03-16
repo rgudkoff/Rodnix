@@ -171,7 +171,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -331,7 +331,7 @@ check-abi:
 sync-bsd-abi:
 	@python3 scripts/sync_bsd_abi_headers.py
 
-check-contract:
+check-contract contract-smoke:
 	@bash scripts/ci/contract_qemu.sh
 
 check-contract-10:
@@ -413,6 +413,7 @@ help:
 	@echo "  check       - Verify Multiboot2 header"
 	@echo "  check-abi   - Verify userland BSD ABI constants"
 	@echo "  check-contract - Run contract CI smoke in QEMU"
+	@echo "  contract-smoke - Alias for check-contract"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
 	@echo "  tcc-smoke    - Boot with injected TCC and compile a smoke object in QEMU"
