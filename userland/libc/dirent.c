@@ -35,7 +35,7 @@ DIR* opendir(const char* path)
     if (n < 0) {
         free(ents);
         free(d);
-        errno = (int)(-n);
+        errno = rdnx_errno_from_status(n);
         return 0;
     }
 

@@ -229,12 +229,198 @@ char* getenv(const char* name)
         return NULL;
     }
     nlen = strlen(name);
+    if (nlen == 0) {
+        return NULL;
+    }
     for (ep = environ; *ep != NULL; ep++) {
         if (strncmp(*ep, name, nlen) == 0 && (*ep)[nlen] == '=') {
             return *ep + nlen + 1;
         }
     }
     return NULL;
+}
+
+/* ---- environ dynamic management ---- */
+
+static char** g_env_arr   = NULL;
+static int     g_env_count = 0;
+static int     g_env_cap   = 0;
+
+static int env_ensure_arr(void)
+{
+    int n, cap;
+    char** arr;
+
+    if (g_env_arr) {
+        return 0;
+    }
+    n = 0;
+    if (environ) {
+        while (environ[n]) {
+            n++;
+        }
+    }
+    cap = n + 16;
+    arr = (char**)malloc((size_t)(cap + 1) * sizeof(char*));
+    if (!arr) {
+        return -1;
+    }
+    for (int i = 0; i < n; i++) {
+        arr[i] = environ[i];
+    }
+    arr[n] = NULL;
+    g_env_arr   = arr;
+    g_env_count = n;
+    g_env_cap   = cap;
+    environ = g_env_arr;
+    return 0;
+}
+
+static int env_grow(void)
+{
+    int new_cap;
+    char** arr;
+
+    new_cap = g_env_cap + 16;
+    arr = (char**)realloc(g_env_arr, (size_t)(new_cap + 1) * sizeof(char*));
+    if (!arr) {
+        return -1;
+    }
+    g_env_arr = arr;
+    g_env_cap = new_cap;
+    environ = g_env_arr;
+    return 0;
+}
+
+static int env_find(const char* name, size_t nlen)
+{
+    int i;
+    for (i = 0; i < g_env_count; i++) {
+        if (strncmp(g_env_arr[i], name, nlen) == 0 && g_env_arr[i][nlen] == '=') {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int setenv(const char* name, const char* value, int overwrite)
+{
+    size_t nlen, vlen;
+    int idx;
+    char* new_str;
+
+    if (!name || name[0] == '\0' || strchr(name, '=')) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (env_ensure_arr() != 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+    nlen = strlen(name);
+    vlen = value ? strlen(value) : 0;
+    idx  = env_find(name, nlen);
+
+    if (idx >= 0) {
+        if (!overwrite) {
+            return 0;
+        }
+        new_str = (char*)malloc(nlen + 1 + vlen + 1);
+        if (!new_str) {
+            errno = ENOMEM;
+            return -1;
+        }
+        memcpy(new_str, name, nlen);
+        new_str[nlen] = '=';
+        if (value) {
+            memcpy(new_str + nlen + 1, value, vlen);
+        }
+        new_str[nlen + 1 + vlen] = '\0';
+        g_env_arr[idx] = new_str;
+        return 0;
+    }
+
+    if (g_env_count >= g_env_cap) {
+        if (env_grow() != 0) {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+    new_str = (char*)malloc(nlen + 1 + vlen + 1);
+    if (!new_str) {
+        errno = ENOMEM;
+        return -1;
+    }
+    memcpy(new_str, name, nlen);
+    new_str[nlen] = '=';
+    if (value) {
+        memcpy(new_str + nlen + 1, value, vlen);
+    }
+    new_str[nlen + 1 + vlen] = '\0';
+    g_env_arr[g_env_count++] = new_str;
+    g_env_arr[g_env_count]   = NULL;
+    return 0;
+}
+
+int unsetenv(const char* name)
+{
+    size_t nlen;
+    int idx, i;
+
+    if (!name || name[0] == '\0' || strchr(name, '=')) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (env_ensure_arr() != 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+    nlen = strlen(name);
+    idx  = env_find(name, nlen);
+    if (idx < 0) {
+        return 0;
+    }
+    for (i = idx; i < g_env_count - 1; i++) {
+        g_env_arr[i] = g_env_arr[i + 1];
+    }
+    g_env_arr[--g_env_count] = NULL;
+    return 0;
+}
+
+int putenv(char* str)
+{
+    const char* eq;
+    size_t nlen;
+    int idx;
+
+    if (!str) {
+        errno = EINVAL;
+        return -1;
+    }
+    eq = strchr(str, '=');
+    if (!eq || eq == str) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (env_ensure_arr() != 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+    nlen = (size_t)(eq - str);
+    idx  = env_find(str, nlen);
+    if (idx >= 0) {
+        g_env_arr[idx] = str;
+        return 0;
+    }
+    if (g_env_count >= g_env_cap) {
+        if (env_grow() != 0) {
+            errno = ENOMEM;
+            return -1;
+        }
+    }
+    g_env_arr[g_env_count++] = str;
+    g_env_arr[g_env_count]   = NULL;
+    return 0;
 }
 
 /* qsort — iterative quicksort (Lomuto) + insertion sort for small ranges */
@@ -349,4 +535,161 @@ void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
         }
     }
     return NULL;
+}
+
+/* ---- realpath ---- */
+/* Lexical path normalization (no symlink resolution — no symlinks yet). */
+char* realpath(const char* path, char* resolved)
+{
+    char work[4096];
+    char out[4096];
+    char* op;
+    char* s;
+    char* buf;
+    size_t outlen;
+
+    if (!path || path[0] == '\0') {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    if (path[0] != '/') {
+        if (!getcwd(work, sizeof(work))) {
+            return NULL;
+        }
+        size_t cwdlen  = strlen(work);
+        size_t pathlen = strlen(path);
+        if (cwdlen + 1 + pathlen + 1 > sizeof(work)) {
+            errno = ENOMEM;
+            return NULL;
+        }
+        work[cwdlen] = '/';
+        memcpy(work + cwdlen + 1, path, pathlen + 1);
+    } else {
+        size_t pathlen = strlen(path);
+        if (pathlen + 1 > sizeof(work)) {
+            errno = ENOMEM;
+            return NULL;
+        }
+        memcpy(work, path, pathlen + 1);
+    }
+
+    /* Walk path component by component.
+     * Each regular component is stat()'d immediately after being appended,
+     * so missing/../existing correctly fails on "missing", not on the
+     * normalized result.  ".." is safe without re-stat because we already
+     * verified the child when we descended into it. */
+    op  = out;
+    *op = '\0';
+    s   = work;
+
+    while (*s) {
+        char*       cs;
+        size_t      len;
+        struct stat _st;
+
+        while (*s == '/') {
+            s++;
+        }
+        if (*s == '\0') {
+            break;
+        }
+        cs = s;
+        while (*s && *s != '/') {
+            s++;
+        }
+        len = (size_t)(s - cs);
+
+        if (len == 1 && cs[0] == '.') {
+            /* Current dir — no movement, already verified. */
+        } else if (len == 2 && cs[0] == '.' && cs[1] == '.') {
+            /* Parent dir — strip last component.
+             * Parent's existence is guaranteed: we stat'd it when descending. */
+            if (op > out) {
+                op--;
+                while (op > out && *op != '/') {
+                    op--;
+                }
+                *op = '\0';
+            }
+        } else {
+            /* Regular component — append and verify it exists NOW. */
+            if ((size_t)(op - out) + 1 + len + 1 > sizeof(out)) {
+                errno = ENOMEM;
+                return NULL;
+            }
+            *op++ = '/';
+            memcpy(op, cs, len);
+            op += len;
+            *op = '\0';
+
+            if (stat(out, &_st) != 0) {
+                /* errno set by stat() — typically ENOENT */
+                return NULL;
+            }
+        }
+    }
+
+    if (op == out) {
+        out[0] = '/';
+        out[1] = '\0';
+        op = out + 1;
+    }
+
+    outlen = (size_t)(op - out);
+    buf    = resolved;
+    if (!buf) {
+        buf = (char*)malloc(outlen + 1);
+        if (!buf) {
+            errno = ENOMEM;
+            return NULL;
+        }
+    }
+    memcpy(buf, out, outlen + 1);
+    return buf;
+}
+
+/* ---- mkstemp ---- */
+int mkstemp(char* templ)
+{
+    static unsigned g_seq = 0;
+    static const char chars[] =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    size_t tlen;
+    char*  x;
+    int    attempt;
+
+    if (!templ) {
+        errno = EINVAL;
+        return -1;
+    }
+    tlen = strlen(templ);
+    if (tlen < 6) {
+        errno = EINVAL;
+        return -1;
+    }
+    x = templ + tlen - 6;
+    for (int i = 0; i < 6; i++) {
+        if (x[i] != 'X') {
+            errno = EINVAL;
+            return -1;
+        }
+    }
+
+    for (attempt = 0; attempt < 64; attempt++) {
+        unsigned s = (unsigned)getpid() ^ (g_seq++ * 1664525U) ^ ((unsigned)attempt * 1013904223U);
+        for (int i = 0; i < 6; i++) {
+            s = s * 1664525U + 1013904223U;
+            x[i] = chars[s % 62];
+        }
+        int fd = open(templ, O_RDWR | O_CREAT | O_EXCL, 0600);
+        if (fd >= 0) {
+            return fd;
+        }
+        if (errno != EEXIST) {
+            return -1;
+        }
+    }
+    errno = EEXIST;
+    return -1;
 }

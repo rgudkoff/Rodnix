@@ -85,7 +85,8 @@ enum {
     VFS_OPEN_READ   = 1 << 0,
     VFS_OPEN_WRITE  = 1 << 1,
     VFS_OPEN_CREATE = 1 << 2,
-    VFS_OPEN_TRUNC  = 1 << 3
+    VFS_OPEN_TRUNC  = 1 << 3,
+    VFS_OPEN_EXCL   = 1 << 4  /* fail with RDNX_E_EXIST if file already exists */
 };
 
 enum {

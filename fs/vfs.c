@@ -865,6 +865,9 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
                 return RDNX_E_NOMEM;
             }
         }
+    } else if ((flags & VFS_OPEN_CREATE) && (flags & VFS_OPEN_EXCL)) {
+        /* O_CREAT|O_EXCL: file already exists — fail atomically. */
+        return RDNX_E_EXIST;
     }
     if (node->type != VFS_NODE_FILE || !node->inode) {
         return RDNX_E_INVALID;

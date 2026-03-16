@@ -21,7 +21,7 @@ static inline int poll(struct pollfd* fds, nfds_t nfds, int timeout)
 {
     long r = posix_poll(fds, (uint64_t)nfds, timeout);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (int)r;
