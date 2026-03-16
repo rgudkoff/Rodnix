@@ -24,7 +24,7 @@ void kmain(uint32_t magic, void* mbi)
     console_set_log_prefix_enabled(false);
 
     kputs("\n");
-    kputs("  RodNIX " RODNIX_RELEASE " — 64-bit experimental Unix\n");
+    kputs(RODNIX_BANNER "\n");
     kputs("\n");
 
     bootlog_mark("kmain", "enter");

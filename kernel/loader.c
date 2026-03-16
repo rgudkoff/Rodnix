@@ -11,12 +11,16 @@
 #include "arch/config.h"
 #include "../fs/vfs.h"
 #include "core/task.h"
+#include "security.h"
 #include "../mm/vm_map.h"
 #include "../lib/heap.h"
 #include "../trace/bootlog.h"
 #include "../include/console.h"
 #include "../include/error.h"
 #include "../include/common.h"
+
+#define LOADER_S_ISUID 04000u
+#define LOADER_S_ISGID 02000u
 
 #define USER_STACK_TOP 0x0000000080000000ULL
 #define USER_PAGE_SIZE ARCH_PAGE_SIZE_4KB
@@ -480,6 +484,32 @@ int loader_execve_ex(const char* path,
     if (!path) {
         return RDNX_E_INVALID;
     }
+
+    /* Check execute permission before reading the image. */
+    {
+        int ac = vfs_access(path, SEC_ACCESS_EXEC);
+        if (ac != RDNX_OK) {
+            return RDNX_E_DENIED;
+        }
+    }
+
+    /* Capture suid/sgid info before loading (stat before exec). */
+    vfs_stat_t exec_st;
+    bool exec_has_suid = false;
+    bool exec_has_sgid = false;
+    uint32_t exec_file_uid = 0;
+    uint32_t exec_file_gid = 0;
+    if (vfs_stat(path, &exec_st) == RDNX_OK) {
+        if (exec_st.mode & LOADER_S_ISUID) {
+            exec_has_suid = true;
+            exec_file_uid = exec_st.uid;
+        }
+        if (exec_st.mode & LOADER_S_ISGID) {
+            exec_has_sgid = true;
+            exec_file_gid = exec_st.gid;
+        }
+    }
+
     uint8_t* buf = NULL;
     size_t size = 0;
     int ret = loader_read_file(path, &buf, &size);
@@ -525,6 +555,15 @@ int loader_execve_ex(const char* path,
         if (ret != RDNX_OK) {
             return ret;
         }
+    }
+
+    /* Apply suid/sgid: update task credentials before switching address space. */
+    if ((exec_has_suid || exec_has_sgid) && cur && cur->task) {
+        uint32_t new_uid  = exec_has_suid ? exec_file_uid : cur->task->uid;
+        uint32_t new_gid  = exec_has_sgid ? exec_file_gid : cur->task->gid;
+        uint32_t new_euid = exec_has_suid ? exec_file_uid : cur->task->euid;
+        uint32_t new_egid = exec_has_sgid ? exec_file_gid : cur->task->egid;
+        task_set_ids(cur->task, new_uid, new_gid, new_euid, new_egid);
     }
 
     usermode_set_pml4(img.pml4_phys);

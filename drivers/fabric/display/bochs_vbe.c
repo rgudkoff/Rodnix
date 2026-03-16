@@ -34,6 +34,7 @@
 #include "../../../include/gfx.h"
 #include "../../../include/error.h"
 #include "../../../include/console.h"
+#include "../../../trace/bootlog.h"
 
 #include <stdint.h>
 #include <stddef.h>
@@ -388,10 +389,10 @@ static int bochs_vbe_attach(fabric_device_t *dev)
         /* Non-fatal: continue without GFX subsystem registration */
     }
 
-    fabric_log("[BOCHS_VBE] slot %u attached: %ux%u bpp=%u fb_phys=0x%llx virt=%p\n",
-               d->index,
-               BOCHS_DEFAULT_WIDTH, BOCHS_DEFAULT_HEIGHT, BOCHS_DEFAULT_BPP,
-               (unsigned long long)fb_phys, d->fb_virt);
+    klog("display", "bochs-vbe slot %u attached: %ux%u bpp=%u fb_phys=0x%llx virt=%p\n",
+         d->index,
+         BOCHS_DEFAULT_WIDTH, BOCHS_DEFAULT_HEIGHT, BOCHS_DEFAULT_BPP,
+         (unsigned long long)fb_phys, d->fb_virt);
     return RDNX_OK;
 }
 
@@ -464,8 +465,8 @@ void bochs_vbe_init(void)
     }
     int rc = fabric_driver_register(&g_bochs_driver);
     if (rc == RDNX_OK) {
-        kputs("[BOCHS_VBE] driver registered\n");
+        klog("display", "bochs-vbe driver registered\n");
     } else {
-        kprintf("[BOCHS_VBE] driver register failed: %d\n", rc);
+        klog_warn("display", "bochs-vbe driver registration failed: %d\n", rc);
     }
 }

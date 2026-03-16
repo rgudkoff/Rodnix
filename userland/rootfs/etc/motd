@@ -1,2 +1,3 @@
-Rodnix early userspace
-Type 'help' to list shell commands.
+RodNIX 0.1.22
+Interactive shell available after login.
+Type 'help' for built-in commands.

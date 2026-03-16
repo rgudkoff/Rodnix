@@ -50,6 +50,9 @@ typedef struct {
 
 typedef struct {
     uint32_t st_mode;
+    uint32_t st_uid;
+    uint32_t st_gid;
+    uint32_t _pad;
     int64_t st_size;
     int64_t st_mtime;
 } unix_stat_u_t;

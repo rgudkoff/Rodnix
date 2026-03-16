@@ -59,6 +59,7 @@ ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
 INIT_SRCS = init/init.c
+LOGIN_SRCS = bin/login.c
 SH_SRCS = shell/main.c shell/io.c shell/parser.c shell/exec.c shell/builtins.c
 ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
@@ -123,6 +124,7 @@ $(BUILD_DIR)/libc/setjmp.o: libc/setjmp.S
 endif
 
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+LOGIN_OBJS = $(addprefix $(BUILD_DIR)/, $(LOGIN_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -172,6 +174,7 @@ GREP_OBJS = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OB
 FIND_OBJS = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
+LOGIN_ELF = $(BUILD_DIR)/login.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
 ECHO_ELF = $(BUILD_DIR)/echo.elf
 LS_ELF = $(BUILD_DIR)/ls.elf
@@ -220,6 +223,7 @@ RM_ELF   = $(BUILD_DIR)/rm.elf
 GREP_ELF = $(BUILD_DIR)/grep.elf
 FIND_ELF = $(BUILD_DIR)/find.elf
 INIT_BIN = $(BIN_DIR)/init
+LOGIN_BIN = $(BIN_DIR)/login
 SH_BIN = $(BIN_DIR)/sh
 ECHO_BIN = $(BIN_DIR)/echo
 LS_BIN = $(BIN_DIR)/ls
@@ -274,7 +278,7 @@ FIND_BIN = $(BIN_DIR)/find
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -298,6 +302,10 @@ DEPFILES := $(shell find $(BUILD_DIR) -name '*.d' 2>/dev/null)
 $(INIT_ELF): $(INIT_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(INIT_OBJS)
+
+$(LOGIN_ELF): $(LOGIN_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(LOGIN_OBJS)
 
 $(SH_ELF): $(SH_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -490,66 +498,87 @@ $(FIND_ELF): $(FIND_OBJS) link.ld
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
+
+$(LOGIN_BIN): $(LOGIN_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
 
 $(SH_BIN): $(SH_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(ECHO_BIN): $(ECHO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(LS_BIN): $(LS_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CAT_BIN): $(CAT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(TRUE_BIN): $(TRUE_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(IFCONFIG_BIN): $(IFCONFIG_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(PING_BIN): $(PING_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(HWLIST_BIN): $(HWLIST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(DEVREG_BIN): $(DEVREG_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FABRICLS_BIN): $(FABRICLS_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FABRICEVENTS_BIN): $(FABRICEVENTS_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(HOSTINFO_BIN): $(HOSTINFO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CPUINFO_BIN): $(CPUINFO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(DISKINFO_BIN): $(DISKINFO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(KMODCTL_BIN): $(KMODCTL_ELF)
 	@mkdir -p $(BIN_DIR)
@@ -570,126 +599,157 @@ $(DEMO_KO): $(DEMO_KO_OBJ)
 $(SLEEP_BIN): $(SLEEP_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(SIGTEST_BIN): $(SIGTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(STTY_BIN): $(STTY_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(TIMECHECK_BIN): $(TIMECHECK_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(SYSCALLTEST_BIN): $(SYSCALLTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(TTYREADTEST_BIN): $(TTYREADTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(SCSTAT_BIN): $(SCSTAT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(STDIO_SMOKE_BIN): $(STDIO_SMOKE_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(POLLTEST_BIN): $(POLLTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(SELECTTEST_BIN): $(SELECTTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FUTEXTEST_BIN): $(FUTEXTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(PIPETEST_BIN): $(PIPETEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(UDPTEST_BIN): $(UDPTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(TCPTEST_BIN): $(TCPTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FSAPITEST_BIN): $(FSAPITEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FORKTEST_BIN): $(FORKTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(EXECVETEST_BIN): $(EXECVETEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_FD_BIN): $(CONTRACT_FD_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_FD_INHERIT_BIN): $(CONTRACT_FD_INHERIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_SPAWN_WAIT_BIN): $(CONTRACT_SPAWN_WAIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_EXEC_PROBE_BIN): $(CONTRACT_EXEC_PROBE_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_EXEC_AFTER_BIN): $(CONTRACT_EXEC_AFTER_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_HEAP_BIN): $(CONTRACT_HEAP_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_DIRENT_BIN): $(CONTRACT_DIRENT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_FSIO_BIN): $(CONTRACT_FSIO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CONTRACT_WAIT_NONCHILD_BIN): $(CONTRACT_WAIT_NONCHILD_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(CP_BIN): $(CP_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(MV_BIN): $(MV_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(RM_BIN): $(RM_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(GREP_BIN): $(GREP_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 $(FIND_BIN): $(FIND_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+	chmod 0755 $@
 
 clean:
 	rm -rf $(BUILD_DIR)

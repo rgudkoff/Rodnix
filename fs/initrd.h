@@ -15,6 +15,7 @@ typedef struct initrd_entry {
     char path[64];
     uint32_t offset;
     uint32_t size;
+    uint32_t mode;
 } initrd_entry_t;
 
 #endif /* _RODNIX_FS_INITRD_H */

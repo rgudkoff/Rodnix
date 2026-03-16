@@ -10,7 +10,7 @@
 
 #define RODNIX_VERSION_MAJOR  0
 #define RODNIX_VERSION_MINOR  1
-#define RODNIX_VERSION_PATCH  20
+#define RODNIX_VERSION_PATCH  22
 
 /* Integer form for compile-time version checks. */
 #define RODNIX_MKVER(maj, min, pat)  (((maj) << 16) | ((min) << 8) | (pat))
@@ -40,7 +40,7 @@
     _RDNX_XSTR(RODNIX_VERSION_PATCH)
 
 /* Monotonic build number. */
-#define RODNIX_BUILD_NUM  44
+#define RODNIX_BUILD_NUM  46
 
 /* Kernel version string: uname -v */
 #define RODNIX_VERSION \

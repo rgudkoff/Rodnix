@@ -4,12 +4,15 @@ This is an English mirror index for the active documentation set.
 Source documents currently live in `docs/ru/`; this index provides EN labels
 and direct links to those files.
 
+Current release baseline: `0.1.22`.
+
 ## Start
 
 - [`../ru/overview.md`](../ru/overview.md) - project scope and principles.
 - [`../ru/architecture.md`](../ru/architecture.md) - current architecture and subsystem map.
 - [`../ru/build_run.md`](../ru/build_run.md) - practical build and run guide.
 - [`../ru/debugging.md`](../ru/debugging.md) - debugging and diagnostics workflow.
+- [`../../README.md`](../../README.md) - top-level build, release, and runtime notes.
 - [`../ru/execution_plan_os_foundation.md`](../ru/execution_plan_os_foundation.md) - main executable delivery plan.
 - [`../ru/p0_focus_plan.md`](../ru/p0_focus_plan.md) - current stabilization focus.
 

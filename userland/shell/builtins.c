@@ -84,6 +84,8 @@ static int shell_env_ensure_cap(int want)
 
 void shell_env_init(char** envp)
 {
+    char cwd_buf[SH_PATH_MAX];
+
     g_shell_env = NULL;
     g_shell_env_count = 0;
     g_shell_env_cap = 0;
@@ -107,6 +109,14 @@ void shell_env_init(char** envp)
     environ = g_shell_env;
     if (!shell_env_get("PATH")) {
         (void)shell_env_set("PATH", "/bin");
+    }
+    if (getcwd(cwd_buf, sizeof(cwd_buf)) != NULL) {
+        if (cwd_buf[0] == '\0') {
+            cwd_buf[0] = '/';
+            cwd_buf[1] = '\0';
+        }
+        strncpy(shell_cwd, cwd_buf, sizeof(shell_cwd) - 1);
+        shell_cwd[sizeof(shell_cwd) - 1] = '\0';
     }
     shell_sync_pwd();
     {

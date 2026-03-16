@@ -11,6 +11,7 @@
 #include "../../core/memory.h"
 #include "../../core/boot.h"
 #include "../../../trace/tracev2.h"
+#include "../../../trace/bootlog.h"
 #include "../../../include/console.h"
 #include "../../../include/debug.h"
 #include "types.h"
@@ -238,14 +239,11 @@ int memory_init(void)
     extern uint64_t pmm_get_total_pages(void);
     extern uint64_t pmm_get_free_pages(void);
     extern uint64_t pmm_get_used_pages(void);
-    extern void kprintf(const char* fmt, ...);
-    kprintf("[MEM] PMM total=%llu free=%llu used=%llu pages\n",
-            (unsigned long long)pmm_get_total_pages(),
-            (unsigned long long)pmm_get_free_pages(),
-            (unsigned long long)pmm_get_used_pages());
+    klog("memory", "PMM pages: total=%llu free=%llu used=%llu\n",
+         (unsigned long long)pmm_get_total_pages(),
+         (unsigned long long)pmm_get_free_pages(),
+         (unsigned long long)pmm_get_used_pages());
     __asm__ volatile ("" ::: "memory");
-    
-    kputs("[MEM-OK] Done\n");
     tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_DONE,
                  pmm_get_free_pages(), pmm_get_used_pages());
     return 0;

@@ -6,6 +6,7 @@
 #include "usb.h"
 #include "usb_proto.h"
 #include "../fabric/spin.h"
+#include "../../trace/bootlog.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
 #include "../../include/error.h"
@@ -21,7 +22,7 @@ void usb_init(void)
     for (uint32_t i = 0; i < USB_HOST_MAX; i++) {
         g_usb_hosts[i] = NULL;
     }
-    kputs("[USB] core initialized\n");
+    klog("usb", "core initialized\n");
 }
 
 usb_host_type_t usb_host_type_from_prog_if(uint8_t prog_if)
@@ -94,9 +95,9 @@ int usb_host_register(usb_host_controller_t* host)
         if (!g_usb_hosts[i]) {
             g_usb_hosts[i] = host;
             spinlock_unlock(&g_usb_lock);
-            kprintf("[USB] host registered: %s (%s)\n",
-                    host->name,
-                    usb_host_type_name((usb_host_type_t)host->type));
+            klog("usb", "host registered: %s (%s)\n",
+                 host->name,
+                 usb_host_type_name((usb_host_type_t)host->type));
             return RDNX_OK;
         }
     }

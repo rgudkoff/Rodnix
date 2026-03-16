@@ -9,6 +9,7 @@
 #include "types.h"
 #include "config.h"
 #include "../../include/console.h"
+#include "../../../trace/bootlog.h"
 #include <stddef.h>
 
 /* Multiboot2 info header */
@@ -230,9 +231,9 @@ int boot_early_init(boot_info_t* info)
                     if (boot_info_storage.initrd_start == 0 && mod->mod_end > mod->mod_start) {
                         boot_info_storage.initrd_start = (uint64_t)mod->mod_start;
                         boot_info_storage.initrd_size = (uint64_t)(mod->mod_end - mod->mod_start);
-                        kprintf("[BOOT] initrd module: start=%llx size=%llu\n",
-                                (unsigned long long)boot_info_storage.initrd_start,
-                                (unsigned long long)boot_info_storage.initrd_size);
+                        klog("boot", "initrd module: start=%llx size=%llu\n",
+                             (unsigned long long)boot_info_storage.initrd_start,
+                             (unsigned long long)boot_info_storage.initrd_size);
                     }
                     break;
                 }

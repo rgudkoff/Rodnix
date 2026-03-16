@@ -6,6 +6,7 @@
 #include "usb_host_pci_internal.h"
 #include "../../../kernel/fabric/device/device.h"
 #include "../../../kernel/fabric/driver/driver.h"
+#include "../../../trace/bootlog.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
@@ -432,8 +433,8 @@ void usb_host_pci_init(void)
 {
     int rc = fabric_driver_register(&g_driver);
     if (rc == RDNX_OK) {
-        kputs("[USB] host controller driver registered\n");
+        klog("usb", "host controller driver registered\n");
     } else {
-        kputs("[USB] host controller driver register failed\n");
+        klog_warn("usb", "host controller driver registration failed\n");
     }
 }

@@ -48,7 +48,7 @@ while [ $SECONDS -lt $deadline ]; do
       status_msg="[smoke] kernel shell prompt detected"
       break
     fi
-    if grep -q "\[USER\] init: POSIX smoke test done" "$LOG_FILE"; then
+    if grep -q "\[init\] self-test: done" "$LOG_FILE" || grep -q "\[USER\] init: POSIX smoke test done" "$LOG_FILE"; then
       found=1
       status_msg="[smoke] userspace init completed"
       break

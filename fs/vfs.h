@@ -69,6 +69,8 @@ typedef struct vfs_file {
 
 typedef struct vfs_stat {
     uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
     uint64_t size;
     uint64_t mtime;
 } vfs_stat_t;
@@ -156,6 +158,8 @@ int vfs_truncate(const char* path, uint64_t size);
 int vfs_ftruncate(vfs_file_t* file, uint64_t size);
 int vfs_stat(const char* path, vfs_stat_t* out_stat);
 int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat);
+/* Check access permission without opening: access is SEC_ACCESS_READ/WRITE/EXEC bitmask. */
+int vfs_access(const char* path, int access_flags);
 int vfs_chmod(const char* path, uint16_t mode);
 int vfs_fchmod(vfs_file_t* file, uint16_t mode);
 /* Pass (uint32_t)-1 for uid or gid to leave the field unchanged. */

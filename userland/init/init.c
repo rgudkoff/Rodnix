@@ -98,15 +98,15 @@ static void print_hostname(void)
         return;
     }
 
-    (void)write_str("[USER] hostname: ");
+    (void)write_str("[init] hostname: ");
     (void)write_buf(buf, (uint64_t)len);
     (void)write_str("\n");
 }
 
 static void run_smoke(void)
 {
-    (void)write_str("[USER] init: POSIX smoke test start\n");
-    (void)write_str("[USER] getpid=");
+    (void)write_str("[init] self-test: start\n");
+    (void)write_str("[init] self-test: pid=");
     {
         long pid = posix_getpid();
         if (pid < 0) {
@@ -120,11 +120,11 @@ static void run_smoke(void)
     {
         long fd = posix_open("/bin/init", VFS_OPEN_READ);
         if (fd < 0) {
-            (void)write_str("[USER] open('/bin/init') failed\n");
+            (void)write_str("[init] self-test: open /bin/init failed\n");
         } else {
             uint8_t hdr[4] = {0, 0, 0, 0};
             long n = posix_read((int)fd, hdr, sizeof(hdr));
-            (void)write_str("[USER] read('/bin/init') bytes=");
+            (void)write_str("[init] self-test: read /bin/init bytes=");
             if (n < 0) {
                 (void)write_str("ERR\n");
             } else {
@@ -136,14 +136,14 @@ static void run_smoke(void)
                 (void)write_str("\n");
             }
             if (posix_close((int)fd) < 0) {
-                (void)write_str("[USER] close failed\n");
+                (void)write_str("[init] self-test: close failed\n");
             } else {
-                (void)write_str("[USER] close ok\n");
+                (void)write_str("[init] self-test: close ok\n");
             }
         }
     }
 
-    (void)write_str("[USER] init: POSIX smoke test done\n");
+    (void)write_str("[init] self-test: done\n");
 }
 
 static int file_exists(const char* path)
@@ -198,6 +198,34 @@ static int cstr_contains(const char* s, const char* needle)
         }
     }
     return 0;
+}
+
+static void run_login_loop(void)
+{
+    static char* const login_argv[] = { (char*)"/bin/login", (char*)0 };
+    static char* const shell_argv[] = { (char*)"/bin/sh", (char*)0 };
+
+    for (;;) {
+        pid_t pid;
+        int status = 0;
+
+        (void)write_str("[init] launching /bin/login\n");
+        pid = spawnv("/bin/login", login_argv);
+        if (pid < 0) {
+            (void)write_str("[init] login launch failed, falling back to /bin/sh\n");
+            pid = spawnv("/bin/sh", shell_argv);
+            if (pid < 0) {
+                (void)write_str("[init] shell launch failed\n");
+                (void)posix_exit(1);
+            }
+        }
+
+        if (waitpid(pid, &status, 0) < 0) {
+            (void)write_str("[init] session wait failed\n");
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+            continue;
+        }
+    }
 }
 
 static int file_contains_text(const char* path, const char* needle)
@@ -1306,7 +1334,7 @@ static void run_contract_mode_if_enabled(void)
 
 int main(void)
 {
-    (void)write_str("Rodnix userspace init launcher\n");
+    (void)write_str("RodNIX userspace 0.1.22\n");
     print_file("/etc/motd");
     (void)write_str("\n");
     print_hostname();
@@ -1315,12 +1343,7 @@ int main(void)
     run_tcc_smoke_if_enabled();
     run_contract_mode_if_enabled();
 
-    (void)write_str("[USER] init: exec /bin/sh\n");
-    long ret = posix_exec("/bin/sh");
-    if (ret < 0) {
-        (void)write_str("[USER] init: exec failed\n");
-        (void)posix_exit(1);
-    }
+    run_login_loop();
 
     for (;;) {
         (void)rdnx_syscall0(0);
