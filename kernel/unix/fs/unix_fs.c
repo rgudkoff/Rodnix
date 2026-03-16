@@ -1,5 +1,6 @@
 #include "../unix_layer.h"
 #include "../../../fs/vfs.h"
+#include "../../../lib/heap.h"
 #include "../../../include/common.h"
 #include "../../../include/error.h"
 
@@ -59,6 +60,7 @@ uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint
     void* user_buf = (void*)(uintptr_t)user_entries_ptr;
     size_t n = (size_t)user_len;
     char path_buf[UNIX_PATH_MAX];
+    unix_dirent_u_t* kbuf = NULL;
 
     if (n < sizeof(unix_dirent_u_t)) {
         return (uint64_t)RDNX_E_INVALID;
@@ -72,13 +74,25 @@ uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint
 
     unix_readdir_ctx_t ctx;
     memset(&ctx, 0, sizeof(ctx));
-    ctx.out = (unix_dirent_u_t*)user_buf;
+    kbuf = (unix_dirent_u_t*)kmalloc(n);
+    if (!kbuf) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    memset(kbuf, 0, n);
+    ctx.out = kbuf;
     ctx.cap_bytes = n;
     ctx.next_ino = 1;
 
     int rc = vfs_list_dir(path_buf, unix_readdir_cb, &ctx);
     if (rc != RDNX_OK) {
+        kfree(kbuf);
         return (uint64_t)rc;
     }
+    if (ctx.used_bytes > 0 &&
+        unix_copy_to_user(user_buf, kbuf, ctx.used_bytes) != RDNX_OK) {
+        kfree(kbuf);
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    kfree(kbuf);
     return (uint64_t)ctx.used_bytes;
 }

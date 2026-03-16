@@ -25,10 +25,6 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_NOTFOUND;
     }
-    if ((err_code & (1u << 2)) == 0) {
-        /* Kernel-mode fault: let trap path handle it as fatal. */
-        return RDNX_E_DENIED;
-    }
     if (fault_addr < 0x1000 || fault_addr >= ARCH_KERNEL_VIRT_BASE) {
         return RDNX_E_DENIED;
     }

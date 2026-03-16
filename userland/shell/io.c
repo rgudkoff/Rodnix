@@ -174,6 +174,11 @@ void shell_print_prompt(void)
     }
 
     long uid = rdnx_syscall0(POSIX_SYS_GETEUID);
+    if (shell_cwd[0] != '\0') {
+        (void)write_str(shell_cwd);
+    } else {
+        (void)write_str("/");
+    }
     (void)write_str(" ");
     if (uid == 0) {
         (void)write_str("# ");
