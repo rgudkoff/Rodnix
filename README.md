@@ -1,4 +1,5 @@
 # RodNIX
+[![Discord](https://img.shields.io/discord/1483081290512334943?label=RodNIX%20Community&logo=discord&color=5865F2)](https://discord.gg/4sUPYXFB)
 
 RodNIX is what Unix might look like if it were designed from scratch today.
 
