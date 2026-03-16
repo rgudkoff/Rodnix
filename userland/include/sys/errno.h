@@ -32,7 +32,8 @@
 #define EROFS   30
 #define EPIPE   32
 #define ERANGE  34
-#define EAGAIN  35
-#define ENOSYS  78
+#define EAGAIN    35
+#define ETIMEDOUT 60
+#define ENOSYS    78
 
 #endif /* _RODNIX_USERLAND_SYS_ERRNO_H */

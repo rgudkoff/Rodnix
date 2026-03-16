@@ -49,7 +49,7 @@ static inline int stat(const char* path, struct stat* st)
 {
     long r = posix_stat(path, st);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;
@@ -59,7 +59,7 @@ static inline int fstat(int fd, struct stat* st)
 {
     long r = posix_fstat(fd, st);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;
@@ -69,7 +69,7 @@ static inline int lstat(const char* path, struct stat* st)
 {
     long r = posix_lstat(path, st);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;
@@ -79,7 +79,9 @@ static inline int chmod(const char* path, mode_t mode)
 {
     long r = posix_chmod(path, (unsigned int)mode);
     if (r < 0) {
-        errno = (int)(-r);
+        int _e = rdnx_errno_from_status(r);
+        /* mode change denied = not file owner → EPERM, not EACCES */
+        errno = (_e == EACCES) ? EPERM : _e;
         return -1;
     }
     return 0;
@@ -89,7 +91,8 @@ static inline int fchmod(int fd, mode_t mode)
 {
     long r = posix_fchmod(fd, (unsigned int)mode);
     if (r < 0) {
-        errno = (int)(-r);
+        int _e = rdnx_errno_from_status(r);
+        errno = (_e == EACCES) ? EPERM : _e;
         return -1;
     }
     return 0;

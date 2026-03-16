@@ -17,7 +17,9 @@ static inline int futex(int* uaddr,
 {
     long r = posix_futex(uaddr, op, val, timeout, uaddr2, val3);
     if (r < 0) {
-        errno = (int)(-r);
+        int _e = rdnx_errno_from_status(r);
+        /* FUTEX_WAIT reports a changed value as RDNX_E_BUSY; POSIX callers expect EAGAIN. */
+        errno = ((op == FUTEX_WAIT) && (_e == EBUSY)) ? EAGAIN : _e;
         return -1;
     }
     return (int)r;

@@ -21,7 +21,7 @@ static inline int select(int nfds, fd_set* readfds, fd_set* writefds, fd_set* ex
 {
     long r = posix_select(nfds, readfds, writefds, exceptfds, timeout);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (int)r;

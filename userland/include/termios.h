@@ -10,7 +10,7 @@ static inline int tcgetattr(int fd, struct termios* t)
 {
     long r = posix_ioctl(fd, RDNX_TTY_IOCTL_GETATTR, t);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;
@@ -24,7 +24,7 @@ static inline int tcsetattr(int fd, int optional_actions, const struct termios* 
     }
     long r = posix_ioctl(fd, RDNX_TTY_IOCTL_SETATTR, (void*)(uintptr_t)t);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;

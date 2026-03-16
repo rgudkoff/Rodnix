@@ -19,7 +19,14 @@ static inline int kill(pid_t pid, int sig)
 {
     long r = posix_kill((long)pid, sig);
     if (r < 0) {
-        errno = (int)(-r);
+        int _e = rdnx_errno_from_status(r);
+        if (_e == ENOENT) {
+            errno = ESRCH;
+        } else if (_e == EACCES) {
+            errno = EPERM;
+        } else {
+            errno = _e;
+        }
         return -1;
     }
     return 0;
@@ -40,7 +47,7 @@ static inline int sigaction(int signum, const struct sigaction* act, struct siga
     }
     long r = posix_sigaction(signum, send, oldact);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return 0;
@@ -50,7 +57,7 @@ static inline int sigreturn(void)
 {
     long r = posix_sigreturn();
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (int)r;

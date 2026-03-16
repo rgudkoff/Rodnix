@@ -93,6 +93,8 @@ static int unix_posix_flags_to_vfs(int posix_flags)
         vfs_flags |= VFS_OPEN_CREATE;
     if (posix_flags & UNIX_O_TRUNC)
         vfs_flags |= VFS_OPEN_TRUNC;
+    if (posix_flags & UNIX_O_EXCL)
+        vfs_flags |= VFS_OPEN_EXCL;
     return vfs_flags;
 }
 
@@ -547,6 +549,7 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
     if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
+
     vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
     if (!file) {
         return (uint64_t)RDNX_E_NOMEM;
