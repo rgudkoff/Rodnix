@@ -33,4 +33,4 @@ points, not as a flat dump of notes.
 - when system behavior changes, the related active documentation must be updated
   in the same changeset;
 - entry-point and operational documents should favor precision, reproducibility,
-  and production-ready wording.
+  and direct wording.
