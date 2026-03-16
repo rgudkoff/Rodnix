@@ -116,6 +116,6 @@
 
 ## Где смотреть в коде
 
-- `kernel/common/scheduler/` (модули: `state/runqueue/control/tick/switch/reaper/debug`)
-- `kernel/common/task.c`
-- `kernel/common/ipc.c`
+- `sched/` (модули: `state/runqueue/control/tick/switch/reaper/debug`)
+- `kernel/task.c`
+- `kernel/ipc.c`

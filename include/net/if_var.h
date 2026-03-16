@@ -3,9 +3,9 @@
 
 /*
  * Network interface compatibility header.
- * Internal backend: kernel/net/bsd_ifnet.*
+ * Internal backend: net/bsd_ifnet.*
  */
 
-#include "../../kernel/net/bsd_ifnet.h"
+#include "../../net/bsd_ifnet.h"
 
 #endif /* _RODNIX_COMPAT_NET_IF_VAR_H */

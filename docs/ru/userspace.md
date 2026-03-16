@@ -46,8 +46,8 @@
   - `/etc/hostname` читается `init` и логируется;
   - `/etc/ttys` — минимальный конфиг-конвенция для console tty.
 - stdin/stdout/stderr идут через POSIX `read/write` (fd `0/1/2`);
-  в VFS созданы узлы `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.
-  На текущем этапе это виртуальные VFS-узлы (до выделения отдельного `devfs`).
+  в `devfs` создаются узлы `/dev/console`, `/dev/stdin`, `/dev/stdout`,
+  `/dev/stderr`.
 - `ttytest` используется для ручной проверки line discipline
   (backspace, canonical newline).
 - Добавлен минимальный TTY control-plane через `ioctl`:
@@ -114,6 +114,6 @@
 ## Где смотреть в коде
 
 - `userland/init/`, `userland/shell/`, `userland/include/`.
-- `kernel/common/loader.c` и `kernel/arch/x86_64/usermode.c`.
-- `kernel/common/shell.c` (команда `run`, lifecycle shell/user thread).
+- `kernel/loader.c` и `kernel/arch/x86_64/usermode.c`.
+- `shell/shell.c` (команда `run`, lifecycle shell/user thread).
 - `scripts/mkinitrd.py`, `boot/grub/grub.cfg`.

@@ -20,7 +20,7 @@
   - `rax` — номер syscall.
   - `rdi, rsi, rdx, r10, r8, r9` — аргументы 1..6.
   - `rax` — код возврата.
-- Таблица syscalls: `kernel/common/syscall.c`.
+- Ядровой dispatcher: `kernel/syscall.c`.
 - Есть POSIX‑слой: `kernel/posix/posix_syscall.c` (таблица + минимальные вызовы).
 - Реализованы `SYS_NOP`, `POSIX_SYS_NOSYS`, `GETPID/GETUID/GETEUID/GETGID/GETEGID`, `UNAME`.
 - Реализованы базовые `SETUID/SETEUID/SETGID/SETEGID` (только для root).
@@ -123,7 +123,7 @@ polling-циклов: вызов может уступить квант план
 
 ## Где смотреть в коде
 
-- `kernel/common/syscall.c`, `kernel/common/syscall.h`.
+- `kernel/syscall.c`, `kernel/syscall.h`
 - `kernel/arch/x86_64/idt.c` (IDT entry 0x80).
 - `kernel/arch/x86_64/isr_handlers.c` (dispatch).
 - `userland/include/sys/{errno.h,fcntl.h,wait.h}` (userland ABI constants).

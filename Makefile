@@ -56,13 +56,21 @@ CFLAGS = $(ARCH_CFLAGS) \
          -MMD \
          -MP \
          -I./include \
+         -I./fs \
+         -I./init \
+         -I./lib \
+         -I./mm \
+         -I./net \
+         -I./sched \
+         -I./console \
+         -I./trace \
+         -I./shell \
+         -I./idl \
          -I./kernel/core \
-         -I./kernel/common \
          -I./kernel/arch \
          -I./kernel/arch/$(ARCH_DIR) \
          -I./kernel/fabric \
-         -I./kernel/input \
-         -I./kernel/fs
+         -I./kernel/input
 
 ASFLAGS = $(ARCH_ASFLAGS)
 LDFLAGS = $(ARCH_LDFLAGS) -T link.ld --no-warn-mismatch -z max-page-size=0x1000

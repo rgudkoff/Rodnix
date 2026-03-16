@@ -2,6 +2,7 @@
 
 - What problem does this PR solve?
 - What changed?
+- Branch name follows policy (`fix/`, `feat/`, `refactor/`, `docs/`, `build/`, `test/`, `ci/`).
 
 ## Motivation and Design
 
@@ -35,3 +36,4 @@ Commands/results summary:
 - [ ] Docs updated (or N/A)
 - [ ] No machine-specific absolute paths in docs
 - [ ] No stale placeholders or temporary notes
+- [ ] Branch should be deleted after merge

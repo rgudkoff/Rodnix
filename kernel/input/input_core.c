@@ -14,7 +14,7 @@
 
 #include "input.h"
 #include "../fabric/spin.h"
-#include "../common/scheduler.h"
+#include "../../sched/scheduler.h"
 #include "../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>

@@ -7,10 +7,10 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "../include/version.h"
-#include "common/bootlog.h"
-#include "common/startup_trace.h"
+#include "../trace/bootlog.h"
+#include "../trace/startup_trace.h"
 #include "core/boot.h"
-#include "init/init.h"
+#include "../init/init.h"
 
 /**
  * Kernel main function

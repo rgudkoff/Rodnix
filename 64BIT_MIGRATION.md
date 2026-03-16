@@ -1,7 +1,10 @@
 # 64-bit Migration Notes
 
 This document summarizes the high-level changes required when moving from
-32-bit (i386) to 64-bit (x86_64).
+32-bit (i386) to 64-bit (`x86_64`).
+
+It is kept as a historical engineering note. RodNIX itself is a 64-bit-only
+project.
 
 ## Build Toolchain
 
@@ -43,4 +46,5 @@ This document summarizes the high-level changes required when moving from
 - Kernel can be linked in the higher half (e.g. 0xFFFFFFFF80000000)
 - Identity-map early boot memory as needed
 
-This is a high-level checklist; see code and docs for implementation details.
+This is a high-level checklist; see `ARCHITECTURE.md`, `README.md`, and the
+active documents under `docs/` for the current implementation baseline.

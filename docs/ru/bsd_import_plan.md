@@ -19,8 +19,8 @@
 - Scheduler runqueue переведен на `TAILQ`.
 - Поиск `task` по `task_id` переведен с линейного обхода на индекс-дерево.
 - Заголовки `include/bsd/sys/*` уже используются в runtime-коде ядра:
-  - `kernel/common/waitq.h`
-  - `kernel/common/scheduler/internal.h`
+  - `sched/waitq.h`
+  - `sched/internal.h`
 - `include/bsd/sys/*` считается рабочим compatibility-layer:
   любые изменения должны проходить через процесс импорта и фиксироваться в
   `third_party/bsd/SOURCES.md`.

@@ -6,6 +6,9 @@ The `docs/` tree is intentionally split into three zones:
 - `docs/en/` — English-language documentation and navigation mirrors;
 - `docs/archive/` and `docs/ru/archive/` — historical and archived material.
 
+This directory should be treated as a documentation tree with explicit entry
+points, not as a flat dump of notes.
+
 ## Start Here
 
 - `docs/ru/README.md` — active Russian documentation map;
@@ -14,6 +17,13 @@ The `docs/` tree is intentionally split into three zones:
 - `docs/ru/architecture.md` — current architecture map;
 - `docs/ru/build_run.md` — practical build and run guide;
 - `docs/ru/debugging.md` — diagnostics and debug workflow.
+
+## Active Documentation Sets
+
+- `docs/ru/` — source-of-truth active engineering documents;
+- `docs/en/` — English navigation layer and mirrors for repository entry;
+- `docs/archive/`, `docs/ru/archive/` — retired plans, historical specs,
+  and documents kept only for reference.
 
 ## Rules
 

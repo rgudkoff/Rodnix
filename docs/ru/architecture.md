@@ -9,15 +9,28 @@ RodNIX строится как 64-битное ядро с четким разд
 
 ## Структура дерева (ключевые каталоги)
 
-- `boot` — ранняя загрузка и подготовка к long mode.
-- `kernel/core` — arch-независимые интерфейсы.
-- `kernel/common` — общие подсистемы ядра.
-- `kernel/arch/x86_64` — текущая рабочая реализация.
-- `kernel/fabric` — Fabric: bus/device/driver/service.
-- `kernel/input` — InputCore.
-- `kernel/interrupts` — общие части подсистемы прерываний.
-- `drivers` — Fabric-драйверы.
-- `include` — публичные заголовки ядра.
+- `boot/` — ранняя загрузка и переход к 64-битному ядру.
+- `console/` — консольные backends и terminal-facing вывод.
+- `drivers/` — драйверы устройств.
+- `fs/` — VFS, devfs, EXT2 и файловые подсистемы.
+- `idl/` — in-kernel IDL / IPC helpers.
+- `init/` — staged init и runtime handoff.
+- `kernel/` — core runtime, low-level internals и architecture code.
+- `lib/` — общие kernel support utilities.
+- `mm/` — подсистема виртуальной памяти и pager path.
+- `net/` — сетевой стек.
+- `sched/` — планировщик и wait queue.
+- `shell/` — встроенный kernel shell.
+- `trace/` — boot tracing, bootlog и наблюдаемость.
+- `userland/` — userspace runtime и утилиты.
+
+Ключевые подкаталоги внутри `kernel/`:
+
+- `kernel/core/` — arch-независимые low-level интерфейсы.
+- `kernel/arch/x86_64/` — текущая рабочая реализация архитектуры.
+- `kernel/fabric/` — Fabric: bus/device/driver/service.
+- `kernel/input/` — InputCore.
+- `kernel/posix/`, `kernel/unix/` — syscall ABI и Unix layer.
 
 ## Разделение ответственности
 
@@ -25,7 +38,8 @@ RodNIX строится как 64-битное ядро с четким разд
 - Arch-специфичные реализации предоставляют реальное поведение.
 - Fabric предоставляет единый путь обнаружения и подключения устройств.
 - Файловые системы, сетевой стек и драйверы — внутри ядра.
-- Минимизация переходов user↔kernel — стратегический выбор.
+- Переходы между доменами должны идти через явные контракты, а не через
+  неформальные зависимости.
 - Архитектура модульная, подсистемы слабо связаны логически.
 - Применяется изоляция и проверки, нехарактерные для классических монолитов.
 
@@ -68,9 +82,10 @@ Apple MIG: интерфейс описывается в `.defs`, после че
 
 - x86_64 — рабочий основной таргет.
 - Настроены GDT/IDT, ISR/IRQ и базовые таймеры.
-- Есть PMM и заготовки под VMM.
+- Есть PMM и рабочий VM path (`vm_map -> vm_object -> vm_fault -> pager`).
 - Fabric зарегистрирован и используется для HID клавиатуры.
 - Fabric net-service активен: `lo0` + первый PCI backend для e1000 (`net0` при наличии устройства в QEMU/PCI).
+- Есть staged init, userspace bootstrap и GFX / framebuffer groundwork.
 
 ## Планы
 

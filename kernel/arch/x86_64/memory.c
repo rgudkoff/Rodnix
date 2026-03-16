@@ -10,7 +10,7 @@
 
 #include "../../core/memory.h"
 #include "../../core/boot.h"
-#include "../../common/tracev2.h"
+#include "../../../trace/tracev2.h"
 #include "../../../include/console.h"
 #include "../../../include/debug.h"
 #include "types.h"

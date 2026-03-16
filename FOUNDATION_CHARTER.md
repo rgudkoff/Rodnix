@@ -1,5 +1,8 @@
 # RodNIX Foundation Charter v1.0 (RFC-1.0)
 
+This document describes the intended project foundation structure and funding
+model.
+
 ## 1. Purpose
 
 The RodNIX Foundation exists to:

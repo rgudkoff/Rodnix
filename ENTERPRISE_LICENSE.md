@@ -3,6 +3,8 @@
 This Agreement grants enterprise organizations the right to use RodNIX without
 the obligations of the RodNIX Public License (RPL-1.0).
 
+This file is a license terms document, not a technical specification.
+
 ## 1. License Grant
 
 The Licensee is granted:

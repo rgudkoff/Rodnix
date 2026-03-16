@@ -1,7 +1,7 @@
 #ifndef _RODNIX_COMPAT_NETINET_IP_ICMP_H
 #define _RODNIX_COMPAT_NETINET_IP_ICMP_H
 
-#include "../../kernel/net/bsd_inet.h"
+#include "../../net/bsd_inet.h"
 
 typedef bsd_icmp_echo_t icmp;
 

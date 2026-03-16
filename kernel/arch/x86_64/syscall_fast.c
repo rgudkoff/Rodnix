@@ -1,6 +1,6 @@
 #include "syscall_fast.h"
 #include "interrupt_frame.h"
-#include "../../common/syscall.h"
+#include "../../syscall.h"
 #include "../../core/task.h"
 
 extern void x86_64_syscall_fast_entry(void);

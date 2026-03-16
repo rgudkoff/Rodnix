@@ -1,6 +1,6 @@
 #include "posix_sys_ids.h"
 #include "../core/task.h"
-#include "../common/security.h"
+#include "../security.h"
 #include "../unix/unix_layer.h"
 #include "../../include/error.h"
 

@@ -1,5 +1,7 @@
 # Code of Conduct
 
+RodNIX aims to keep technical collaboration direct, respectful, and useful.
+
 ## Our Standards
 We aim to maintain a welcoming, inclusive, and collaborative environment.
 

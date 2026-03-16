@@ -1,7 +1,7 @@
 #include "posix_syscall.h"
 #include "posix_syscall_handlers.h"
 #include "../unix/unix_layer.h"
-#include "../common/ktrace.h"
+#include "../../trace/ktrace.h"
 #include "../../include/error.h"
 
 static posix_syscall_fn_t posix_table[POSIX_SYSCALL_MAX];

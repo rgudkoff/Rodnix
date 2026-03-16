@@ -74,5 +74,7 @@
 
 ## Где смотреть в коде
 
-- `kernel/common` и `kernel/arch/x86_64`.
+- `mm/` и `kernel/arch/x86_64/`
+- ключевые файлы: `mm/vm_map.c`, `mm/vm_object.c`, `mm/vm_fault.c`,
+  `mm/vm_pager.c`, `kernel/arch/x86_64/paging.c`, `kernel/arch/x86_64/pmm.c`
 - Актуальный план — `execution_plan_os_foundation.md`.

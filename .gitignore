@@ -12,6 +12,7 @@ userland/build/
 # IDE
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~

@@ -3,9 +3,9 @@
 
 /*
  * Packet buffer compatibility header.
- * Internal backend: kernel/net/bsd_mbuf.*
+ * Internal backend: net/bsd_mbuf.*
  */
 
-#include "../../kernel/net/bsd_mbuf.h"
+#include "../../net/bsd_mbuf.h"
 
 #endif /* _RODNIX_COMPAT_SYS_MBUF_H */

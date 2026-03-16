@@ -2,8 +2,6 @@
 
 RodNIX follows a BDFL (Benevolent Dictator For Life) governance system.
 
----
-
 ## Roles
 
 ### BDFL / Core Architect
@@ -21,15 +19,11 @@ RodNIX follows a BDFL (Benevolent Dictator For Life) governance system.
 - anyone who submits patches or documentation,
 - must sign the CLA.
 
----
-
 ## Decision Process
 
 - Consensus is encouraged.
 - If no consensus is reached, the BDFL decides.
 - Releases require explicit BDFL approval.
-
----
 
 ## Conflict Resolution
 
@@ -37,7 +31,5 @@ Disputes are resolved by:
 1. Discussion among contributors,
 2. Maintainer review,
 3. Final BDFL decision.
-
----
 
 END OF TERMS

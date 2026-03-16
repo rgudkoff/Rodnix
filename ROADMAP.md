@@ -7,6 +7,9 @@ This roadmap is intentionally high level. Detailed execution plans live in:
 - `docs/ru/industrial_gap.md`
 - `docs/archive/posix-plan.md` (historical)
 
+It should be read together with `README.md`, `ARCHITECTURE.md`, and
+`INSTALL.md`.
+
 ## Current baseline (already done)
 - [x] x86_64 long mode and high-half kernel boot
 - [x] Stable early paging + PMM groundwork

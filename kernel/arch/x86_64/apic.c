@@ -20,7 +20,7 @@
 #include "acpi.h"
 #include "../../../include/debug.h"
 #include "../../core/interrupts.h"
-#include "../../common/scheduler.h"
+#include "../../../sched/scheduler.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>

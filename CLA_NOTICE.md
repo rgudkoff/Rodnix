@@ -2,6 +2,8 @@
 
 All contributors must sign the CLA before their Pull Requests can be merged.
 
+The full agreement text is in `CLA.md`.
+
 Why CLA?
 - Ensures legal clarity and copyright compliance.
 - Allows the project to evolve, re-license, or dual-license if necessary.
@@ -15,4 +17,5 @@ The CLA does NOT:
 - Transfer your personal copyright
 - Limit your rights to use your own contribution elsewhere
 
-Instructions for signing the CLA will be provided in the repository.
+Contributor workflow is described in `CONTRIBUTING.md`. Instructions for
+signing the CLA will be provided in the repository workflow used by the team.

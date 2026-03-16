@@ -24,25 +24,15 @@
    - Передача управления в `kmain()`.
 
 2. `kmain()` (`kernel/main.c`)
-   - `console_init()`, `console_clear()`, приветственный лог.
+   - `console_init()`, `console_clear()`, ранний вывод.
    - `boot_early_init(&boot_info)` — ранний сбор boot-информации.
-   - `cpu_init()` — базовая CPU-инициализация.
-   - `interrupts_init()` — IDT, PIC, очистка таблицы обработчиков.
-   - `memory_init()` — paging + PMM bootstrap.
-   - `apic_init()` — LAPIC + попытка IOAPIC.
-   - `apic_timer_init(100)` или `pit_init(100)` — таймер.
-   - `scheduler_init()` — минимальная инициализация планировщика.
-   - `ipc_init()` — базовая IPC-подсистема.
-   - `syscall_init()` — минимальный каркас syscalls.
-   - `fabric_init()` — устройство/шина (virt, pci, ps2).
-   - `hid_kbd_init()` — клавиатура и IRQ маршрутизация.
-   - `vfs_init()` — RAMFS/VFS.
-   - Разрешение прерываний (`sti`) и старт таймера.
-   - Выбор bootstrap-режима:
-     - по умолчанию запуск userspace `init` (`/bin/init`);
-     - `rdnx.shell=1` — принудительный kernel shell (debug mode).
-   - Создание потоков: `init_thread` (или `kernel_shell_thread`) и `idle_thread`.
-   - `scheduler_add_thread()` для bootstrap-потока и `idle`.
+   - `kernel_run_bootstrap_sysinit()` — staged init подсистем:
+     `cpu -> interrupts -> memory -> apic/acpi -> timer -> sched -> ipc ->
+     syscall -> security -> loader -> kmod -> fabric/gfx -> vfs -> net`.
+   - `kernel_enable_runtime_interrupts()` — включение IRQ после завершения
+     bootstrap-phase.
+   - `kernel_enter_runtime()` — выбор userspace `init` или fallback в kernel shell,
+     создание primary/idle потоков и handoff к планировщику.
    - `scheduler_start()` — запуск планировщика и первый switch.
 
 3. IRQ 32 (таймер)
@@ -83,9 +73,10 @@
 
 ### Где в коде
 
-- Реализация: `kernel/common/bootlog.c`
-- Интерфейс: `kernel/common/bootlog.h`
-- Использование в пути старта: `kernel/main.c`
+- Реализация: `trace/bootlog.c`
+- Интерфейс: `trace/bootlog.h`
+- Стадии инициализации: `init/sysinit.c`, `init/runtime.c`
+- Точка входа: `kernel/main.c`
 
 ### Формат V2 (структурированный)
 

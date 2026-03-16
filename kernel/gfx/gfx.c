@@ -10,9 +10,9 @@
 #include "../../include/gfx.h"
 #include "../../include/error.h"
 #include "../../include/console.h"
-#include "../fs/devfs.h"
-#include "../fs/vfs.h"
-#include "../vm/vm_map.h"
+#include "../../fs/devfs.h"
+#include "../../fs/vfs.h"
+#include "../../mm/vm_map.h"
 #include <stddef.h>
 #include <stdint.h>
 

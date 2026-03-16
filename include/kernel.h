@@ -21,7 +21,7 @@
 #include "../kernel/core/task.h"
 
 /* Common components */
-#include "../kernel/common/scheduler.h"
-#include "../kernel/common/ipc.h"
+#include "../sched/scheduler.h"
+#include "../kernel/ipc.h"
 
 #endif /* _RODNIX_KERNEL_H */

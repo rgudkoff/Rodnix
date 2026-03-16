@@ -1,5 +1,7 @@
 # RodNIX Trademark and Naming Policy v1.0 (RTNP-1.0)
 
+This file describes naming and trademark usage rules for the project.
+
 ## 1. Ownership
 
 The names:

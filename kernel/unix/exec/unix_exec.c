@@ -1,7 +1,7 @@
 #include "../unix_layer.h"
-#include "../../common/loader.h"
-#include "../../common/scheduler.h"
-#include "../../common/heap.h"
+#include "../../loader.h"
+#include "../../../sched/scheduler.h"
+#include "../../../lib/heap.h"
 #include "../../../include/common.h"
 #include "../../../include/error.h"
 

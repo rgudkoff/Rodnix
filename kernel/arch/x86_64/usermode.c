@@ -9,7 +9,7 @@
 #include "gdt.h"
 #include "types.h"
 #include "config.h"
-#include "../../common/bootlog.h"
+#include "../../../trace/bootlog.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
 #include <stdint.h>

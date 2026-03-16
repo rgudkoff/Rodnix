@@ -16,7 +16,7 @@
 #include "../../../kernel/fabric/service/net_service.h"
 #include "../../../kernel/fabric/bus/pci.h"
 #include "../../../kernel/fabric/spin.h"
-#include "../../../kernel/net/socket.h"
+#include "../../../net/socket.h"
 #include "../../../kernel/core/memory.h"
 #include "../../../kernel/core/interrupts.h"
 #include "../../../kernel/arch/x86_64/config.h"

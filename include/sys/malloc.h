@@ -1,7 +1,7 @@
 #ifndef _RODNIX_COMPAT_SYS_MALLOC_H
 #define _RODNIX_COMPAT_SYS_MALLOC_H
 
-#include "../../kernel/common/heap.h"
+#include "../../lib/heap.h"
 
 #ifndef M_NOWAIT
 #define M_NOWAIT 0x0001

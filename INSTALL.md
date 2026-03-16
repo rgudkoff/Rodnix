@@ -1,5 +1,8 @@
 # Installation and Run Guide
 
+This document is the practical companion to `README.md`. It focuses on local
+setup, build prerequisites, and day-to-day development commands.
+
 ## Purpose
 
 This document describes the minimum environment required to build and run
@@ -100,6 +103,7 @@ Additional references:
 
 - `docs/ru/debugging.md`
 - `docs/ru/build_run.md`
+- `README.md`
 
 ## Post-Boot Checks
 

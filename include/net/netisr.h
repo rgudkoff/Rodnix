@@ -3,9 +3,9 @@
 
 /*
  * Deferred network dispatch compatibility header.
- * Internal backend: kernel/net/bsd_netisr.*
+ * Internal backend: net/bsd_netisr.*
  */
 
-#include "../../kernel/net/bsd_netisr.h"
+#include "../../net/bsd_netisr.h"
 
 #endif /* _RODNIX_COMPAT_NET_NETISR_H */

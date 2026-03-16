@@ -32,13 +32,13 @@
   - освобождение блоков при shrink и обновление счетчиков group/superblock.
 - Узлы `/dev` сейчас создаются ядром виртуально (не читаются с диска):
   `/dev/console`, `/dev/stdin`, `/dev/stdout`, `/dev/stderr`.
-- Консольные узлы `/dev/*` обслуживаются через `kernel/common/tty_console.c`
+- Консольные узлы `/dev/*` обслуживаются через `console/tty_console.c`
   (минимальный line discipline: echo, backspace, `Ctrl-U`, `Ctrl-C`, `Ctrl-D`,
   canonical line mode).
 
 ## `/dev` и `devfs`
 
-`devfs` реализован как отдельная файловая система (`kernel/fs/devfs.c`),
+`devfs` реализован как отдельная файловая система (`fs/devfs.c`),
 монтируется в `/dev` на этапе boot.
 
 Текущее состояние:
@@ -64,4 +64,5 @@
 
 ## Где смотреть в коде
 
-- `kernel/fs/vfs.c`, `kernel/fs/vfs.h`, `kernel/fs/initrd.h`.
+- `fs/vfs.c`, `fs/vfs.h`, `fs/initrd.h`
+- `fs/devfs.c`, `fs/devfs.h`

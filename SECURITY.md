@@ -1,5 +1,8 @@
 # Security Policy
 
+This document defines the project-level vulnerability handling policy for the
+repository and its releases.
+
 ## Scope
 
 This document defines how vulnerabilities should be reported and what the

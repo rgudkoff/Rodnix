@@ -2,29 +2,13 @@
 
 KERNEL_C_SRCS += \
 	kernel/main.c \
-	kernel/init/sysinit.c \
-	kernel/init/runtime.c \
-	kernel/common/scheduler/state.c \
-	kernel/common/scheduler/runqueue.c \
-	kernel/common/scheduler/control.c \
-	kernel/common/scheduler/tick.c \
-	kernel/common/scheduler/switch.c \
-	kernel/common/scheduler/reaper.c \
-	kernel/common/scheduler/debug.c \
-	kernel/common/syscall.c \
-	kernel/common/ipc.c \
-	kernel/common/idl_runtime.c \
-	kernel/common/idl_demo.c \
-	kernel/common/security.c \
-	kernel/common/bootstrap.c \
-	kernel/common/loader.c \
-	kernel/common/kmod.c \
-	kernel/common/bootlog.c \
-	kernel/common/ktrace.c \
-	kernel/common/startup_trace.c \
-	kernel/common/tracev2.c \
-	kernel/common/tty_console.c \
-	kernel/common/waitq.c \
+	init/sysinit.c \
+	init/runtime.c \
+	kernel/syscall.c \
+	kernel/ipc.c \
+	kernel/security.c \
+	kernel/loader.c \
+	kernel/kmod.c \
 	kernel/unix/uaccess/unix_uaccess.c \
 	kernel/unix/fd/unix_fd.c \
 	kernel/unix/fs/unix_fs.c \
@@ -36,25 +20,21 @@ KERNEL_C_SRCS += \
 	kernel/posix/posix_sys_proc.c \
 	kernel/posix/posix_sys_vm.c \
 	kernel/posix/posix_sys_info.c \
-	kernel/common/console.c \
-	kernel/common/debug.c \
-	kernel/common/task.c \
-	kernel/vm/vm_object.c \
-	kernel/vm/vm_page_ref.c \
-	kernel/vm/vm_pager.c \
-	kernel/vm/vm_map.c \
-	kernel/vm/vm_fault.c \
-	kernel/common/string.c \
-	kernel/common/heap.c \
-	kernel/common/shell.c \
-	kernel/net/net.c \
-	kernel/net/bsd_inet.c \
-	kernel/net/bsd_ether.c \
-	kernel/net/bsd_mbuf.c \
-	kernel/net/bsd_ifnet.c \
-	kernel/net/bsd_netisr.c \
-	kernel/net/stack.c \
-	kernel/net/socket.c \
+	kernel/debug.c \
+	kernel/task.c \
+	mm/vm_object.c \
+	mm/vm_page_ref.c \
+	mm/vm_pager.c \
+	mm/vm_map.c \
+	mm/vm_fault.c \
+	net/net.c \
+	net/bsd_inet.c \
+	net/bsd_ether.c \
+	net/bsd_mbuf.c \
+	net/bsd_ifnet.c \
+	net/bsd_netisr.c \
+	net/stack.c \
+	net/socket.c \
 	kernel/usb/usb.c \
 	kernel/linux/linux_errno.c \
 	kernel/linux/linux_compat.c \
@@ -98,7 +78,13 @@ KERNEL_ARCH_ARM64_C_SRCS := \
 KERNEL_ARCH_RISCV64_C_SRCS := \
 	kernel/arch/riscv64/interrupts.c
 
-include kernel/fs/Makefile
+include fs/Makefile
+include lib/Makefile
+include sched/Makefile
+include console/Makefile
+include trace/Makefile
+include idl/Makefile
+include shell/Makefile
 
 KERNEL_ARCH_X86_64_ASM_SRCS := \
 	kernel/arch/x86_64/isr_stubs.S \

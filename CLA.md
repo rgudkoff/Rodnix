@@ -5,6 +5,9 @@ Thank you for contributing to RodNIX.
 By submitting any code, documentation, or other materials ("Contribution"),
 you agree to the following terms:
 
+This file contains the agreement text. See `CLA_NOTICE.md` and
+`CONTRIBUTING.md` for contributor workflow context.
+
 ## 1. Copyright Retention
 
 You keep full ownership of your Contribution.

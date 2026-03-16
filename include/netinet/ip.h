@@ -1,7 +1,7 @@
 #ifndef _RODNIX_COMPAT_NETINET_IP_H
 #define _RODNIX_COMPAT_NETINET_IP_H
 
-#include "../../kernel/net/bsd_inet.h"
+#include "../../net/bsd_inet.h"
 
 typedef bsd_ip_t ip;
 

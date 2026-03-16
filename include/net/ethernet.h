@@ -1,7 +1,7 @@
 #ifndef _RODNIX_COMPAT_NET_ETHERNET_H
 #define _RODNIX_COMPAT_NET_ETHERNET_H
 
-#include "../../kernel/net/bsd_ether.h"
+#include "../../net/bsd_ether.h"
 
 typedef bsd_ether_header_t ether_header;
 

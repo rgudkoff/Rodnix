@@ -13,10 +13,17 @@ history, code review, and operational documentation stay manageable.
 
 ## Branching
 
-Recommended approach:
+Repository policy:
 
-1. start from the current team baseline branch;
-2. use descriptive branch names;
+1. `main` is the only permanent branch.
+2. all other branches are temporary and must represent one engineering goal;
+3. after merge, temporary branches should be deleted locally and on `origin`;
+4. release tags are created only from `main`.
+
+Working approach:
+
+1. start from the current `main`;
+2. create one short-lived branch per task;
 3. do not mix unrelated work in the same branch.
 
 Examples:
@@ -25,11 +32,31 @@ Examples:
 - `feat/<area>-<capability>`
 - `refactor/<area>-<goal>`
 - `docs/<area>-<topic>`
+- `build/<area>-<topic>`
+- `test/<area>-<topic>`
+- `ci/<area>-<topic>`
+
+Do not use:
+
+- `dev`
+- `tmp`
+- `misc`
+- `work`
+- personal branch names for long-lived work
+
+History policy:
+
+1. rewriting `main` history is exceptional and owner-only;
+2. acceptable cases are repository cleanup, wrong metadata, secret removal,
+   broken tags, or similar administrative fixes;
+3. if history rewrite is required, use `--force-with-lease`, never plain
+   destructive force-push.
 
 ## Change Requirements
 
-- preserve subsystem boundaries (`arch`, `core`, `fabric`, `fs`, `posix`,
-  `userland`);
+- preserve subsystem boundaries (`init`, `mm`, `fs`, `net`, `sched`,
+  `console`, `trace`, `shell`, `userland`, `drivers`, `kernel/arch`,
+  `kernel/core`, `kernel/fabric`);
 - do not add dead code, temporary workaround paths without clear purpose, or
   commented-out logic;
 - source code comments must be short, technical, and written in English;
@@ -77,6 +104,9 @@ Mandatory rules:
 
 A PR should be small enough for one focused review session.
 
+Even for owner-driven work, prefer PR-shaped changesets and reviewable branch
+names instead of accumulating unrelated direct commits on `main`.
+
 The PR description should include:
 
 1. the problem statement;
@@ -97,12 +127,18 @@ For most changes:
 If a change affects kernel or userland ABI, also verify the related
 documentation and utility compatibility.
 
+For tree-wide refactors, also verify that moved paths stay reflected in the
+relevant root documents such as `README.md`, `ARCHITECTURE.md`, and
+`INSTALL.md`.
+
 ## Documentation Quality
 
 - keep documentation concrete and operational;
 - use repository paths instead of local absolute paths;
 - remove stale duplicates and temporary notes during related edits;
 - do not treat archive plans as active specification.
+
+For workflow and branch policy details, see `docs/ru/contributing_workflow.md`.
 
 ## Licensing and Third-Party Material
 

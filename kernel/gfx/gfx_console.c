@@ -219,11 +219,6 @@ static void cell_put(uint32_t col, uint32_t row, uint8_t ch, uint32_t fg, uint32
     draw_glyph(col, row, ch, fg, bg);
 }
 
-static void clear_cell(uint32_t col, uint32_t row)
-{
-    cell_put(col, row, 0x20u, g_fg, g_bg);
-}
-
 static void scroll_up(void)
 {
     /* Scroll cell buffer up one row. */

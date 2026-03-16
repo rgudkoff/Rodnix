@@ -16,7 +16,7 @@
 #include "types.h"
 #include "pic.h"
 #include "../../core/interrupts.h"
-#include "../../common/scheduler.h"
+#include "../../../sched/scheduler.h"
 #include "../../include/debug.h"
 #include <stddef.h>
 #include <stdbool.h>
