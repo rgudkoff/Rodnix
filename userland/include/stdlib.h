@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 int atoi(const char* nptr);
+double atof(const char* nptr);
 long strtol(const char* nptr, char** endptr, int base);
 unsigned long strtoul(const char* nptr, char** endptr, int base);
 double strtod(const char* nptr, char** endptr);
@@ -29,5 +30,7 @@ void qsort(void* base, size_t nmemb, size_t size,
            int (*compar)(const void*, const void*));
 void* bsearch(const void* key, const void* base, size_t nmemb, size_t size,
               int (*compar)(const void*, const void*));
+
+int system(const char* cmd);
 
 #endif /* _RODNIX_USERLAND_STDLIB_H */

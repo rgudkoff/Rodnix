@@ -103,7 +103,7 @@ CONTRACT_FSIO_SRCS = bin/contract_fsio.c
 CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/posix.c
 
 ifeq ($(ARCH),x86_64)
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o

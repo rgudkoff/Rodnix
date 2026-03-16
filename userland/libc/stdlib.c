@@ -158,6 +158,11 @@ float strtof(const char* nptr, char** endptr)
     return (float)strtod(nptr, endptr);
 }
 
+double atof(const char* nptr)
+{
+    return strtod(nptr, NULL);
+}
+
 int abs(int x)
 {
     return x < 0 ? -x : x;

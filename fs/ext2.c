@@ -179,6 +179,7 @@ static void ext2_mark_node(vfs_node_t* node, uint32_t ino_num,
         node->inode->mode = (uint16_t)(ext_ino->mode & 0x0FFFu);
         node->inode->uid  = ext_ino->uid;
         node->inode->gid  = ext_ino->gid;
+        node->inode->mtime = (uint64_t)ext_ino->mtime;
     }
 }
 

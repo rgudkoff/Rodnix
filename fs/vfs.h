@@ -22,6 +22,7 @@ typedef struct vfs_inode {
     uint32_t fs_tag;
     uint32_t fs_aux;
     uint64_t fs_ino;
+    uint64_t mtime;
     size_t size;
     size_t capacity;
     uint8_t* data;
@@ -69,6 +70,7 @@ typedef struct vfs_file {
 typedef struct vfs_stat {
     uint32_t mode;
     uint64_t size;
+    uint64_t mtime;
 } vfs_stat_t;
 
 typedef void (*vfs_list_cb_t)(const vfs_node_t* node, void* ctx);

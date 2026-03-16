@@ -18,4 +18,8 @@ struct timespec {
 #define CLOCK_REALTIME  0
 #define CLOCK_MONOTONIC 4
 
+typedef int clockid_t;
+
+int gettimeofday(struct timeval* tv, void* tz);
+
 #endif /* _RODNIX_USERLAND_SYS_TIME_H */

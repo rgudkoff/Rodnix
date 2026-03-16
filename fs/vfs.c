@@ -1179,8 +1179,10 @@ int vfs_stat(const char* path, vfs_stat_t* out_stat)
     }
 
     memset(out_stat, 0, sizeof(*out_stat));
-    out_stat->mode = (node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->mode = ((node->type == VFS_NODE_DIR) ? 0040000u : 0100000u) |
+                     (uint32_t)(node->inode->mode & 0777u);
     out_stat->size = (uint64_t)node->inode->size;
+    out_stat->mtime = node->inode->mtime;
     return RDNX_OK;
 }
 
@@ -1190,8 +1192,10 @@ int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat)
         return RDNX_E_INVALID;
     }
     memset(out_stat, 0, sizeof(*out_stat));
-    out_stat->mode = (file->node->type == VFS_NODE_DIR) ? 0040000u : 0100000u;
+    out_stat->mode = ((file->node->type == VFS_NODE_DIR) ? 0040000u : 0100000u) |
+                     (uint32_t)(file->node->inode->mode & 0777u);
     out_stat->size = (uint64_t)file->node->inode->size;
+    out_stat->mtime = file->node->inode->mtime;
     return RDNX_OK;
 }
 

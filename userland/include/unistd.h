@@ -6,6 +6,7 @@
 #include <sys/fcntl.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <sys/wait.h>
 #include "posix_syscall.h"
@@ -21,6 +22,11 @@ extern "C" {
 #define SEEK_SET 0
 #define SEEK_CUR 1
 #define SEEK_END 2
+
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
 
 static inline int rdnx_errno_from_status(long r)
 {
@@ -201,6 +207,36 @@ static inline int open(const char* path, int flags)
         return -1;
     }
     return (int)r;
+}
+
+static inline int access(const char* path, int mode)
+{
+    struct stat st;
+
+    if (!path) {
+        errno = EINVAL;
+        return -1;
+    }
+    if ((mode & ~(F_OK | X_OK | W_OK | R_OK)) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (stat(path, &st) != 0) {
+        return -1;
+    }
+    if ((mode & R_OK) && (st.st_mode & S_IRUSR) == 0) {
+        errno = EACCES;
+        return -1;
+    }
+    if ((mode & W_OK) && (st.st_mode & S_IWUSR) == 0) {
+        errno = EACCES;
+        return -1;
+    }
+    if ((mode & X_OK) && (st.st_mode & S_IXUSR) == 0) {
+        errno = EACCES;
+        return -1;
+    }
+    return 0;
 }
 
 static inline int chdir(const char* path)

@@ -169,7 +169,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk tcc tcc-disk
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -353,6 +353,32 @@ qemu-disk:
 		touch "$(QEMU_DISK_FS_STAMP)"; \
 	fi
 
+TCC_STAGING = $(BUILD_DIR)/tcc-staging
+TCC_STAMP   = $(BUILD_DIR)/tcc.stamp
+TCC_DEPS    = scripts/build_tcc.sh userland/Makefile $(shell find userland/include userland/libc -type f | sort)
+
+# Build TCC cross-compiled for RodNIX and stage it.
+tcc: $(TCC_STAMP)
+
+$(TCC_STAMP): $(TCC_DEPS)
+	@ARCH=$(ARCH) bash scripts/build_tcc.sh
+	@touch $(TCC_STAMP)
+
+# Rebuild the ext2 disk image, injecting the TCC staging tree.
+# Use a separate stamp so qemu-disk's stamp doesn't block re-injection.
+TCC_DISK_STAMP = $(BUILD_DIR)/rodnix-disk-tcc.stamp
+
+tcc-disk: $(TCC_STAMP)
+	@mkdir -p $(dir $(QEMU_DISK_IMG))
+	@echo "[*] (Re)creating disk image with TCC: $(QEMU_DISK_IMG)"
+	@python3 scripts/mkext2_demo.py \
+		--output "$(QEMU_DISK_IMG)" \
+		--size-mb "$(QEMU_DISK_SIZE_MB)" \
+		--inject-dir "$(TCC_STAGING)"
+	@touch "$(QEMU_DISK_FS_STAMP)"
+	@touch "$(TCC_DISK_STAMP)"
+	@echo "[+] Disk image ready with TCC at /usr/bin/tcc"
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -385,6 +411,8 @@ help:
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
 	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
+	@echo "  tcc         - Cross-compile TCC for RodNIX (needs x86_64-elf-gcc)"
+	@echo "  tcc-disk    - Rebuild ext2 disk image with TCC injected"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
 	@echo ""

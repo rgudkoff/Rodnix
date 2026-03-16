@@ -5,6 +5,8 @@
 #include <errno.h>
 #include "posix_syscall.h"
 
+time_t time(time_t* tloc);
+
 static inline int clock_gettime(clockid_t clk_id, struct timespec* tp)
 {
     long r = posix_clock_gettime((int)clk_id, tp);

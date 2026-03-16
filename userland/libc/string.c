@@ -102,6 +102,19 @@ void* memmove(void* dst, const void* src, size_t n)
     return dst;
 }
 
+void* memchr(const void* s, int c, size_t n)
+{
+    const unsigned char* p = (const unsigned char*)s;
+    unsigned char needle = (unsigned char)c;
+    while (n-- > 0) {
+        if (*p == needle) {
+            return (void*)p;
+        }
+        p++;
+    }
+    return NULL;
+}
+
 int memcmp(const void* a, const void* b, size_t n)
 {
     const unsigned char* pa = (const unsigned char*)a;

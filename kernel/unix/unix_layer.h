@@ -51,6 +51,7 @@ typedef struct {
 typedef struct {
     uint32_t st_mode;
     int64_t st_size;
+    int64_t st_mtime;
 } unix_stat_u_t;
 
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
