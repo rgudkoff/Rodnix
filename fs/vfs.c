@@ -638,6 +638,7 @@ static int vfs_import_initrd(void)
         }
         memcpy(node->inode->data, base + e->offset, e->size);
         node->inode->size = e->size;
+        node->inode->mode = (uint16_t)(e->mode & 0x0FFFu);
     }
 
     return 0;
@@ -1183,7 +1184,9 @@ int vfs_stat(const char* path, vfs_stat_t* out_stat)
 
     memset(out_stat, 0, sizeof(*out_stat));
     out_stat->mode = ((node->type == VFS_NODE_DIR) ? 0040000u : 0100000u) |
-                     (uint32_t)(node->inode->mode & 0777u);
+                     (uint32_t)(node->inode->mode & 07777u);
+    out_stat->uid  = node->inode->uid;
+    out_stat->gid  = node->inode->gid;
     out_stat->size = (uint64_t)node->inode->size;
     out_stat->mtime = node->inode->mtime;
     return RDNX_OK;
@@ -1196,9 +1199,39 @@ int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat)
     }
     memset(out_stat, 0, sizeof(*out_stat));
     out_stat->mode = ((file->node->type == VFS_NODE_DIR) ? 0040000u : 0100000u) |
-                     (uint32_t)(file->node->inode->mode & 0777u);
+                     (uint32_t)(file->node->inode->mode & 07777u);
+    out_stat->uid  = file->node->inode->uid;
+    out_stat->gid  = file->node->inode->gid;
     out_stat->size = (uint64_t)file->node->inode->size;
     out_stat->mtime = file->node->inode->mtime;
+    return RDNX_OK;
+}
+
+int vfs_access(const char* path, int access_flags)
+{
+    if (!path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    vfs_node_t* node = vfs_lookup(path);
+    if (!node || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+    /* Device inodes are always accessible. */
+    bool is_dev = (node->inode->flags &
+                   (VFS_INODE_CONSOLE | VFS_INODE_DEV_NULL |
+                    VFS_INODE_DEV_ZERO | VFS_INODE_CHARDEV |
+                    VFS_INODE_BLOCKDEV | VFS_INODE_FRAMEBUFFER)) != 0;
+    if (is_dev || node->inode->mode == 0) {
+        return RDNX_OK;
+    }
+    task_t* caller = task_get_current();
+    uint32_t euid = caller ? caller->euid : 0;
+    uint32_t egid = caller ? caller->egid : 0;
+    if (security_vfs_access(node->inode->mode, node->inode->uid,
+                             node->inode->gid, access_flags,
+                             euid, egid) != SEC_OK) {
+        return RDNX_E_DENIED;
+    }
     return RDNX_OK;
 }
 

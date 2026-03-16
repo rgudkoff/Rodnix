@@ -6,9 +6,12 @@
 #include "posix_syscall.h"
 
 struct stat {
-    mode_t st_mode;
-    off_t st_size;
-    time_t st_mtime;
+    mode_t  st_mode;
+    uid_t   st_uid;
+    gid_t   st_gid;
+    unsigned int _pad;
+    off_t   st_size;
+    time_t  st_mtime;
 };
 
 #define S_IFMT   0170000

@@ -7,6 +7,7 @@
 #include "../fabric.h"
 #include "../spin.h"
 #include "service.h"
+#include "../../../trace/bootlog.h"
 #include "../../../include/common.h"
 #include "../../../include/error.h"
 
@@ -53,7 +54,7 @@ static void net_interface_manager_event(const fabric_event_t* event, void* arg)
         iface->flags |= FABRIC_NETIF_F_UP;
         spinlock_unlock(&g_net_lock);
         (void)fabric_node_set_state(event->node_path, FABRIC_STATE_ACTIVE);
-        fabric_log("[ifmgr] auto-init net interface: %s\n", event->subject);
+        klog("net", "auto-init interface: %s\n", event->subject);
         return;
     }
     spinlock_unlock(&g_net_lock);

@@ -14,7 +14,8 @@ def collect_files(root):
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, root)
             rel = "/" + rel.replace(os.sep, "/")
-            entries.append((rel, full))
+            st = os.stat(full, follow_symlinks=False)
+            entries.append((rel, full, st.st_mode & 0o7777))
     entries.sort(key=lambda x: x[0])
     return entries
 
@@ -35,15 +36,15 @@ def main():
 
     table = bytearray()
     data = bytearray()
-    offset = 8 + len(entries) * (64 + 4 + 4)
+    offset = 8 + len(entries) * (64 + 4 + 4 + 4)
 
-    for rel, full in entries:
+    for rel, full, mode in entries:
         with open(full, "rb") as f:
             content = f.read()
         path_bytes = rel.encode("ascii", errors="ignore")[:63]
         path_bytes = path_bytes + b"\x00" * (64 - len(path_bytes))
         table += path_bytes
-        table += struct.pack("<II", offset, len(content))
+        table += struct.pack("<III", offset, len(content), mode)
         data += content
         offset += len(content)
 

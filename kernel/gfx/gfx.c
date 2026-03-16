@@ -13,6 +13,7 @@
 #include "../../fs/devfs.h"
 #include "../../fs/vfs.h"
 #include "../../mm/vm_map.h"
+#include "../../trace/bootlog.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -34,7 +35,7 @@ void gfx_init(void)
     }
     g_display_count = 0;
     vm_set_fb_release_hook(gfx_fb_release_by_idx);
-    kputs("[GFX] subsystem ready\n");
+    klog("gfx", "subsystem ready\n");
 }
 
 int gfx_display_register(gfx_display_t *disp)
@@ -48,12 +49,12 @@ int gfx_display_register(gfx_display_t *disp)
     disp->name = g_display_names[g_display_count];
     g_displays[g_display_count] = disp;
     g_display_count++;
-    kprintf("[GFX] %s: %ux%u bpp=%u pitch=%u fb_phys=0x%llx\n",
-            disp->name,
-            disp->mode.width, disp->mode.height,
-            (uint32_t)disp->mode.bpp,
-            disp->mode.pitch,
-            (unsigned long long)disp->fb.phys_base);
+    klog("gfx", "%s: %ux%u bpp=%u pitch=%u fb_phys=0x%llx\n",
+         disp->name,
+         disp->mode.width, disp->mode.height,
+         (uint32_t)disp->mode.bpp,
+         disp->mode.pitch,
+         (unsigned long long)disp->fb.phys_base);
 
     disp->fb_owner_refcount = 0;
     disp->fb_owner_task_id  = 0;

@@ -9,6 +9,8 @@ and controlled ABI evolution from the start.
 
 The current primary target is `x86_64` under `QEMU`.
 
+Current release baseline: `0.1.22`.
+
 ## What Is In This Tree
 
 RodNIX already contains working implementations of:
@@ -76,6 +78,7 @@ At this stage:
 
 Useful commands inside the system include:
 
+- `login`
 - `hostinfo`
 - `sysinfo`
 - `cpuinfo`
@@ -87,6 +90,10 @@ Useful commands inside the system include:
 - `fsapitest`
 - `syscalltest`
 - `sigtest`
+
+The default interactive flow now starts with `login`; after a successful
+authentication RodNIX switches into the user's configured shell, and `exit`
+returns control to the login prompt.
 
 ## Top-Level Layout
 

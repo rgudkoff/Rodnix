@@ -7,6 +7,7 @@
 #include "config.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
+#include "../../../trace/bootlog.h"
 
 #define ACPI_RSDP_SIGNATURE "RSD PTR "
 #define ACPI_RSDT_SIGNATURE "RSDT"
@@ -168,15 +169,15 @@ int acpi_init(void)
     }
 
     if (g_acpi.xsdt_phys != 0) {
-        kprintf("[ACPI] XSDT ready rev=%u rsdp=%llx xsdt=%llx\n",
-                (unsigned)g_acpi.revision,
-                (unsigned long long)g_acpi.rsdp_phys,
-                (unsigned long long)g_acpi.xsdt_phys);
+        klog("acpi", "XSDT ready: rev=%u rsdp=%llx xsdt=%llx\n",
+             (unsigned)g_acpi.revision,
+             (unsigned long long)g_acpi.rsdp_phys,
+             (unsigned long long)g_acpi.xsdt_phys);
     } else {
-        kprintf("[ACPI] RSDT ready rev=%u rsdp=%llx rsdt=%llx\n",
-                (unsigned)g_acpi.revision,
-                (unsigned long long)g_acpi.rsdp_phys,
-                (unsigned long long)g_acpi.rsdt_phys);
+        klog("acpi", "RSDT ready: rev=%u rsdp=%llx rsdt=%llx\n",
+             (unsigned)g_acpi.revision,
+             (unsigned long long)g_acpi.rsdp_phys,
+             (unsigned long long)g_acpi.rsdt_phys);
     }
 
     return 0;

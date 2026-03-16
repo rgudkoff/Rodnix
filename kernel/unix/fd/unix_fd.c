@@ -1162,6 +1162,9 @@ uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr)
     }
     unix_stat_u_t kstat;
     kstat.st_mode = st.mode;
+    kstat.st_uid  = st.uid;
+    kstat.st_gid  = st.gid;
+    kstat._pad    = 0;
     kstat.st_size = (int64_t)st.size;
     kstat.st_mtime = (int64_t)st.mtime;
     if (unix_copy_to_user((void*)(uintptr_t)user_stat_ptr, &kstat, sizeof(kstat)) != RDNX_OK) {
@@ -1196,6 +1199,9 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
     }
     unix_stat_u_t kstat;
     kstat.st_mode = st.mode;
+    kstat.st_uid  = st.uid;
+    kstat.st_gid  = st.gid;
+    kstat._pad    = 0;
     kstat.st_size = (int64_t)st.size;
     kstat.st_mtime = (int64_t)st.mtime;
     if (unix_copy_to_user((void*)(uintptr_t)user_stat_ptr, &kstat, sizeof(kstat)) != RDNX_OK) {

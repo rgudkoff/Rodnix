@@ -5,6 +5,7 @@
 
 #include "../fabric.h"
 #include "bus.h"
+#include "../../../trace/bootlog.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
 
@@ -26,8 +27,8 @@ void usb_bus_init(void)
 {
     int rc = fabric_bus_register(&usb_bus);
     if (rc == RDNX_OK) {
-        kputs("[USB] bus registered\n");
+        klog("usb", "fabric bus registered\n");
     } else {
-        kputs("[USB] bus register failed\n");
+        klog_warn("usb", "fabric bus registration failed\n");
     }
 }
