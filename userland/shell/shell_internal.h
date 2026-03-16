@@ -2,6 +2,8 @@
 #define _RODNIX_USERLAND_SHELL_INTERNAL_H
 
 #include <stdint.h>
+#include "stdlib.h"
+#include "string.h"
 #include "syscall.h"
 #include "posix_syscall.h"
 #include "posix_sysnums.h"
@@ -59,6 +61,14 @@ int str_eq(const char* a, const char* b);
 int str_starts(const char* s, const char* p);
 void sanitize_cmd_token(char* s);
 void resolve_path(const char* in, char* out, int out_sz);
+void shell_set_ps1(const char* src);
+void shell_sync_pwd(void);
+void shell_env_init(char** envp);
+const char* shell_env_get(const char* name);
+int shell_env_set(const char* name, const char* value);
+int shell_env_export(int argc, char** argv);
+void shell_env_print(void);
+int shell_find_executable(const char* cmd, char* out, int out_sz);
 int read_line(char* out, int out_len);
 void shell_print_prompt(void);
 int shell_set_ps1_from_args(int argc, char** argv, int start_idx);

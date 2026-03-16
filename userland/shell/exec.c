@@ -170,7 +170,6 @@ static int shell_apply_redir_dup(const char* in_path,
 static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
 {
     const char* path = (argc >= 1) ? argv[0] : 0;
-    const char* spawn_path = path;
     const char* spawn_argv[SH_ARG_MAX + 1];
     char resolved[SH_PATH_MAX];
 
@@ -188,18 +187,17 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
         spawn_argv[argc] = 0;
     }
 
-    if (path[0] != '/') {
-        resolve_path(path, resolved, (int)sizeof(resolved));
-        spawn_path = resolved;
-        spawn_argv[0] = resolved;
+    if (shell_find_executable(path, resolved, (int)sizeof(resolved)) != 0) {
+        return -1;
     }
+    spawn_argv[0] = resolved;
 
     /* BusyBox multicall convenience:
      * "/bin/busybox <applet> [args...]" -> exec busybox with argv[0]=<applet>.
      * This avoids relying on busybox's secondary dispatcher path and matches
      * how symlink-style multicall invocation behaves.
      */
-    if (spawn_path && str_eq(spawn_path, "/bin/busybox") &&
+    if (str_eq(resolved, "/bin/busybox") &&
         argc >= 2 && argv[1] && argv[1][0] != '\0' && argv[1][0] != '-') {
         int out_i = 0;
         for (int in_i = 1; in_i < argc && out_i < SH_ARG_MAX; in_i++, out_i++) {
@@ -210,40 +208,7 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
         }
     }
 
-    long pid = posix_spawn(spawn_path, spawn_argv);
-    if (pid < 0 && path[0] == '/') {
-        char norm[SH_PATH_MAX];
-        char bin_fallback[SH_PATH_MAX];
-        const char* base = path;
-        resolve_path(path, norm, (int)sizeof(norm));
-
-        if (!str_eq(norm, spawn_path)) {
-            spawn_argv[0] = norm;
-            pid = posix_spawn(norm, spawn_argv);
-        }
-
-        if (pid < 0) {
-            for (int i = 0; norm[i] != '\0'; i++) {
-                if (norm[i] == '/' && norm[i + 1] != '\0') {
-                    base = &norm[i + 1];
-                }
-            }
-            if (base && base[0] != '\0') {
-                int p = 0;
-                const char* prefix = "/bin/";
-                while (prefix[p] != '\0' && p + 1 < (int)sizeof(bin_fallback)) {
-                    bin_fallback[p] = prefix[p];
-                    p++;
-                }
-                for (int i = 0; base[i] != '\0' && p + 1 < (int)sizeof(bin_fallback); i++) {
-                    bin_fallback[p++] = base[i];
-                }
-                bin_fallback[p] = '\0';
-                spawn_argv[0] = bin_fallback;
-                pid = posix_spawn(bin_fallback, spawn_argv);
-            }
-        }
-    }
+    long pid = posix_spawnve(resolved, spawn_argv, (const char* const*)environ);
     if (pid < 0) {
         return -1;
     }
@@ -253,57 +218,15 @@ static int cmd_spawn_raw(int argc, char** argv, long* pid_out)
 
 static int cmd_spawn_autorun(int argc, char** argv, long* pid_out)
 {
-    char path_buf[SH_PATH_MAX];
     char resolved[SH_PATH_MAX];
-    char* run_argv[SH_ARG_MAX + 1];
-    const char* check_path = NULL;
 
     if (argc <= 0 || !argv || !argv[0]) {
         return -1;
     }
-
-    for (int i = 0; i < SH_ARG_MAX + 1; i++) {
-        run_argv[i] = 0;
+    if (shell_find_executable(argv[0], resolved, (int)sizeof(resolved)) != 0) {
+        return -1;
     }
-    for (int i = 0; i < argc && i < SH_ARG_MAX; i++) {
-        run_argv[i] = argv[i];
-    }
-
-    int has_slash = 0;
-    for (int i = 0; argv[0][i] != '\0'; i++) {
-        if (argv[0][i] == '/') {
-            has_slash = 1;
-            break;
-        }
-    }
-
-    if (!has_slash) {
-        int p = 0;
-        const char* prefix = "/bin/";
-        while (prefix[p] != '\0' && p + 1 < (int)sizeof(path_buf)) {
-            path_buf[p] = prefix[p];
-            p++;
-        }
-        for (int i = 0; argv[0][i] != '\0' && p + 1 < (int)sizeof(path_buf); i++) {
-            path_buf[p++] = argv[0][i];
-        }
-        path_buf[p] = '\0';
-        run_argv[0] = path_buf;
-        check_path = path_buf;
-    } else {
-        resolve_path(argv[0], resolved, (int)sizeof(resolved));
-        check_path = resolved;
-    }
-
-    if (check_path && check_path[0] != '\0') {
-        int fd = open(check_path, O_RDONLY);
-        if (fd < 0) {
-            return -1;
-        }
-        (void)close(fd);
-    }
-
-    return cmd_spawn_raw(argc, run_argv, pid_out);
+    return cmd_spawn_raw(argc, argv, pid_out);
 }
 
 static int cmd_wait_pid(long pid, int verbose)
@@ -579,6 +502,7 @@ int cmd_cd(int argc, char** argv)
         shell_cwd[i] = resolved[i];
         shell_cwd[i + 1] = '\0';
     }
+    shell_sync_pwd();
     return 0;
 }
 

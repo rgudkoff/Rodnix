@@ -146,6 +146,11 @@ static void shell_ps1_copy(const char* src)
     shell_ps1[i] = '\0';
 }
 
+void shell_set_ps1(const char* src)
+{
+    shell_ps1_copy(src);
+}
+
 int shell_set_ps1_from_args(int argc, char** argv, int start_idx)
 {
     char buf[SH_PS1_MAX];

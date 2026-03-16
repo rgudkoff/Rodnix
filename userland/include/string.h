@@ -13,6 +13,12 @@ int memcmp(const void* a, const void* b, size_t n);
 char* strcpy(char* dst, const char* src);
 char* strncpy(char* dst, const char* src, size_t n);
 char* strchr(const char* s, int c);
+char* strrchr(const char* s, int c);
+char* strcat(char* dst, const char* src);
+char* strncat(char* dst, const char* src, size_t n);
+char* strdup(const char* s);
+char* strstr(const char* haystack, const char* needle);
+char* strtok(char* s, const char* delim);
 char* strerror(int errnum);
 
 #endif /* _RODNIX_USERLAND_STRING_H */

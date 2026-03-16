@@ -1,5 +1,287 @@
 #include "shell_internal.h"
 
+static char** g_shell_env = NULL;
+static int g_shell_env_count = 0;
+static int g_shell_env_cap = 0;
+
+static int shell_env_name_len(const char* entry)
+{
+    int len = 0;
+    if (!entry) {
+        return 0;
+    }
+    while (entry[len] != '\0' && entry[len] != '=') {
+        len++;
+    }
+    return len;
+}
+
+static int shell_env_name_valid(const char* name)
+{
+    if (!name || name[0] == '\0') {
+        return 0;
+    }
+    if (!((name[0] >= 'A' && name[0] <= 'Z') ||
+          (name[0] >= 'a' && name[0] <= 'z') ||
+          name[0] == '_')) {
+        return 0;
+    }
+    for (int i = 1; name[i] != '\0'; i++) {
+        char c = name[i];
+        if (!((c >= 'A' && c <= 'Z') ||
+              (c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') ||
+              c == '_')) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int shell_env_find_index(const char* name)
+{
+    int nlen;
+    if (!name || !g_shell_env) {
+        return -1;
+    }
+    nlen = (int)strlen(name);
+    for (int i = 0; i < g_shell_env_count; i++) {
+        if (!g_shell_env[i]) {
+            continue;
+        }
+        if (strncmp(g_shell_env[i], name, (size_t)nlen) == 0 &&
+            g_shell_env[i][nlen] == '=') {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int shell_env_ensure_cap(int want)
+{
+    char** new_env;
+    int new_cap;
+
+    if (g_shell_env_cap >= want) {
+        return 0;
+    }
+    new_cap = (g_shell_env_cap > 0) ? g_shell_env_cap : 8;
+    while (new_cap < want) {
+        new_cap *= 2;
+    }
+    new_env = (char**)realloc(g_shell_env, (size_t)(new_cap + 1) * sizeof(char*));
+    if (!new_env) {
+        return -1;
+    }
+    for (int i = g_shell_env_cap; i <= new_cap; i++) {
+        new_env[i] = NULL;
+    }
+    g_shell_env = new_env;
+    g_shell_env_cap = new_cap;
+    environ = g_shell_env;
+    return 0;
+}
+
+void shell_env_init(char** envp)
+{
+    g_shell_env = NULL;
+    g_shell_env_count = 0;
+    g_shell_env_cap = 0;
+    environ = NULL;
+
+    if (envp) {
+        for (int i = 0; envp[i] != NULL; i++) {
+            int name_len = shell_env_name_len(envp[i]);
+            if (name_len <= 0 || shell_env_ensure_cap(g_shell_env_count + 1) != 0) {
+                continue;
+            }
+            g_shell_env[g_shell_env_count] = strdup(envp[i]);
+            if (!g_shell_env[g_shell_env_count]) {
+                continue;
+            }
+            g_shell_env_count++;
+            g_shell_env[g_shell_env_count] = NULL;
+        }
+    }
+
+    environ = g_shell_env;
+    if (!shell_env_get("PATH")) {
+        (void)shell_env_set("PATH", "/bin");
+    }
+    shell_sync_pwd();
+    {
+        const char* ps1 = shell_env_get("PS1");
+        if (ps1) {
+            shell_set_ps1(ps1);
+        }
+    }
+}
+
+const char* shell_env_get(const char* name)
+{
+    return getenv(name);
+}
+
+int shell_env_set(const char* name, const char* value)
+{
+    size_t nlen;
+    size_t vlen;
+    char* entry;
+    int idx;
+
+    if (!shell_env_name_valid(name)) {
+        return -1;
+    }
+    if (!value) {
+        value = "";
+    }
+
+    nlen = strlen(name);
+    vlen = strlen(value);
+    entry = (char*)malloc(nlen + 1 + vlen + 1);
+    if (!entry) {
+        return -1;
+    }
+    memcpy(entry, name, nlen);
+    entry[nlen] = '=';
+    memcpy(entry + nlen + 1, value, vlen + 1);
+
+    idx = shell_env_find_index(name);
+    if (idx >= 0) {
+        free(g_shell_env[idx]);
+        g_shell_env[idx] = entry;
+    } else {
+        if (shell_env_ensure_cap(g_shell_env_count + 1) != 0) {
+            free(entry);
+            return -1;
+        }
+        g_shell_env[g_shell_env_count++] = entry;
+        g_shell_env[g_shell_env_count] = NULL;
+    }
+    environ = g_shell_env;
+
+    if (str_eq(name, "PS1")) {
+        shell_set_ps1(value);
+    }
+    return 0;
+}
+
+void shell_sync_pwd(void)
+{
+    (void)shell_env_set("PWD", shell_cwd);
+}
+
+void shell_env_print(void)
+{
+    for (int i = 0; g_shell_env && i < g_shell_env_count; i++) {
+        if (g_shell_env[i]) {
+            (void)write_str(g_shell_env[i]);
+            (void)write_str("\n");
+        }
+    }
+}
+
+int shell_env_export(int argc, char** argv)
+{
+    if (argc <= 1) {
+        shell_env_print();
+        return 0;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        char* arg = argv[i];
+        int eq = -1;
+        if (!arg || arg[0] == '\0') {
+            continue;
+        }
+        for (int j = 0; arg[j] != '\0'; j++) {
+            if (arg[j] == '=') {
+                eq = j;
+                break;
+            }
+        }
+        if (eq >= 0) {
+            char* value = &arg[eq + 1];
+            arg[eq] = '\0';
+            if (shell_env_set(arg, value) != 0) {
+                arg[eq] = '=';
+                return -1;
+            }
+            arg[eq] = '=';
+            continue;
+        }
+        if (!shell_env_get(arg)) {
+            return -1;
+        }
+        if (str_eq(arg, "PS1")) {
+            shell_set_ps1(shell_env_get(arg));
+        }
+    }
+    return 0;
+}
+
+int shell_find_executable(const char* cmd, char* out, int out_sz)
+{
+    const char* path_env;
+    char candidate[SH_PATH_MAX];
+
+    if (!cmd || !out || out_sz < 2) {
+        return -1;
+    }
+
+    for (int i = 0; cmd[i] != '\0'; i++) {
+        if (cmd[i] == '/') {
+            resolve_path(cmd, out, out_sz);
+            return 0;
+        }
+    }
+
+    path_env = shell_env_get("PATH");
+    if (!path_env || path_env[0] == '\0') {
+        path_env = "/bin";
+    }
+
+    for (int start = 0;;) {
+        int end = start;
+        int p = 0;
+        while (path_env[end] != '\0' && path_env[end] != ':') {
+            end++;
+        }
+
+        if (end == start) {
+            candidate[p++] = '.';
+        } else {
+            for (int i = start; i < end && p + 1 < (int)sizeof(candidate); i++) {
+                candidate[p++] = path_env[i];
+            }
+        }
+        if (p == 0 || candidate[p - 1] != '/') {
+            candidate[p++] = '/';
+        }
+        for (int i = 0; cmd[i] != '\0' && p + 1 < (int)sizeof(candidate); i++) {
+            candidate[p++] = cmd[i];
+        }
+        candidate[p] = '\0';
+        resolve_path(candidate, out, out_sz);
+
+        {
+            int fd = open(out, O_RDONLY);
+            if (fd >= 0) {
+                (void)close(fd);
+                return 0;
+            }
+        }
+
+        if (path_env[end] == '\0') {
+            break;
+        }
+        start = end + 1;
+    }
+
+    out[0] = '\0';
+    return -1;
+}
+
 void run_smoke(void)
 {
     (void)write_str("[USER] sh: smoke start\n");
@@ -303,6 +585,8 @@ void cmd_help(void)
         "  help          - show this help\n"
         "  pid           - show current pid\n"
         "  set           - set shell vars, e.g. set PS1=\" # \"\n"
+        "  export K=V    - set/export environment variable\n"
+        "  env           - print environment\n"
         "  hostname      - print /etc/hostname\n"
         "  cd [path]     - change shell working directory\n"
         "  motd          - print /etc/motd\n"

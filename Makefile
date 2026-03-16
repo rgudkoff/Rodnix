@@ -4,46 +4,64 @@ SHELL := /bin/bash
 
 # Architecture selection.
 ARCH ?= x86_64
+TOOLCHAIN ?= gcc
 SUPPORTED_ARCHES := x86_64 arm64 riscv64
+SUPPORTED_TOOLCHAINS := gcc clang
 
 ifeq ($(filter $(ARCH),$(SUPPORTED_ARCHES)),)
 $(error Unsupported ARCH '$(ARCH)'. Supported values: $(SUPPORTED_ARCHES))
 endif
 
+ifeq ($(filter $(TOOLCHAIN),$(SUPPORTED_TOOLCHAINS)),)
+$(error Unsupported TOOLCHAIN '$(TOOLCHAIN)'. Supported values: $(SUPPORTED_TOOLCHAINS))
+endif
+
 ARCH_DIR := $(ARCH)
 
-# Toolchain defaults.
+# Target defaults.
 ifeq ($(ARCH),x86_64)
-CROSS_COMPILE ?= x86_64-elf-
-CC = $(CROSS_COMPILE)gcc
-AS = nasm
-LD = $(CROSS_COMPILE)ld
+TARGET_TRIPLE := x86_64-elf
 ARCH_CFLAGS = -m64 -mcmodel=kernel -mno-red-zone
 ARCH_ASFLAGS = -f elf64
 ARCH_LDFLAGS = -m elf_x86_64
 QEMU_SYSTEM = qemu-system-x86_64
 else ifeq ($(ARCH),arm64)
-CROSS_COMPILE ?= aarch64-elf-
-CC = $(CROSS_COMPILE)gcc
-AS = $(CC)
-LD = $(CROSS_COMPILE)ld
+TARGET_TRIPLE := aarch64-elf
 ARCH_CFLAGS =
 ARCH_ASFLAGS =
 ARCH_LDFLAGS =
 QEMU_SYSTEM = qemu-system-aarch64
 else ifeq ($(ARCH),riscv64)
-CROSS_COMPILE ?= riscv64-elf-
-CC = $(CROSS_COMPILE)gcc
-AS = $(CC)
-LD = $(CROSS_COMPILE)ld
+TARGET_TRIPLE := riscv64-elf
 ARCH_CFLAGS =
 ARCH_ASFLAGS =
 ARCH_LDFLAGS =
 QEMU_SYSTEM = qemu-system-riscv64
 endif
 
+# Toolchain selection.
+ifeq ($(TOOLCHAIN),gcc)
+CROSS_COMPILE ?= $(TARGET_TRIPLE)-
+CC = $(CROSS_COMPILE)gcc
+LD = $(CROSS_COMPILE)ld
+COMMON_TC_CFLAGS =
+else ifeq ($(TOOLCHAIN),clang)
+CC = clang
+# Prefer ld.lld; fall back to lld (Homebrew LLVM on macOS exposes it as 'lld').
+_LLD := $(or $(shell command -v ld.lld 2>/dev/null),$(shell command -v lld 2>/dev/null),ld.lld)
+LD ?= $(_LLD)
+COMMON_TC_CFLAGS = --target=$(TARGET_TRIPLE)
+endif
+
+ifeq ($(ARCH),x86_64)
+AS = nasm
+else
+AS = $(CC)
+endif
+
 # Compiler flags (64-bit)
-CFLAGS = $(ARCH_CFLAGS) \
+CFLAGS = $(COMMON_TC_CFLAGS) \
+         $(ARCH_CFLAGS) \
          -std=c11 \
          -ffreestanding \
          -fno-stack-protector \
@@ -378,6 +396,8 @@ help:
 	@echo "  ARCH=x86_64    - Active target"
 	@echo "  ARCH=arm64     - Bootstrap scaffolding only"
 	@echo "  ARCH=riscv64   - Bootstrap scaffolding only"
+	@echo "  TOOLCHAIN=gcc  - Default cross-GCC flow"
+	@echo "  TOOLCHAIN=clang - Use clang + lld with --target=<triple>"
 	@echo ""
 	@echo "Artifact layout:"
 	@echo "  Kernel image   - $(BUILD_ROOT)/<arch>/rodnix.kernel"
@@ -387,7 +407,7 @@ help:
 	@echo "For installation instructions, see INSTALL.md"
 
 userland: posix-syscalls
-	@$(MAKE) -C $(USERLAND_DIR) ARCH=$(ARCH)
+	@$(MAKE) -C $(USERLAND_DIR) ARCH=$(ARCH) TOOLCHAIN=$(TOOLCHAIN)
 
 kernel: $(KERNEL_OBJS)
 

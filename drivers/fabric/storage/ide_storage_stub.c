@@ -10,6 +10,7 @@
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
+#include "../../../trace/bootlog.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -128,6 +129,9 @@ static int ide_identify(ide_slot_t* slot, uint64_t* out_sectors)
     ide_outb((uint16_t)(slot->io_base + ATA_REG_LBA1), 0);
     ide_outb((uint16_t)(slot->io_base + ATA_REG_LBA2), 0);
     ide_outb((uint16_t)(slot->io_base + ATA_REG_COMMAND), ATA_CMD_IDENTIFY);
+
+    /* ATA spec: wait ≥400 ns (4 × alternate-status reads) before polling. */
+    ide_io_wait(slot);
 
     uint8_t st = ide_inb((uint16_t)(slot->io_base + ATA_REG_STATUS));
     if (st == 0) {
@@ -308,13 +312,13 @@ static int ide_storage_attach(fabric_device_t* dev)
             if (irc == RDNX_OK) {
                 g_slots[i].present = 1;
                 g_slots[i].blockdev.sector_count = sectors;
-                fabric_log("[IDE] %s: sectors=%llu (%llu MiB)\n",
-                           g_slots[i].disk_name,
-                           (unsigned long long)sectors,
-                           (unsigned long long)((sectors * 512ULL) / (1024ULL * 1024ULL)));
+                klog("ide", "%s identified: %llu sectors (%llu MiB)\n",
+                     g_slots[i].disk_name,
+                     (unsigned long long)sectors,
+                     (unsigned long long)((sectors * 512ULL) / (1024ULL * 1024ULL)));
             } else {
                 g_slots[i].present = 0;
-                fabric_log("[IDE] %s: identify failed rc=%d\n", g_slots[i].disk_name, irc);
+                klog("ide", "%s: identify failed rc=%d\n", g_slots[i].disk_name, irc);
             }
 
             fabric_log("[IDE] attached %s vendor=%x device=%x\n",

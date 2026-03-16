@@ -9,6 +9,8 @@ typedef struct {
     char* path;
     int argc;
     char* argv[UNIX_ARG_MAX + 1];
+    int envc;
+    char* envp[UNIX_ENV_MAX + 1];
 } unix_spawn_args_t;
 
 static int unix_exec_apply_cloexec(void* ctx)
@@ -84,8 +86,13 @@ static void unix_spawn_thread(void* arg)
     path_buf[0] = '\0';
     const char* argv_local[UNIX_ARG_MAX + 1];
     int argc_local = 0;
+    const char* env_local[UNIX_ENV_MAX + 1];
+    int envc_local = 0;
     for (int i = 0; i < UNIX_ARG_MAX + 1; i++) {
         argv_local[i] = NULL;
+    }
+    for (int i = 0; i < UNIX_ENV_MAX + 1; i++) {
+        env_local[i] = NULL;
     }
     if (sa && sa->path) {
         strncpy(path_buf, sa->path, sizeof(path_buf) - 1);
@@ -103,6 +110,17 @@ static void unix_spawn_thread(void* arg)
             argv_local[i] = sa->argv[i];
         }
         argv_local[argc_local] = NULL;
+        envc_local = sa->envc;
+        if (envc_local < 0) {
+            envc_local = 0;
+        }
+        if (envc_local > UNIX_ENV_MAX) {
+            envc_local = UNIX_ENV_MAX;
+        }
+        for (int i = 0; i < envc_local; i++) {
+            env_local[i] = sa->envp[i];
+        }
+        env_local[envc_local] = NULL;
     }
     if (sa && sa->path) {
         kfree(sa->path);
@@ -114,6 +132,11 @@ static void unix_spawn_thread(void* arg)
                     kfree(sa->argv[i]);
                 }
             }
+            for (int i = 0; i < envc_local; i++) {
+                if (sa->envp[i]) {
+                    kfree(sa->envp[i]);
+                }
+            }
             kfree(sa);
         }
         scheduler_exit_current();
@@ -123,13 +146,18 @@ static void unix_spawn_thread(void* arg)
     int ret = loader_execve_ex(path_buf,
                                argc_local,
                                argv_local,
-                               NULL,
+                               env_local,
                                unix_exec_apply_cloexec,
                                self);
     if (sa) {
         for (int i = 0; i < argc_local; i++) {
             if (sa->argv[i]) {
                 kfree(sa->argv[i]);
+            }
+        }
+        for (int i = 0; i < envc_local; i++) {
+            if (sa->envp[i]) {
+                kfree(sa->envp[i]);
             }
         }
         kfree(sa);
@@ -194,7 +222,7 @@ uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t u
     return (uint64_t)ret;
 }
 
-uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
+uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr)
 {
     /* CT-001: spawn creates a new child process with a distinct PID. */
     task_t* parent = task_get_current();
@@ -204,6 +232,7 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
 
     const char* user_path = (const char*)(uintptr_t)user_path_ptr;
     const char* const* user_argv = (const char* const*)(uintptr_t)user_argv_ptr;
+    const char* const* user_envp = (const char* const*)(uintptr_t)user_envp_ptr;
     char path_buf[UNIX_PATH_MAX];
     int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
@@ -334,11 +363,70 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr)
         sa->argv[argc] = NULL;
     }
 
+    if (user_envp && unix_user_range_ok(user_envp, sizeof(uintptr_t))) {
+        int envc = 0;
+        int env_rc = RDNX_OK;
+        for (; envc < UNIX_ENV_MAX; envc++) {
+            const char* uptr = NULL;
+            const void* slot = (const void*)(uintptr_t)((uintptr_t)user_envp + (uintptr_t)envc * sizeof(uintptr_t));
+            if (!unix_user_range_ok(slot, sizeof(uintptr_t))) {
+                env_rc = RDNX_E_INVALID;
+                break;
+            }
+            uptr = user_envp[envc];
+            if (!uptr) {
+                break;
+            }
+            if (!unix_user_range_ok(uptr, 1)) {
+                env_rc = RDNX_E_INVALID;
+                break;
+            }
+            char tmp[UNIX_PATH_MAX];
+            rc = unix_copy_user_cstr(tmp, sizeof(tmp), uptr);
+            if (rc != RDNX_OK) {
+                env_rc = rc;
+                break;
+            }
+            size_t elen = strlen(tmp);
+            sa->envp[envc] = (char*)kmalloc(elen + 1);
+            if (!sa->envp[envc]) {
+                env_rc = RDNX_E_NOMEM;
+                break;
+            }
+            memcpy(sa->envp[envc], tmp, elen + 1);
+        }
+        if (env_rc != RDNX_OK && env_rc != RDNX_E_INVALID) {
+            for (int i = 0; i < UNIX_ARG_MAX; i++) {
+                if (sa->argv[i]) {
+                    kfree(sa->argv[i]);
+                }
+            }
+            for (int i = 0; i < UNIX_ENV_MAX; i++) {
+                if (sa->envp[i]) {
+                    kfree(sa->envp[i]);
+                }
+            }
+            kfree(sa->path);
+            kfree(sa);
+            task_destroy(child);
+            return (uint64_t)env_rc;
+        }
+        if (env_rc == RDNX_OK) {
+            sa->envc = envc;
+            sa->envp[envc] = NULL;
+        }
+    }
+
     thread_t* th = thread_create(child, unix_spawn_thread, sa);
     if (!th) {
         for (int i = 0; i < UNIX_ARG_MAX; i++) {
             if (sa->argv[i]) {
                 kfree(sa->argv[i]);
+            }
+        }
+        for (int i = 0; i < UNIX_ENV_MAX; i++) {
+            if (sa->envp[i]) {
+                kfree(sa->envp[i]);
             }
         }
         kfree(sa->path);

@@ -107,7 +107,7 @@ uint64_t unix_fs_readdir(uint64_t user_path_ptr, uint64_t user_entries_ptr, uint
 /* CT-005 lifecycle source event */
 uint64_t unix_proc_exit(uint64_t status);
 /* CT-001 */
-uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr);
+uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr);
 uint64_t unix_proc_fork(void);
 uint64_t unix_proc_kill(uint64_t pid, uint64_t signum);
 uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t user_oldact_ptr);

@@ -1,30 +1,45 @@
 SHELL := /bin/bash
 
 ARCH ?= x86_64
+TOOLCHAIN ?= gcc
 
 ifeq ($(ARCH),x86_64)
-CC = x86_64-elf-gcc
-AS = nasm
-LD = x86_64-elf-ld
+TARGET_TRIPLE := x86_64-elf
 ARCH_CFLAGS = -m64
 ARCH_ASFLAGS = -f elf64
 else ifeq ($(ARCH),arm64)
-CC = aarch64-elf-gcc
-AS = $(CC)
-LD = aarch64-elf-ld
+TARGET_TRIPLE := aarch64-elf
 ARCH_CFLAGS =
 ARCH_ASFLAGS =
 else ifeq ($(ARCH),riscv64)
-CC = riscv64-elf-gcc
-AS = $(CC)
-LD = riscv64-elf-ld
+TARGET_TRIPLE := riscv64-elf
 ARCH_CFLAGS =
 ARCH_ASFLAGS =
 else
 $(error Unsupported ARCH '$(ARCH)')
 endif
 
-CFLAGS = $(ARCH_CFLAGS) \
+ifeq ($(TOOLCHAIN),gcc)
+CROSS_COMPILE ?= $(TARGET_TRIPLE)-
+CC = $(CROSS_COMPILE)gcc
+LD = $(CROSS_COMPILE)ld
+COMMON_TC_CFLAGS =
+else ifeq ($(TOOLCHAIN),clang)
+CC = clang
+LD = ld.lld
+COMMON_TC_CFLAGS = --target=$(TARGET_TRIPLE)
+else
+$(error Unsupported TOOLCHAIN '$(TOOLCHAIN)')
+endif
+
+ifeq ($(ARCH),x86_64)
+AS = nasm
+else
+AS = $(CC)
+endif
+
+CFLAGS = $(COMMON_TC_CFLAGS) \
+         $(ARCH_CFLAGS) \
          -ffreestanding \
          -fno-builtin \
          -fno-stack-protector \
@@ -89,7 +104,18 @@ CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
 LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c
+
+ifeq ($(ARCH),x86_64)
+LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o
+else
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o))
+endif
+
+ifeq ($(ARCH),x86_64)
+$(BUILD_DIR)/libc/setjmp.o: libc/setjmp.S
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+endif
 
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)

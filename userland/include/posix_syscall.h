@@ -265,7 +265,20 @@ static inline long posix_exec(const char* path)
 
 static inline long posix_spawn(const char* path, const char* const argv[])
 {
-    return rdnx_syscall2(POSIX_SYS_SPAWN, (long)(uintptr_t)path, (long)(uintptr_t)argv);
+    return rdnx_syscall3(POSIX_SYS_SPAWN,
+                         (long)(uintptr_t)path,
+                         (long)(uintptr_t)argv,
+                         0);
+}
+
+static inline long posix_spawnve(const char* path,
+                                 const char* const argv[],
+                                 const char* const envp[])
+{
+    return rdnx_syscall3(POSIX_SYS_SPAWN,
+                         (long)(uintptr_t)path,
+                         (long)(uintptr_t)argv,
+                         (long)(uintptr_t)envp);
 }
 
 static inline long posix_waitpid(long pid, int* status)

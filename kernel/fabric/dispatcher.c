@@ -150,8 +150,8 @@ uint32_t fabric_dispatcher_poll(fabric_device_t* const* devices,
                            best_driver->name ? best_driver->name : "(driver)",
                            dev->name ? dev->name : "(device)");
             } else {
-                dev->dispatch_state = FABRIC_DEV_DISPATCH_ATTACHED;
-
+                /* Leave state at MATCHED so fabric_finalize_driver_attach
+                 * can transition to ATTACHED and invoke driver->publish(). */
                 if (matched < max_matches) {
                     matched_devices[matched] = dev;
                     matched_drivers[matched] = best_driver;

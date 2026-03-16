@@ -23,11 +23,10 @@ uint64_t posix_spawn(uint64_t a1,
                             uint64_t a5,
                             uint64_t a6)
 {
-    (void)a3;
     (void)a4;
     (void)a5;
     (void)a6;
-    return unix_proc_spawn(a1, a2);
+    return unix_proc_spawn(a1, a2, a3);
 }
 
 uint64_t posix_waitpid(uint64_t a1,

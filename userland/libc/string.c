@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 size_t strlen(const char* s)
@@ -155,6 +156,126 @@ char* strchr(const char* s, int c)
             return 0;
         }
     }
+}
+
+char* strrchr(const char* s, int c)
+{
+    char ch = (char)c;
+    const char* last = NULL;
+    if (!s) {
+        return NULL;
+    }
+    for (; *s != '\0'; s++) {
+        if (*s == ch) {
+            last = s;
+        }
+    }
+    if (ch == '\0') {
+        return (char*)s;
+    }
+    return (char*)last;
+}
+
+char* strcat(char* dst, const char* src)
+{
+    char* out = dst;
+    if (!dst || !src) {
+        return dst;
+    }
+    while (*dst != '\0') {
+        dst++;
+    }
+    while ((*dst++ = *src++) != '\0') {
+    }
+    return out;
+}
+
+char* strncat(char* dst, const char* src, size_t n)
+{
+    char* out = dst;
+    if (!dst || !src) {
+        return dst;
+    }
+    while (*dst != '\0') {
+        dst++;
+    }
+    while (n-- > 0 && *src != '\0') {
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+    return out;
+}
+
+char* strdup(const char* s)
+{
+    size_t len;
+    char* copy;
+    if (!s) {
+        return NULL;
+    }
+    len = strlen(s) + 1;
+    copy = (char*)malloc(len);
+    if (!copy) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    memcpy(copy, s, len);
+    return copy;
+}
+
+char* strstr(const char* haystack, const char* needle)
+{
+    size_t nlen;
+    if (!haystack || !needle) {
+        return NULL;
+    }
+    nlen = strlen(needle);
+    if (nlen == 0) {
+        return (char*)haystack;
+    }
+    for (; *haystack != '\0'; haystack++) {
+        if (*haystack == *needle && strncmp(haystack, needle, nlen) == 0) {
+            return (char*)haystack;
+        }
+    }
+    return NULL;
+}
+
+static char* g_strtok_next;
+
+char* strtok(char* s, const char* delim)
+{
+    char* start;
+    char* p;
+
+    if (s) {
+        g_strtok_next = s;
+    }
+    if (!g_strtok_next) {
+        return NULL;
+    }
+
+    /* skip leading delimiters */
+    while (*g_strtok_next != '\0' && strchr(delim, (unsigned char)*g_strtok_next)) {
+        g_strtok_next++;
+    }
+    if (*g_strtok_next == '\0') {
+        g_strtok_next = NULL;
+        return NULL;
+    }
+
+    start = g_strtok_next;
+    p = g_strtok_next;
+    while (*p != '\0' && !strchr(delim, (unsigned char)*p)) {
+        p++;
+    }
+    if (*p != '\0') {
+        *p = '\0';
+        g_strtok_next = p + 1;
+    } else {
+        g_strtok_next = NULL;
+    }
+    return start;
 }
 
 char* strerror(int errnum)

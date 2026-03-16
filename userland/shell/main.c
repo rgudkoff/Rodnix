@@ -1,9 +1,13 @@
 #include "shell_internal.h"
 
-int main(void)
+int main(int argc, char** argv, char** envp)
 {
     char line[SH_LINE_MAX];
-    char* argv[SH_ARG_MAX + 1];
+    char* cmd_argv[SH_ARG_MAX + 1];
+    (void)argc;
+    (void)argv;
+
+    shell_env_init(envp);
 
     (void)write_str(SH_ANSI_CLEAR);
     (void)write_str(SH_ANSI_BOTTOM);
@@ -26,17 +30,17 @@ int main(void)
             continue;
         }
 
-        int argc = parse_line(line, argv, SH_ARG_MAX);
-        if (argc <= 0) {
+        int cmd_argc = parse_line(line, cmd_argv, SH_ARG_MAX);
+        if (cmd_argc <= 0) {
             continue;
         }
-        sanitize_cmd_token(argv[0]);
-        if (!argv[0] || argv[0][0] == '\0') {
+        sanitize_cmd_token(cmd_argv[0]);
+        if (!cmd_argv[0] || cmd_argv[0][0] == '\0') {
             continue;
         }
-        if (str_eq(argv[0], "help")) {
+        if (str_eq(cmd_argv[0], "help")) {
             cmd_help();
-        } else if (str_eq(argv[0], "pid")) {
+        } else if (str_eq(cmd_argv[0], "pid")) {
             long pid = posix_getpid();
             (void)write_str("pid=");
             if (pid < 0) {
@@ -45,115 +49,128 @@ int main(void)
                 write_u64((uint64_t)pid);
                 (void)write_str("\n");
             }
-        } else if (str_eq(argv[0], "hostname")) {
+        } else if (str_eq(cmd_argv[0], "hostname")) {
             cmd_hostname();
-        } else if (str_eq(argv[0], "set")) {
-            if (argc == 1) {
+        } else if (str_eq(cmd_argv[0], "set")) {
+            if (cmd_argc == 1) {
                 (void)write_str("PS1=");
                 (void)write_str(shell_ps1);
                 (void)write_str("\n");
-            } else if (str_eq(argv[1], "PS1") && argc >= 3) {
-                (void)shell_set_ps1_from_args(argc, argv, 2);
-            } else if (str_starts(argv[1], "PS1=")) {
+            } else if (str_eq(cmd_argv[1], "PS1") && cmd_argc >= 3) {
+                (void)shell_set_ps1_from_args(cmd_argc, cmd_argv, 2);
+            } else if (str_starts(cmd_argv[1], "PS1=")) {
                 char* fake[2];
-                fake[0] = argv[0];
-                fake[1] = argv[1] + 4;
+                fake[0] = cmd_argv[0];
+                fake[1] = cmd_argv[1] + 4;
                 (void)shell_set_ps1_from_args(2, fake, 1);
             } else {
                 (void)write_str("sh: set: usage: set PS1=<prompt>\n");
             }
-        } else if (str_eq(argv[0], "cd")) {
-            (void)cmd_cd(argc, argv);
-        } else if (str_eq(argv[0], "motd")) {
+        } else if (str_eq(cmd_argv[0], "export")) {
+            if (shell_env_export(cmd_argc, cmd_argv) != 0) {
+                (void)write_str("sh: export: usage: export NAME=value\n");
+            }
+        } else if (str_eq(cmd_argv[0], "env")) {
+            shell_env_print();
+        } else if (str_eq(cmd_argv[0], "cd")) {
+            (void)cmd_cd(cmd_argc, cmd_argv);
+        } else if (str_eq(cmd_argv[0], "motd")) {
             char* av[3];
             av[0] = "/bin/cat";
             av[1] = "/etc/motd";
             av[2] = 0;
             (void)cmd_run(2, av, 0);
-        } else if (str_eq(argv[0], "uname")) {
+        } else if (str_eq(cmd_argv[0], "uname")) {
             cmd_uname();
-        } else if (str_eq(argv[0], "hostinfo") || str_eq(argv[0], "sysinfo")) {
+        } else if (str_eq(cmd_argv[0], "hostinfo") || str_eq(cmd_argv[0], "sysinfo")) {
             (void)cmd_hostinfo();
-        } else if (str_eq(argv[0], "syscalltest")) {
+        } else if (str_eq(cmd_argv[0], "syscalltest")) {
             char* av[2];
             av[0] = "/bin/syscalltest";
             av[1] = 0;
             if (cmd_run(1, av, 0) < 0) {
                 (void)write_str("syscalltest: failed\n");
             }
-        } else if (str_eq(argv[0], "ttyreadtest")) {
+        } else if (str_eq(cmd_argv[0], "ttyreadtest")) {
             char* av[2];
             av[0] = "/bin/ttyreadtest";
             av[1] = 0;
             if (cmd_run(1, av, 0) < 0) {
                 (void)write_str("ttyreadtest: failed\n");
             }
-        } else if (str_eq(argv[0], "timecheck")) {
+        } else if (str_eq(cmd_argv[0], "timecheck")) {
             char* av[2];
             av[0] = "/bin/timecheck";
             av[1] = 0;
             if (cmd_run(1, av, 0) < 0) {
                 (void)write_str("timecheck: failed\n");
             }
-        } else if (str_eq(argv[0], "ls")) {
-            if (argc >= 2 && argv[1]) {
+        } else if (str_eq(cmd_argv[0], "ls")) {
+            if (cmd_argc >= 2 && cmd_argv[1]) {
                 char path_buf[SH_PATH_MAX];
-                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
+                resolve_path(cmd_argv[1], path_buf, (int)sizeof(path_buf));
                 (void)cmd_ls_builtin(path_buf);
             } else {
                 (void)cmd_ls_builtin(shell_cwd);
             }
-        } else if (str_eq(argv[0], "smoke")) {
+        } else if (str_eq(cmd_argv[0], "smoke")) {
             run_smoke();
-        } else if (str_eq(argv[0], "ttytest")) {
+        } else if (str_eq(cmd_argv[0], "ttytest")) {
             cmd_ttytest();
-        } else if (str_eq(argv[0], "run")) {
-            if (argc < 2) {
+        } else if (str_eq(cmd_argv[0], "run")) {
+            if (cmd_argc < 2) {
                 (void)write_str("sh: run: usage: run <path> [args ...]\n");
             } else {
-                if (cmd_run(argc - 1, &argv[1], 1) < 0) {
+                if (cmd_run(cmd_argc - 1, &cmd_argv[1], 1) < 0) {
                     (void)write_str("sh: run: ");
-                    (void)write_str(argv[1]);
+                    (void)write_str(cmd_argv[1]);
                     (void)write_str(": not found\n");
                 }
             }
-        } else if (str_eq(argv[0], "exec")) {
-            if (argc < 2) {
+        } else if (str_eq(cmd_argv[0], "exec")) {
+            if (cmd_argc < 2) {
                 (void)write_str("sh: exec: usage: exec <path> [args ...]\n");
             } else {
-                if (cmd_run(argc - 1, &argv[1], 1) < 0) {
+                if (cmd_run(cmd_argc - 1, &cmd_argv[1], 1) < 0) {
                     (void)write_str("sh: exec: ");
-                    (void)write_str(argv[1]);
+                    (void)write_str(cmd_argv[1]);
                     (void)write_str(": not found\n");
                 }
             }
-        } else if (str_eq(argv[0], "reexec")) {
-            if (argc < 2) {
+        } else if (str_eq(cmd_argv[0], "reexec")) {
+            if (cmd_argc < 2) {
                 (void)write_str("sh: reexec: usage: reexec <path> [args ...]\n");
             } else {
-                char path_buf[SH_PATH_MAX];
                 char* ex_argv[SH_ARG_MAX + 1];
-                resolve_path(argv[1], path_buf, (int)sizeof(path_buf));
-                ex_argv[0] = path_buf;
+                char resolved[SH_PATH_MAX];
+                if (shell_find_executable(cmd_argv[1], resolved, (int)sizeof(resolved)) != 0) {
+                    (void)write_str("sh: reexec: ");
+                    (void)write_str(cmd_argv[1]);
+                    (void)write_str(": not found\n");
+                    continue;
+                }
+                ex_argv[0] = resolved;
                 int ex_argc = 1;
-                for (int i = 2; i < argc && ex_argc < SH_ARG_MAX; i++) {
-                    ex_argv[ex_argc++] = argv[i];
+                for (int i = 2; i < cmd_argc && ex_argc < SH_ARG_MAX; i++) {
+                    ex_argv[ex_argc++] = cmd_argv[i];
                 }
                 ex_argv[ex_argc] = 0;
-                long ret = posix_execve(path_buf, (const char* const*)ex_argv, (const char* const*)0);
+                long ret = posix_execve(resolved,
+                                        (const char* const*)ex_argv,
+                                        (const char* const*)environ);
                 if (ret < 0) {
                     (void)write_str("sh: reexec: ");
-                    (void)write_str(path_buf);
+                    (void)write_str(resolved);
                     (void)write_str(": not found\n");
                 }
             }
-        } else if (str_eq(argv[0], "exit")) {
+        } else if (str_eq(cmd_argv[0], "exit")) {
             (void)write_str("shell exiting\n");
             (void)posix_exit(0);
         } else {
-            if (cmd_autorun(argc, argv) < 0) {
+            if (cmd_autorun(cmd_argc, cmd_argv) < 0) {
                 (void)write_str("sh: ");
-                (void)write_str(argv[0]);
+                (void)write_str(cmd_argv[0]);
                 (void)write_str(": not found\n");
             }
         }

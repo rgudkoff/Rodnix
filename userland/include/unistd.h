@@ -309,6 +309,16 @@ static inline pid_t spawnv(const char* path, char* const argv[])
     return (pid_t)r;
 }
 
+static inline pid_t spawnve(const char* path, char* const argv[], char* const envp[])
+{
+    long r = posix_spawnve(path, (const char* const*)argv, (const char* const*)envp);
+    if (r < 0) {
+        errno = (int)(-r);
+        return (pid_t)-1;
+    }
+    return (pid_t)r;
+}
+
 static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
     enum { RDNX_E_BUSY = -5 };
