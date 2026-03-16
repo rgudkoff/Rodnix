@@ -1,0 +1,54 @@
+/**
+ * @file paging.h
+ * @brief x86_64 paging interface
+ */
+
+#ifndef _RODNIX_ARCH_X86_64_PAGING_H
+#define _RODNIX_ARCH_X86_64_PAGING_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+/* Initialize paging */
+int paging_init(void);
+
+/* Map pages */
+int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_noalloc(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t flags);
+int paging_bootstrap_physmap(uint64_t max_phys);
+void paging_disable_identity_map(void);
+
+/**
+ * Check if higher-half physmap has been bootstrapped.
+ * @return true if physmap is ready
+ */
+bool paging_is_physmap_ready(void);
+
+/* Unmap page */
+int paging_unmap_page(uint64_t virt);
+
+/* Get physical address */
+uint64_t paging_get_physical(uint64_t virt);
+
+/* User address space helpers */
+uint64_t paging_create_user_pml4(void);
+int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags);
+void paging_switch_pml4(uint64_t pml4_phys);
+
+/* Page table entry flags */
+#define PTE_PRESENT     0x001
+#define PTE_RW          0x002
+#define PTE_USER        0x004
+#define PTE_PWT         0x008
+#define PTE_PCD         0x010
+#define PTE_ACCESSED    0x020
+#define PTE_DIRTY       0x040
+#define PTE_PAT         0x080
+#define PTE_GLOBAL      0x100
+#define PTE_NX          0x8000000000000000ULL
+
+#endif /* _RODNIX_ARCH_X86_64_PAGING_H */

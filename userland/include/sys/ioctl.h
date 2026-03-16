@@ -1,0 +1,11 @@
+#ifndef _RODNIX_USERLAND_SYS_IOCTL_H
+#define _RODNIX_USERLAND_SYS_IOCTL_H
+
+/*
+ * Minimal RodNIX TTY ioctl command set.
+ */
+#define RDNX_TTY_IOCTL_ISATTY  0x7401u
+#define RDNX_TTY_IOCTL_GETATTR 0x7402u
+#define RDNX_TTY_IOCTL_SETATTR 0x7403u
+
+#endif /* _RODNIX_USERLAND_SYS_IOCTL_H */

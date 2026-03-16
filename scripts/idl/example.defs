@@ -1,0 +1,3 @@
+interface demo {
+  rpc ping(value: u32) -> (status: u32);
+}
