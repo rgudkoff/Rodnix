@@ -33,10 +33,11 @@ dump_diag() {
   tail -n 60 "$LOG_FILE" || true
 }
 
-touch "$FLAG_FILE"
+printf 'auto\n' > "$FLAG_FILE"
 rm -f "$LOG_FILE"
 
-make iso ARCH="$ARCH"
+make -C userland -B ARCH="$ARCH" TOOLCHAIN=gcc
+make -B initrd iso ARCH="$ARCH"
 mkdir -p "$(dirname "$DISK_IMG")"
 if [ "$FRESH_DISK" = "1" ]; then
   rm -f "$DISK_IMG" "$DISK_FS_STAMP"
