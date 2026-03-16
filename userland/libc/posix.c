@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <signal.h>
+#include <sys/signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>

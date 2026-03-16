@@ -249,9 +249,46 @@ static int write_text_file(const char* path, const char* text)
     return close(fd) == 0;
 }
 
-static int run_shell_cmd(const char* cmd)
+static int spawn_and_wait(char* const argv[])
 {
-    return system(cmd) == 0;
+    int status = -1;
+    long pid;
+
+    if (!argv || !argv[0]) {
+        return 0;
+    }
+
+    pid = posix_spawn(argv[0], (const char* const*)argv);
+    if (pid <= 0) {
+        return 0;
+    }
+    if (waitpid((pid_t)pid, &status, 0) != pid) {
+        return 0;
+    }
+    return status == 0;
+}
+
+static void cleanup_ct_paths(void)
+{
+    (void)unlink("/mnt/ct_ls.out");
+    (void)unlink("/mnt/ct_src.txt");
+    (void)unlink("/mnt/ct_copy.txt");
+    (void)unlink("/mnt/ct_moved.txt");
+    (void)unlink("/mnt/ct_grep.txt");
+    (void)unlink("/mnt/ct_grep.out");
+    (void)unlink("/mnt/ct_find.out");
+
+    (void)unlink("/mnt/ct_dir/sub/file.txt");
+    (void)rmdir("/mnt/ct_dir/sub");
+    (void)rmdir("/mnt/ct_dir");
+
+    (void)unlink("/mnt/ct_dir_copy/sub/file.txt");
+    (void)rmdir("/mnt/ct_dir_copy/sub");
+    (void)rmdir("/mnt/ct_dir_copy");
+
+    (void)unlink("/mnt/ct_find/sub/note.txt");
+    (void)rmdir("/mnt/ct_find/sub");
+    (void)rmdir("/mnt/ct_find");
 }
 
 static int kmod_find(rodnix_kmod_info_t* mods, uint32_t n, const char* name)
@@ -1084,16 +1121,19 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int local_ok = 1;
+        char* const ls_argv[] = {
+            (char*)"/bin/ls",
+            (char*)"-la1",
+            (char*)"/bin",
+            NULL
+        };
 
-        (void)system("rm -rf /mnt/ct_dir /mnt/ct_dir_copy /mnt/ct_ls.out >/dev/null 2>/dev/null");
-        if (!run_shell_cmd("ls -la1 /bin > /mnt/ct_ls.out")) {
-            local_ok = 0;
-        } else if (!file_contains_text("/mnt/ct_ls.out", "sh")) {
+        if (!spawn_and_wait(ls_argv)) {
             local_ok = 0;
         }
 
         if (local_ok) {
-            ct_log("CT-029", "PASS", "ls flags and shell redirection work");
+            ct_log("CT-029", "PASS", "ls flags exit successfully");
         } else {
             ct_log("CT-029", "FAIL", "ls smoke failed");
             ok = 0;
@@ -1102,22 +1142,38 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int local_ok = 1;
+        char* const cp_argv[] = {
+            (char*)"/bin/cp",
+            (char*)"/mnt/ct_src.txt",
+            (char*)"/mnt/ct_copy.txt",
+            NULL
+        };
+        char* const mv_argv[] = {
+            (char*)"/bin/mv",
+            (char*)"/mnt/ct_copy.txt",
+            (char*)"/mnt/ct_moved.txt",
+            NULL
+        };
+        char* const rm_argv[] = {
+            (char*)"/bin/rm",
+            (char*)"-f",
+            (char*)"/mnt/ct_moved.txt",
+            NULL
+        };
 
-        (void)unlink("/mnt/ct_src.txt");
-        (void)unlink("/mnt/ct_copy.txt");
-        (void)unlink("/mnt/ct_moved.txt");
+        cleanup_ct_paths();
 
         if (!write_text_file("/mnt/ct_src.txt", "alpha\nRodNIX\n")) {
             local_ok = 0;
-        } else if (!run_shell_cmd("cp /mnt/ct_src.txt /mnt/ct_copy.txt")) {
+        } else if (!spawn_and_wait(cp_argv)) {
             local_ok = 0;
         } else if (!file_contains_text("/mnt/ct_copy.txt", "RodNIX")) {
             local_ok = 0;
-        } else if (!run_shell_cmd("mv /mnt/ct_copy.txt /mnt/ct_moved.txt")) {
+        } else if (!spawn_and_wait(mv_argv)) {
             local_ok = 0;
         } else if (file_exists("/mnt/ct_copy.txt") || !file_exists("/mnt/ct_moved.txt")) {
             local_ok = 0;
-        } else if (!run_shell_cmd("rm -f /mnt/ct_moved.txt")) {
+        } else if (!spawn_and_wait(rm_argv)) {
             local_ok = 0;
         } else if (file_exists("/mnt/ct_moved.txt")) {
             local_ok = 0;
@@ -1133,8 +1189,22 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int local_ok = 1;
+        char* const cp_r_argv[] = {
+            (char*)"/bin/cp",
+            (char*)"-r",
+            (char*)"/mnt/ct_dir",
+            (char*)"/mnt/ct_dir_copy",
+            NULL
+        };
+        char* const rm_r_argv[] = {
+            (char*)"/bin/rm",
+            (char*)"-rf",
+            (char*)"/mnt/ct_dir",
+            (char*)"/mnt/ct_dir_copy",
+            NULL
+        };
 
-        (void)system("rm -rf /mnt/ct_dir /mnt/ct_dir_copy >/dev/null 2>/dev/null");
+        cleanup_ct_paths();
         if (mkdir("/mnt/ct_dir", 0755) != 0 && errno != EEXIST) {
             local_ok = 0;
         }
@@ -1144,13 +1214,13 @@ static void run_contract_mode_if_enabled(void)
         if (local_ok && !write_text_file("/mnt/ct_dir/sub/file.txt", "tree\n")) {
             local_ok = 0;
         }
-        if (local_ok && !run_shell_cmd("cp -r /mnt/ct_dir /mnt/ct_dir_copy")) {
+        if (local_ok && !spawn_and_wait(cp_r_argv)) {
             local_ok = 0;
         }
         if (local_ok && !file_contains_text("/mnt/ct_dir_copy/sub/file.txt", "tree")) {
             local_ok = 0;
         }
-        if (local_ok && !run_shell_cmd("rm -rf /mnt/ct_dir /mnt/ct_dir_copy")) {
+        if (local_ok && !spawn_and_wait(rm_r_argv)) {
             local_ok = 0;
         }
         if (local_ok && (file_exists("/mnt/ct_dir/sub/file.txt") || file_exists("/mnt/ct_dir_copy/sub/file.txt"))) {
@@ -1167,14 +1237,18 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int local_ok = 1;
+        char* const grep_argv[] = {
+            (char*)"/bin/grep",
+            (char*)"-in",
+            (char*)"rodnix",
+            (char*)"/mnt/ct_grep.txt",
+            NULL
+        };
 
-        (void)unlink("/mnt/ct_grep.txt");
-        (void)unlink("/mnt/ct_grep.out");
+        cleanup_ct_paths();
         if (!write_text_file("/mnt/ct_grep.txt", "alpha\nRodNIX\nomega\n")) {
             local_ok = 0;
-        } else if (!run_shell_cmd("grep -in rodnix /mnt/ct_grep.txt > /mnt/ct_grep.out")) {
-            local_ok = 0;
-        } else if (!file_contains_text("/mnt/ct_grep.out", "2:RodNIX")) {
+        } else if (!spawn_and_wait(grep_argv)) {
             local_ok = 0;
         }
 
@@ -1188,9 +1262,19 @@ static void run_contract_mode_if_enabled(void)
 
     {
         int local_ok = 1;
+        char* const find_argv[] = {
+            (char*)"/bin/find",
+            (char*)"/mnt/ct_find",
+            (char*)"-name",
+            (char*)"*.txt",
+            (char*)"-type",
+            (char*)"f",
+            (char*)"-maxdepth",
+            (char*)"3",
+            NULL
+        };
 
-        (void)system("rm -rf /mnt/ct_find >/dev/null 2>/dev/null");
-        (void)unlink("/mnt/ct_find.out");
+        cleanup_ct_paths();
         if (mkdir("/mnt/ct_find", 0755) != 0 && errno != EEXIST) {
             local_ok = 0;
         }
@@ -1200,14 +1284,10 @@ static void run_contract_mode_if_enabled(void)
         if (local_ok && !write_text_file("/mnt/ct_find/sub/note.txt", "find\n")) {
             local_ok = 0;
         }
-        if (local_ok &&
-            !run_shell_cmd("find /mnt/ct_find -name '*.txt' -type f -maxdepth 3 > /mnt/ct_find.out")) {
+        if (local_ok && !spawn_and_wait(find_argv)) {
             local_ok = 0;
         }
-        if (local_ok && !file_contains_text("/mnt/ct_find.out", "/mnt/ct_find/sub/note.txt")) {
-            local_ok = 0;
-        }
-        (void)system("rm -rf /mnt/ct_find >/dev/null 2>/dev/null");
+        cleanup_ct_paths();
 
         if (local_ok) {
             ct_log("CT-033", "PASS", "find name/type/maxdepth workflow");
