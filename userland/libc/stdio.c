@@ -385,6 +385,58 @@ int sprintf(char* str, const char* fmt, ...)
     return out;
 }
 
+int sscanf(const char* str, const char* fmt, ...)
+{
+    int assigned = 0;
+    va_list ap;
+
+    if (!str || !fmt) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    va_start(ap, fmt);
+    while (*fmt) {
+        while (*fmt == ' ' || *fmt == '\t' || *fmt == '\n') {
+            while (*str == ' ' || *str == '\t' || *str == '\n') {
+                str++;
+            }
+            fmt++;
+        }
+
+        if (*fmt == '%') {
+            char* end = NULL;
+            fmt++;
+            if (*fmt == 'l') {
+                fmt++;
+            }
+            if (*fmt == 'd') {
+                int* out = va_arg(ap, int*);
+                long value = strtol(str, &end, 10);
+                if (end == str) {
+                    break;
+                }
+                *out = (int)value;
+                str = end;
+                assigned++;
+                fmt++;
+                continue;
+            }
+            errno = ENOSYS;
+            assigned = -1;
+            break;
+        }
+
+        if (*str != *fmt) {
+            break;
+        }
+        str++;
+        fmt++;
+    }
+    va_end(ap);
+    return assigned;
+}
+
 int clearerr(FILE* stream)
 {
     if (!stream) {
@@ -815,6 +867,11 @@ int vfprintf(FILE* stream, const char* fmt, va_list ap)
 int vprintf(const char* fmt, va_list ap)
 {
     return vfprintf(stdout, fmt, ap);
+}
+
+int remove(const char* path)
+{
+    return unlink(path);
 }
 
 FILE* fdopen(int fd, const char* mode)

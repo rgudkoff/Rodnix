@@ -9,6 +9,7 @@
 #include "posix_syscall.h"
 #include "unistd.h"
 #include "sys/wait.h"
+#include "sys/stat.h"
 #include "dirent.h"
 #include "time.h"
 
@@ -155,6 +156,60 @@ static int file_exists(const char* path)
     return 1;
 }
 
+static int file_contains_text(const char* path, const char* needle)
+{
+    char buf[512];
+    long fd;
+    long n;
+
+    if (!path || !needle) {
+        return 0;
+    }
+
+    fd = posix_open(path, VFS_OPEN_READ);
+    if (fd < 0) {
+        return 0;
+    }
+
+    n = posix_read((int)fd, buf, sizeof(buf) - 1);
+    (void)posix_close((int)fd);
+    if (n <= 0) {
+        return 0;
+    }
+
+    buf[n] = '\0';
+    return cstr_contains(buf, needle);
+}
+
+static int write_text_file(const char* path, const char* text)
+{
+    size_t len = 0;
+    int fd;
+
+    if (!path || !text) {
+        return 0;
+    }
+
+    while (text[len] != '\0') {
+        len++;
+    }
+
+    fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) {
+        return 0;
+    }
+    if (write(fd, text, len) != (ssize_t)len) {
+        (void)close(fd);
+        return 0;
+    }
+    return close(fd) == 0;
+}
+
+static int run_shell_cmd(const char* cmd)
+{
+    return system(cmd) == 0;
+}
+
 static void ct_log(const char* id, const char* verdict, const char* msg)
 {
     (void)write_str("[CT] ");
@@ -212,9 +267,9 @@ static int kmod_find(rodnix_kmod_info_t* mods, uint32_t n, const char* name)
     return -1;
 }
 
-static int dev_dir_has_entry(const char* name)
+static int dir_has_entry(const char* dir_path, const char* name)
 {
-    DIR* d = opendir("/dev");
+    DIR* d = opendir(dir_path);
     if (!d) {
         return 0;
     }
@@ -230,6 +285,11 @@ static int dev_dir_has_entry(const char* name)
     }
     (void)closedir(d);
     return 0;
+}
+
+static int dev_dir_has_entry(const char* name)
+{
+    return dir_has_entry("/dev", name);
 }
 
 static void run_ifconfig_smoke_if_enabled(void)
@@ -288,6 +348,124 @@ static void run_ifconfig_smoke_if_enabled(void)
             (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
         }
     }
+}
+
+static void run_tcc_smoke_if_enabled(void)
+{
+    static const char src_path[] = "/mnt/tcc_smoke.c";
+    static const char obj_path[] = "/mnt/tcc_smoke.o";
+    static const char tcc_path[] = "/mnt/usr/bin/tcc";
+    static const char src_code[] =
+        "int rodnix_tcc_smoke(void) {\n"
+        "    return 42;\n"
+        "}\n";
+
+    if (!file_exists("/etc/tcc.auto")) {
+        (void)write_str("[SMK] TCC SKIP flag missing file=");
+        (void)write_str(file_exists("/etc/tcc.auto") ? "1" : "0");
+        (void)write_str(" dir=");
+        (void)write_str(dir_has_entry("/etc", "tcc.auto") ? "1\n" : "0\n");
+        return;
+    }
+
+    (void)write_str("[SMK] TCC START\n");
+    if (!file_exists(tcc_path)) {
+        (void)write_str("[SMK] TCC FAIL missing /mnt/usr/bin/tcc\n");
+        return;
+    }
+
+    (void)unlink(src_path);
+    (void)unlink(obj_path);
+
+    {
+        int fd = open(src_path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        if (fd < 0) {
+            (void)write_str("[SMK] TCC FAIL create source\n");
+            return;
+        }
+        if (write(fd, src_code, sizeof(src_code) - 1) != (ssize_t)(sizeof(src_code) - 1)) {
+            (void)close(fd);
+            (void)write_str("[SMK] TCC FAIL write source\n");
+            return;
+        }
+        if (close(fd) != 0) {
+            (void)write_str("[SMK] TCC FAIL close source\n");
+            return;
+        }
+    }
+
+    {
+        char* const argv[] = {
+            (char*)tcc_path,
+            (char*)"-c",
+            (char*)src_path,
+            (char*)"-o",
+            (char*)obj_path,
+            NULL
+        };
+        char* const envp[] = {
+            (char*)"PATH=/mnt/usr/bin:/bin",
+            (char*)"TMPDIR=/mnt",
+            NULL
+        };
+        struct timespec t0;
+        struct timespec t1;
+        const int64_t timeout_ns = 5LL * 1000LL * 1000LL * 1000LL;
+        int status = -1;
+        pid_t pid;
+
+        pid = spawnve(tcc_path, argv, envp);
+        if (pid <= 0) {
+            (void)write_str("[SMK] TCC FAIL spawn\n");
+            return;
+        }
+
+        if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+            (void)write_str("[SMK] TCC FAIL clock\n");
+            return;
+        }
+
+        for (;;) {
+            pid_t wr = waitpid(pid, &status, WNOHANG);
+            if (wr == pid) {
+                break;
+            }
+            if (wr < 0) {
+                (void)write_str("[SMK] TCC FAIL wait\n");
+                return;
+            }
+
+            if (clock_gettime(CLOCK_MONOTONIC, &t1) == 0) {
+                int64_t dt_ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL +
+                                (int64_t)(t1.tv_nsec - t0.tv_nsec);
+                if (dt_ns >= timeout_ns) {
+                    (void)write_str("[SMK] TCC TIMEOUT\n");
+                    return;
+                }
+            }
+
+            (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+        }
+
+        if (status != 0) {
+            (void)write_str("[SMK] TCC FAIL compiler status\n");
+            return;
+        }
+    }
+
+    {
+        struct stat st;
+        if (stat(obj_path, &st) != 0) {
+            (void)write_str("[SMK] TCC FAIL missing output\n");
+            return;
+        }
+        if (st.st_size <= 0) {
+            (void)write_str("[SMK] TCC FAIL empty output\n");
+            return;
+        }
+    }
+
+    (void)write_str("[SMK] TCC PASS\n");
 }
 
 static void run_contract_mode_if_enabled(void)
@@ -904,6 +1082,141 @@ static void run_contract_mode_if_enabled(void)
         }
     }
 
+    {
+        int local_ok = 1;
+
+        (void)system("rm -rf /mnt/ct_dir /mnt/ct_dir_copy /mnt/ct_ls.out >/dev/null 2>/dev/null");
+        if (!run_shell_cmd("ls -la1 /bin > /mnt/ct_ls.out")) {
+            local_ok = 0;
+        } else if (!file_contains_text("/mnt/ct_ls.out", "sh")) {
+            local_ok = 0;
+        }
+
+        if (local_ok) {
+            ct_log("CT-029", "PASS", "ls flags and shell redirection work");
+        } else {
+            ct_log("CT-029", "FAIL", "ls smoke failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int local_ok = 1;
+
+        (void)unlink("/mnt/ct_src.txt");
+        (void)unlink("/mnt/ct_copy.txt");
+        (void)unlink("/mnt/ct_moved.txt");
+
+        if (!write_text_file("/mnt/ct_src.txt", "alpha\nRodNIX\n")) {
+            local_ok = 0;
+        } else if (!run_shell_cmd("cp /mnt/ct_src.txt /mnt/ct_copy.txt")) {
+            local_ok = 0;
+        } else if (!file_contains_text("/mnt/ct_copy.txt", "RodNIX")) {
+            local_ok = 0;
+        } else if (!run_shell_cmd("mv /mnt/ct_copy.txt /mnt/ct_moved.txt")) {
+            local_ok = 0;
+        } else if (file_exists("/mnt/ct_copy.txt") || !file_exists("/mnt/ct_moved.txt")) {
+            local_ok = 0;
+        } else if (!run_shell_cmd("rm -f /mnt/ct_moved.txt")) {
+            local_ok = 0;
+        } else if (file_exists("/mnt/ct_moved.txt")) {
+            local_ok = 0;
+        }
+
+        if (local_ok) {
+            ct_log("CT-030", "PASS", "cp/mv/rm basic file workflow");
+        } else {
+            ct_log("CT-030", "FAIL", "cp/mv/rm file workflow failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int local_ok = 1;
+
+        (void)system("rm -rf /mnt/ct_dir /mnt/ct_dir_copy >/dev/null 2>/dev/null");
+        if (mkdir("/mnt/ct_dir", 0755) != 0 && errno != EEXIST) {
+            local_ok = 0;
+        }
+        if (local_ok && mkdir("/mnt/ct_dir/sub", 0755) != 0 && errno != EEXIST) {
+            local_ok = 0;
+        }
+        if (local_ok && !write_text_file("/mnt/ct_dir/sub/file.txt", "tree\n")) {
+            local_ok = 0;
+        }
+        if (local_ok && !run_shell_cmd("cp -r /mnt/ct_dir /mnt/ct_dir_copy")) {
+            local_ok = 0;
+        }
+        if (local_ok && !file_contains_text("/mnt/ct_dir_copy/sub/file.txt", "tree")) {
+            local_ok = 0;
+        }
+        if (local_ok && !run_shell_cmd("rm -rf /mnt/ct_dir /mnt/ct_dir_copy")) {
+            local_ok = 0;
+        }
+        if (local_ok && (file_exists("/mnt/ct_dir/sub/file.txt") || file_exists("/mnt/ct_dir_copy/sub/file.txt"))) {
+            local_ok = 0;
+        }
+
+        if (local_ok) {
+            ct_log("CT-031", "PASS", "recursive cp/rm tree workflow");
+        } else {
+            ct_log("CT-031", "FAIL", "recursive cp/rm tree workflow failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int local_ok = 1;
+
+        (void)unlink("/mnt/ct_grep.txt");
+        (void)unlink("/mnt/ct_grep.out");
+        if (!write_text_file("/mnt/ct_grep.txt", "alpha\nRodNIX\nomega\n")) {
+            local_ok = 0;
+        } else if (!run_shell_cmd("grep -in rodnix /mnt/ct_grep.txt > /mnt/ct_grep.out")) {
+            local_ok = 0;
+        } else if (!file_contains_text("/mnt/ct_grep.out", "2:RodNIX")) {
+            local_ok = 0;
+        }
+
+        if (local_ok) {
+            ct_log("CT-032", "PASS", "grep flags and case-insensitive match");
+        } else {
+            ct_log("CT-032", "FAIL", "grep smoke failed");
+            ok = 0;
+        }
+    }
+
+    {
+        int local_ok = 1;
+
+        (void)system("rm -rf /mnt/ct_find >/dev/null 2>/dev/null");
+        (void)unlink("/mnt/ct_find.out");
+        if (mkdir("/mnt/ct_find", 0755) != 0 && errno != EEXIST) {
+            local_ok = 0;
+        }
+        if (local_ok && mkdir("/mnt/ct_find/sub", 0755) != 0 && errno != EEXIST) {
+            local_ok = 0;
+        }
+        if (local_ok && !write_text_file("/mnt/ct_find/sub/note.txt", "find\n")) {
+            local_ok = 0;
+        }
+        if (local_ok &&
+            !run_shell_cmd("find /mnt/ct_find -name '*.txt' -type f -maxdepth 3 > /mnt/ct_find.out")) {
+            local_ok = 0;
+        }
+        if (local_ok && !file_contains_text("/mnt/ct_find.out", "/mnt/ct_find/sub/note.txt")) {
+            local_ok = 0;
+        }
+        (void)system("rm -rf /mnt/ct_find >/dev/null 2>/dev/null");
+
+        if (local_ok) {
+            ct_log("CT-033", "PASS", "find name/type/maxdepth workflow");
+        } else {
+            ct_log("CT-033", "FAIL", "find smoke failed");
+            ok = 0;
+        }
+    }
+
     if (ok) {
         (void)write_str("[CT] ALL PASS\n");
     } else {
@@ -919,6 +1232,7 @@ int main(void)
     print_hostname();
     run_smoke();
     run_ifconfig_smoke_if_enabled();
+    run_tcc_smoke_if_enabled();
     run_contract_mode_if_enabled();
 
     (void)write_str("[USER] init: exec /bin/sh\n");

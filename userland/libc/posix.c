@@ -61,6 +61,71 @@ time_t time(time_t* tloc)
     return ts.tv_sec;
 }
 
+static int is_leap_year(int year)
+{
+    return ((year % 4) == 0 && (year % 100) != 0) || ((year % 400) == 0);
+}
+
+struct tm* localtime(const time_t* timer)
+{
+    static struct tm tm;
+    static const int days_before_month[2][12] = {
+        { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 },
+        { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335 }
+    };
+    time_t secs;
+    long days;
+    int year;
+    int leap;
+    int month;
+
+    if (!timer) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    secs = *timer;
+    if (secs < 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    memset(&tm, 0, sizeof(tm));
+    tm.tm_sec = (int)(secs % 60);
+    secs /= 60;
+    tm.tm_min = (int)(secs % 60);
+    secs /= 60;
+    tm.tm_hour = (int)(secs % 24);
+    days = (long)(secs / 24);
+
+    tm.tm_wday = (int)((days + 4) % 7);
+
+    year = 1970;
+    while (1) {
+        int days_in_year = is_leap_year(year) ? 366 : 365;
+        if (days < days_in_year) {
+            break;
+        }
+        days -= days_in_year;
+        ++year;
+    }
+
+    leap = is_leap_year(year);
+    tm.tm_year = year - 1900;
+    tm.tm_yday = (int)days;
+
+    for (month = 11; month > 0; --month) {
+        if (days >= days_before_month[leap][month]) {
+            break;
+        }
+    }
+
+    tm.tm_mon = month;
+    tm.tm_mday = (int)(days - days_before_month[leap][month]) + 1;
+    tm.tm_isdst = 0;
+    return &tm;
+}
+
 /*
  * system() — execute a shell command.
  * Runs /bin/sh -c <cmd>; returns exit status or -1 on fork failure.
@@ -86,4 +151,49 @@ int system(const char* cmd)
         return -1;
     }
     return status;
+}
+
+int execvp(const char* file, char* const argv[])
+{
+    const char* path_env;
+    const char* start;
+    const char* end;
+
+    if (!file || !*file) {
+        errno = ENOENT;
+        return -1;
+    }
+    if (strchr(file, '/')) {
+        return execve(file, argv, environ);
+    }
+
+    path_env = getenv("PATH");
+    if (!path_env || !*path_env) {
+        path_env = "/bin:/usr/bin";
+    }
+
+    start = path_env;
+    while (*start) {
+        char candidate[256];
+        size_t dir_len;
+
+        end = start;
+        while (*end && *end != ':') {
+            end++;
+        }
+        dir_len = (size_t)(end - start);
+        if (dir_len + 1 + strlen(file) + 1 < sizeof(candidate)) {
+            memcpy(candidate, start, dir_len);
+            candidate[dir_len] = '/';
+            strcpy(candidate + dir_len + 1, file);
+            execve(candidate, argv, environ);
+            if (errno != ENOENT) {
+                return -1;
+            }
+        }
+        start = (*end == ':') ? end + 1 : end;
+    }
+
+    errno = ENOENT;
+    return -1;
 }

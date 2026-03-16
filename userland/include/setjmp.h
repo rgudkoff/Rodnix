@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__x86_64) || defined(__RODNIX_X86_64_SETJMP__)
 /*
  * x86_64 jmp_buf: 8 slots × 8 bytes = 64 bytes
  *   [0] rbx  [1] rbp  [2] r12  [3] r13

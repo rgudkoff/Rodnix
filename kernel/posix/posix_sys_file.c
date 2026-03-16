@@ -461,3 +461,74 @@ uint64_t posix_accept(uint64_t a1,
     /* a1=fd, a2=addr_ptr, a3=timeout_ms */
     return unix_fs_accept(a1, a2, a3);
 }
+
+uint64_t posix_chmod(uint64_t a1,
+                     uint64_t a2,
+                     uint64_t a3,
+                     uint64_t a4,
+                     uint64_t a5,
+                     uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    /* a1 = path ptr, a2 = mode */
+    return unix_fs_chmod(a1, a2);
+}
+
+uint64_t posix_fchmod(uint64_t a1,
+                      uint64_t a2,
+                      uint64_t a3,
+                      uint64_t a4,
+                      uint64_t a5,
+                      uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    /* a1 = fd, a2 = mode */
+    return unix_fs_fchmod(a1, a2);
+}
+
+uint64_t posix_chown(uint64_t a1,
+                     uint64_t a2,
+                     uint64_t a3,
+                     uint64_t a4,
+                     uint64_t a5,
+                     uint64_t a6)
+{
+    (void)a4; (void)a5; (void)a6;
+    /* a1 = path ptr, a2 = uid, a3 = gid */
+    return unix_fs_chown(a1, a2, a3);
+}
+
+uint64_t posix_fchown(uint64_t a1,
+                      uint64_t a2,
+                      uint64_t a3,
+                      uint64_t a4,
+                      uint64_t a5,
+                      uint64_t a6)
+{
+    (void)a4; (void)a5; (void)a6;
+    /* a1 = fd, a2 = uid, a3 = gid */
+    return unix_fs_fchown(a1, a2, a3);
+}
+
+uint64_t posix_lstat(uint64_t a1,
+                     uint64_t a2,
+                     uint64_t a3,
+                     uint64_t a4,
+                     uint64_t a5,
+                     uint64_t a6)
+{
+    /* No symlinks — lstat is identical to stat. */
+    return posix_stat(a1, a2, a3, a4, a5, a6);
+}
+
+uint64_t posix_lchown(uint64_t a1,
+                      uint64_t a2,
+                      uint64_t a3,
+                      uint64_t a4,
+                      uint64_t a5,
+                      uint64_t a6)
+{
+    (void)a4; (void)a5; (void)a6;
+    /* No symlinks yet — lchown behaves identically to chown. */
+    return unix_fs_chown(a1, a2, a3);
+}

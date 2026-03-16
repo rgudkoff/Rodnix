@@ -29,5 +29,11 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
                     vfs_node_t** out_node);
 int ext2_unlink(vfs_node_t* node);
 
+/* Metadata-path: chmod / chown.
+ * ext2_chmod: update permission bits (0777 mask) in the on-disk inode.
+ * ext2_chown: update uid/gid; pass (uint32_t)-1 to leave a field unchanged. */
+int ext2_chmod(vfs_node_t* node, uint16_t mode);
+int ext2_chown(vfs_node_t* node, uint32_t uid, uint32_t gid);
+
 struct vm_file_backing;
 struct vm_file_backing* ext2_file_backing_create(vfs_inode_t* inode);

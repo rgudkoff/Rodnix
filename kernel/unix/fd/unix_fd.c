@@ -25,12 +25,17 @@ enum {
     UNIX_O_WRONLY   = 0x0001,
     UNIX_O_RDWR     = 0x0002,
     UNIX_O_ACCMODE  = 0x0003,
-    UNIX_O_CREAT    = 0x0040,
-    UNIX_O_TRUNC    = 0x0200,
-    UNIX_O_NONBLOCK = 0x0800,
-    UNIX_O_CLOEXEC  = 0x00080000,
+    UNIX_O_NONBLOCK = 0x0004,
+    UNIX_O_APPEND   = 0x0008,
+    UNIX_O_SYNC     = 0x0080,
+    UNIX_O_NOFOLLOW = 0x0100,
+    UNIX_O_CREAT    = 0x0200,
+    UNIX_O_TRUNC    = 0x0400,
+    UNIX_O_EXCL     = 0x0800,
+    UNIX_O_NOCTTY   = 0x8000,
+    UNIX_O_CLOEXEC  = 0x00100000,
     /* One-shot open flags — must not appear in F_GETFL result. */
-    UNIX_O_ONESHOT  = 0x0240    /* O_CREAT | O_TRUNC */
+    UNIX_O_ONESHOT  = 0x0600    /* O_CREAT | O_TRUNC */
 };
 
 enum {
@@ -1194,6 +1199,50 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
         return (uint64_t)RDNX_E_INVALID;
     }
     return (uint64_t)RDNX_OK;
+}
+
+uint64_t unix_fs_chmod(uint64_t user_path_ptr, uint64_t mode)
+{
+    char path_buf[UNIX_PATH_MAX];
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_chmod(path_buf, (uint16_t)(mode & 0x0FFFu));
+}
+
+uint64_t unix_fs_fchmod(uint64_t fd, uint64_t mode)
+{
+    task_t* task = task_get_current();
+    if (!task || (int)fd < 0 || (int)fd >= TASK_MAX_FD || task->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)fd);
+    if (!file) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_fchmod(file, (uint16_t)(mode & 0x0FFFu));
+}
+
+uint64_t unix_fs_chown(uint64_t user_path_ptr, uint64_t uid, uint64_t gid)
+{
+    char path_buf[UNIX_PATH_MAX];
+    if (unix_resolve_user_path((const char*)(uintptr_t)user_path_ptr, path_buf, sizeof(path_buf)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_chown(path_buf, (uint32_t)uid, (uint32_t)gid);
+}
+
+uint64_t unix_fs_fchown(uint64_t fd, uint64_t uid, uint64_t gid)
+{
+    task_t* task = task_get_current();
+    if (!task || (int)fd < 0 || (int)fd >= TASK_MAX_FD || task->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, (int)fd);
+    if (!file) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vfs_fchown(file, (uint32_t)uid, (uint32_t)gid);
 }
 
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)

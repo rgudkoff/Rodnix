@@ -101,9 +101,14 @@ CONTRACT_HEAP_SRCS = bin/contract_heap.c
 CONTRACT_DIRENT_SRCS = bin/contract_dirent.c
 CONTRACT_FSIO_SRCS = bin/contract_fsio.c
 CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
+CP_SRCS   = bin/cp.c
+MV_SRCS   = bin/mv.c
+RM_SRCS   = bin/rm.c
+GREP_SRCS = bin/grep.c
+FIND_SRCS = bin/find.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/posix.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c
 
 ifeq ($(ARCH),x86_64)
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o
@@ -160,6 +165,11 @@ CONTRACT_HEAP_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_HEAP_SRCS:.c=.o)) $(C
 CONTRACT_DIRENT_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_DIRENT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CONTRACT_FSIO_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_FSIO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CONTRACT_WAIT_NONCHILD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_WAIT_NONCHILD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CP_OBJS   = $(addprefix $(BUILD_DIR)/, $(CP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
+MV_OBJS   = $(addprefix $(BUILD_DIR)/, $(MV_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
+RM_OBJS   = $(addprefix $(BUILD_DIR)/, $(RM_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
+GREP_OBJS = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FIND_OBJS = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
@@ -204,6 +214,11 @@ CONTRACT_HEAP_ELF = $(BUILD_DIR)/contract_heap.elf
 CONTRACT_DIRENT_ELF = $(BUILD_DIR)/contract_dirent.elf
 CONTRACT_FSIO_ELF = $(BUILD_DIR)/contract_fsio.elf
 CONTRACT_WAIT_NONCHILD_ELF = $(BUILD_DIR)/contract_wait_nonchild.elf
+CP_ELF   = $(BUILD_DIR)/cp.elf
+MV_ELF   = $(BUILD_DIR)/mv.elf
+RM_ELF   = $(BUILD_DIR)/rm.elf
+GREP_ELF = $(BUILD_DIR)/grep.elf
+FIND_ELF = $(BUILD_DIR)/find.elf
 INIT_BIN = $(BIN_DIR)/init
 SH_BIN = $(BIN_DIR)/sh
 ECHO_BIN = $(BIN_DIR)/echo
@@ -251,10 +266,15 @@ CONTRACT_HEAP_BIN = $(BIN_DIR)/contract_heap
 CONTRACT_DIRENT_BIN = $(BIN_DIR)/contract_dirent
 CONTRACT_FSIO_BIN = $(BIN_DIR)/contract_fsio
 CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
+CP_BIN   = $(BIN_DIR)/cp
+MV_BIN   = $(BIN_DIR)/mv
+RM_BIN   = $(BIN_DIR)/rm
+GREP_BIN = $(BIN_DIR)/grep
+FIND_BIN = $(BIN_DIR)/find
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -447,6 +467,26 @@ $(CONTRACT_WAIT_NONCHILD_ELF): $(CONTRACT_WAIT_NONCHILD_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(CONTRACT_WAIT_NONCHILD_OBJS)
 
+$(CP_ELF): $(CP_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CP_OBJS)
+
+$(MV_ELF): $(MV_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(MV_OBJS)
+
+$(RM_ELF): $(RM_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(RM_OBJS)
+
+$(GREP_ELF): $(GREP_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(GREP_OBJS)
+
+$(FIND_ELF): $(FIND_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(FIND_OBJS)
+
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
@@ -628,6 +668,26 @@ $(CONTRACT_FSIO_BIN): $(CONTRACT_FSIO_ELF)
 	cp $< $@
 
 $(CONTRACT_WAIT_NONCHILD_BIN): $(CONTRACT_WAIT_NONCHILD_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(CP_BIN): $(CP_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(MV_BIN): $(MV_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(RM_BIN): $(RM_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(GREP_BIN): $(GREP_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(FIND_BIN): $(FIND_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

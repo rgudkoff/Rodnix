@@ -8,6 +8,7 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <sys/wait.h>
 #include "posix_syscall.h"
 
@@ -42,32 +43,10 @@ static inline int rdnx_errno_from_status(long r)
     }
 }
 
-static inline int rdnx_open_flags_from_posix(int flags)
-{
-    enum {
-        VFS_OPEN_READ   = 1 << 0,
-        VFS_OPEN_WRITE  = 1 << 1,
-        VFS_OPEN_CREATE = 1 << 2,
-        VFS_OPEN_TRUNC  = 1 << 3
-    };
-
-    int out = 0;
-    int acc = flags & O_ACCMODE;
-
-    if (acc == O_WRONLY || acc == O_RDWR) {
-        out |= VFS_OPEN_WRITE;
-    }
-    if (acc == O_RDONLY || acc == O_RDWR) {
-        out |= VFS_OPEN_READ;
-    }
-    if (flags & O_CREAT) {
-        out |= VFS_OPEN_CREATE;
-    }
-    if (flags & O_TRUNC) {
-        out |= VFS_OPEN_TRUNC;
-    }
-    return out;
-}
+static inline uid_t getuid(void)  { return (uid_t)posix_getuid();  }
+static inline uid_t geteuid(void) { return (uid_t)posix_geteuid(); }
+static inline gid_t getgid(void)  { return (gid_t)posix_getgid();  }
+static inline gid_t getegid(void) { return (gid_t)posix_getegid(); }
 
 static inline pid_t getpid(void)
 {
@@ -199,9 +178,19 @@ static inline int fcntl(int fd, int cmd, int arg)
     return (int)r;
 }
 
-static inline int open(const char* path, int flags)
+static inline int open(const char* path, int flags, ...)
 {
-    long r = posix_open(path, rdnx_open_flags_from_posix(flags));
+    if (flags & O_CREAT) {
+        va_list ap;
+        mode_t mode;
+
+        va_start(ap, flags);
+        mode = va_arg(ap, mode_t);
+        va_end(ap);
+        (void)mode;
+    }
+
+    long r = posix_open(path, flags);
     if (r < 0) {
         errno = rdnx_errno_from_status(r);
         return -1;
@@ -310,6 +299,36 @@ static inline int ioctl(int fd, unsigned long request, void* argp)
     return (int)r;
 }
 
+static inline int chown(const char* path, uid_t uid, gid_t gid)
+{
+    long r = posix_chown(path, (unsigned int)uid, (unsigned int)gid);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int fchown(int fd, uid_t uid, gid_t gid)
+{
+    long r = posix_fchown(fd, (unsigned int)uid, (unsigned int)gid);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int lchown(const char* path, uid_t uid, gid_t gid)
+{
+    long r = posix_lchown(path, (unsigned int)uid, (unsigned int)gid);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
 static inline int isatty(int fd)
 {
     long r = posix_ioctl(fd, RDNX_TTY_IOCTL_ISATTY, (void*)0);
@@ -334,6 +353,8 @@ static inline int execv(const char* path, char* const argv[])
 {
     return execve(path, argv, (char* const*)0);
 }
+
+int execvp(const char* file, char* const argv[]);
 
 static inline pid_t spawnv(const char* path, char* const argv[])
 {

@@ -370,48 +370,62 @@ def _ext2_inject_dir(img_path: str, staging_dir: str) -> None:
                 pos += reclen
             return bytes(buf)
 
-        def dir_append_entry(dir_ino: int, child_ino: int,
-                             name: bytes, ftype: int) -> None:
-            """Append an entry to an existing directory inode."""
-            raw = read_inode_raw(dir_ino)
-            blks = struct.unpack_from("<15I", raw, 40)
-            blk0 = blks[0]
-            f.seek(blk_offset(blk0))
-            dir_data = bytearray(f.read(bsz))
-
-            # Walk entries to find the last one and shrink it
+        def try_append_dir_entry(dir_data: bytearray, child_ino: int,
+                                 name: bytes, ftype: int) -> bool:
             pos = 0
             last_pos = 0
             while pos < bsz:
-                rec_ino   = struct.unpack_from("<I", dir_data, pos)[0]
-                rec_len   = struct.unpack_from("<H", dir_data, pos + 4)[0]
-                rec_nlen  = dir_data[pos + 6]
+                rec_len = struct.unpack_from("<H", dir_data, pos + 4)[0]
                 if rec_len == 0:
                     break
                 last_pos = pos
                 pos += rec_len
 
-            # Compact last entry and append new one
-            last_rec_len = struct.unpack_from("<H", dir_data, last_pos)[0]
-            last_nlen    = dir_data[last_pos + 6]
-            actual_last  = align4(8 + last_nlen)
-            remaining    = last_rec_len - actual_last
-
-            nlen = len(name)
-            needed = align4(8 + nlen)
+            last_rec_len = struct.unpack_from("<H", dir_data, last_pos + 4)[0]
+            last_nlen = dir_data[last_pos + 6]
+            actual_last = align4(8 + last_nlen)
+            remaining = last_rec_len - actual_last
+            needed = align4(8 + len(name))
             if remaining < needed:
-                raise OSError(f"ext2: no space in dir block for '{name.decode()}'")
+                return False
 
-            # Shrink last entry
             struct.pack_into("<H", dir_data, last_pos + 4, actual_last)
-            # Write new entry at end
             new_pos = last_pos + actual_last
             struct.pack_into("<IHBB", dir_data, new_pos,
-                             child_ino, remaining, nlen, ftype)
-            dir_data[new_pos + 8: new_pos + 8 + nlen] = name
+                             child_ino, remaining, len(name), ftype)
+            dir_data[new_pos + 8: new_pos + 8 + len(name)] = name
+            return True
 
-            f.seek(blk_offset(blk0))
-            f.write(bytes(dir_data))
+        def dir_append_entry(dir_ino: int, child_ino: int,
+                             name: bytes, ftype: int) -> None:
+            """Append an entry to an existing directory inode."""
+            raw = read_inode_raw(dir_ino)
+            blks = list(struct.unpack_from("<15I", raw, 40))
+
+            for blk_index, blk_num in enumerate(blks[:12]):
+                if blk_num == 0:
+                    break
+                f.seek(blk_offset(blk_num))
+                dir_data = bytearray(f.read(bsz))
+                if try_append_dir_entry(dir_data, child_ino, name, ftype):
+                    f.seek(blk_offset(blk_num))
+                    f.write(bytes(dir_data))
+                    return
+
+            for blk_index in range(12):
+                if blks[blk_index] == 0:
+                    new_blk = alloc_block()
+                    new_data = build_dir_block([(child_ino, name, ftype)])
+                    f.seek(blk_offset(new_blk))
+                    f.write(new_data)
+                    blks[blk_index] = new_blk
+                    struct.pack_into("<15I", raw, 40, *blks)
+                    struct.pack_into("<I", raw, 4, struct.unpack_from("<I", raw, 4)[0] + bsz)
+                    struct.pack_into("<I", raw, 28, struct.unpack_from("<I", raw, 28)[0] + (bsz // 512))
+                    write_inode_raw(dir_ino, raw)
+                    return
+
+            raise OSError(f"ext2: no space in directory inode for '{name.decode()}'")
 
         # ── Lookup existing inode by path ─────────────────────
         def lookup_path(path: str) -> int:

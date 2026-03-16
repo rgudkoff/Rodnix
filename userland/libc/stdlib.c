@@ -75,6 +75,11 @@ unsigned long strtoul(const char* nptr, char** endptr, int base)
     return value;
 }
 
+unsigned long long strtoull(const char* nptr, char** endptr, int base)
+{
+    return (unsigned long long)strtoul(nptr, endptr, base);
+}
+
 long strtol(const char* nptr, char** endptr, int base)
 {
     return (long)strtoul(nptr, endptr, base);
@@ -156,6 +161,11 @@ double strtod(const char* nptr, char** endptr)
 float strtof(const char* nptr, char** endptr)
 {
     return (float)strtod(nptr, endptr);
+}
+
+long double strtold(const char* nptr, char** endptr)
+{
+    return (long double)strtod(nptr, endptr);
 }
 
 double atof(const char* nptr)

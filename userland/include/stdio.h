@@ -80,9 +80,11 @@ void setbuf(FILE* stream, char* buf);
 int ungetc(int c, FILE* stream);
 int snprintf(char* str, size_t size, const char* fmt, ...);
 int sprintf(char* str, const char* fmt, ...);
+int sscanf(const char* str, const char* fmt, ...);
 int vfprintf(FILE* stream, const char* fmt, va_list ap);
 int vprintf(const char* fmt, va_list ap);
 int vsnprintf(char* str, size_t size, const char* fmt, va_list ap);
+int remove(const char* path);
 FILE* fdopen(int fd, const char* mode);
 int fileno(FILE* stream);
 

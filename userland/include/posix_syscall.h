@@ -43,6 +43,31 @@ static inline long posix_getpid(void)
     return rdnx_syscall0(POSIX_SYS_GETPID);
 }
 
+static inline long posix_getuid(void)
+{
+    return rdnx_syscall0(POSIX_SYS_GETUID);
+}
+
+static inline long posix_geteuid(void)
+{
+    return rdnx_syscall0(POSIX_SYS_GETEUID);
+}
+
+static inline long posix_getgid(void)
+{
+    return rdnx_syscall0(POSIX_SYS_GETGID);
+}
+
+static inline long posix_getegid(void)
+{
+    return rdnx_syscall0(POSIX_SYS_GETEGID);
+}
+
+static inline long posix_lstat(const char* path, void* st)
+{
+    return rdnx_syscall2(POSIX_SYS_LSTAT, (long)(uintptr_t)path, (long)(uintptr_t)st);
+}
+
 static inline long posix_write(int fd, const void* buf, uint64_t len)
 {
     return rdnx_syscall3(POSIX_SYS_WRITE, fd, (long)(uintptr_t)buf, (long)len);
@@ -454,6 +479,32 @@ static inline long posix_kmodload(const char* path)
 static inline long posix_kmodunload(const char* name)
 {
     return rdnx_syscall1(POSIX_SYS_KMODUNLOAD, (long)(uintptr_t)name);
+}
+
+static inline long posix_chmod(const char* path, unsigned int mode)
+{
+    return rdnx_syscall2(POSIX_SYS_CHMOD, (long)(uintptr_t)path, (long)mode);
+}
+
+static inline long posix_fchmod(int fd, unsigned int mode)
+{
+    return rdnx_syscall2(POSIX_SYS_FCHMOD, (long)fd, (long)mode);
+}
+
+/* Pass (uint32_t)-1 for uid or gid to leave it unchanged. */
+static inline long posix_chown(const char* path, unsigned int uid, unsigned int gid)
+{
+    return rdnx_syscall3(POSIX_SYS_CHOWN, (long)(uintptr_t)path, (long)uid, (long)gid);
+}
+
+static inline long posix_fchown(int fd, unsigned int uid, unsigned int gid)
+{
+    return rdnx_syscall3(POSIX_SYS_FCHOWN, (long)fd, (long)uid, (long)gid);
+}
+
+static inline long posix_lchown(const char* path, unsigned int uid, unsigned int gid)
+{
+    return rdnx_syscall3(POSIX_SYS_LCHOWN, (long)(uintptr_t)path, (long)uid, (long)gid);
 }
 
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

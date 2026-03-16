@@ -2231,6 +2231,49 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
     return RDNX_OK;
 }
 
+int ext2_chmod(vfs_node_t* node, uint16_t mode)
+{
+    if (!node || !node->inode || node->inode->fs_tag != VFS_FS_TAG_EXT2) {
+        return RDNX_E_INVALID;
+    }
+    uint32_t ino_num = (uint32_t)node->inode->fs_ino;
+    ext2_inode_t ino;
+    spinlock_lock(&g_ext2_rw_lock);
+    int rc = ext2_read_inode(&g_ext2_live, ino_num, &ino);
+    if (rc == RDNX_OK) {
+        /* Preserve file-type nibble (top 4 bits), replace permission bits. */
+        ino.mode = (uint16_t)((ino.mode & 0xF000u) | (mode & 0x0FFFu));
+        rc = ext2_write_inode(&g_ext2_live, ino_num, &ino);
+        if (rc == RDNX_OK) {
+            node->inode->mode = (uint16_t)(mode & 0x0FFFu);
+        }
+    }
+    spinlock_unlock(&g_ext2_rw_lock);
+    return rc;
+}
+
+int ext2_chown(vfs_node_t* node, uint32_t uid, uint32_t gid)
+{
+    if (!node || !node->inode || node->inode->fs_tag != VFS_FS_TAG_EXT2) {
+        return RDNX_E_INVALID;
+    }
+    uint32_t ino_num = (uint32_t)node->inode->fs_ino;
+    ext2_inode_t ino;
+    spinlock_lock(&g_ext2_rw_lock);
+    int rc = ext2_read_inode(&g_ext2_live, ino_num, &ino);
+    if (rc == RDNX_OK) {
+        if (uid != (uint32_t)-1) ino.uid = (uint16_t)(uid & 0xFFFFu);
+        if (gid != (uint32_t)-1) ino.gid = (uint16_t)(gid & 0xFFFFu);
+        rc = ext2_write_inode(&g_ext2_live, ino_num, &ino);
+        if (rc == RDNX_OK) {
+            if (uid != (uint32_t)-1) node->inode->uid = uid;
+            if (gid != (uint32_t)-1) node->inode->gid = gid;
+        }
+    }
+    spinlock_unlock(&g_ext2_rw_lock);
+    return rc;
+}
+
 static const vfs_fs_driver_t ext2_driver = {
     .name = "ext2",
     .mount = ext2_mount,
