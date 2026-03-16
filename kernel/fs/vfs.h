@@ -9,6 +9,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+typedef struct vm_object vm_object_t;
+
 typedef enum {
     VFS_NODE_FILE = 0,
     VFS_NODE_DIR  = 1
@@ -17,9 +19,18 @@ typedef enum {
 typedef struct vfs_inode {
     vfs_node_type_t type;
     uint32_t flags;
+    uint32_t fs_tag;
+    uint32_t fs_aux;
+    uint64_t fs_ino;
     size_t size;
     size_t capacity;
     uint8_t* data;
+    vm_object_t* mmap_object;
+    uint32_t node_gen; /* incremented on vfs_free_node; cache uses this to detect stale entries */
+    /* DAC permissions (P2): set at create time, enforced in vfs_open(). */
+    uint16_t mode;   /* permission bits — S_IRWXU / S_IRWXG / S_IRWXO */
+    uint32_t uid;    /* owner UID */
+    uint32_t gid;    /* owner GID */
 } vfs_inode_t;
 
 typedef struct vfs_node {
@@ -29,6 +40,16 @@ typedef struct vfs_node {
     struct vfs_node* sibling;
     struct vfs_node* children;
     vfs_inode_t* inode;
+    /*
+     * Refcounting (P1-6B):
+     *   ref_count = 1 at alloc (tree holds one reference).
+     *   +1 per open vfs_file_t (vfs_open / vfs_close).
+     *   vfs_unlink drops the tree reference; the node is freed when
+     *   the last vfs_file_t holding it is closed.
+     *   unlinked = true once the node has been removed from the namespace.
+     */
+    uint32_t ref_count;
+    bool     unlinked;
 } vfs_node_t;
 
 typedef struct vfs_mount {
@@ -42,6 +63,7 @@ typedef struct vfs_file {
     vfs_node_t* node;
     size_t pos;
     bool writable;
+    int open_flags; /* POSIX O_* flags saved at open(2) time; used by F_GETFL */
 } vfs_file_t;
 
 typedef struct vfs_stat {
@@ -65,7 +87,36 @@ enum {
 };
 
 enum {
-    VFS_INODE_CONSOLE = 1u << 0
+    VFS_INODE_CONSOLE = 1u << 0,
+    VFS_INODE_DEV_NULL = 1u << 1,
+    VFS_INODE_DEV_ZERO = 1u << 2,
+    VFS_INODE_CHARDEV = 1u << 3,
+    VFS_INODE_BLOCKDEV = 1u << 4,
+    VFS_INODE_FRAMEBUFFER = 1u << 5
+};
+
+/* Pixel format identifiers for fb_dev_info_t.pixel_format. */
+#define FB_PIXFMT_UNKNOWN   0u
+#define FB_PIXFMT_XRGB8888  1u  /* 32bpp: 0x00RRGGBB in memory (little-endian) */
+#define FB_PIXFMT_ARGB8888  2u  /* 32bpp: 0xAARRGGBB */
+#define FB_PIXFMT_RGB565    3u  /* 16bpp: rrrrrggggggbbbbb */
+
+/* Descriptor returned by read() on a /dev/fb* node.
+ * This struct is part of the stable userspace ABI — do not reorder fields. */
+typedef struct {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pitch;        /* bytes per scanline */
+    uint8_t  bpp;
+    uint8_t  pixel_format; /* FB_PIXFMT_* */
+    uint8_t  _pad[2];
+    uint64_t phys_base;    /* informational; do not use directly from userspace */
+    uint64_t size;         /* total framebuffer size in bytes */
+} fb_dev_info_t;
+
+enum {
+    VFS_FS_TAG_NONE = 0u,
+    VFS_FS_TAG_EXT2 = 1u
 };
 
 int vfs_init(void);
@@ -81,6 +132,9 @@ int vfs_mount_initrd_root(void);
 vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type);
 int vfs_fs_add_child(vfs_node_t* parent, vfs_node_t* child);
 int vfs_fs_set_file_data(vfs_node_t* node, const void* data, size_t size);
+/* Release a node allocated with vfs_fs_alloc_node that was never added to the
+ * tree (or was added and later removed). Drops the tree reference. */
+void vfs_fs_free_node(vfs_node_t* node);
 
 int vfs_mkdir(const char* path);
 int vfs_unlink(const char* path);
@@ -89,8 +143,13 @@ int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file);
 int vfs_close(vfs_file_t* file);
+/* Duplicate an open file descriptor — retains node so both src and dst
+ * hold independent references. dst must not already be open. */
+int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
 int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);
+int vfs_truncate(const char* path, uint64_t size);
+int vfs_ftruncate(vfs_file_t* file, uint64_t size);
 int vfs_stat(const char* path, vfs_stat_t* out_stat);
 int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat);

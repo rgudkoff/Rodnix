@@ -13,12 +13,13 @@
 #define VM_PROT_WRITE (1u << 1)
 #define VM_PROT_EXEC  (1u << 2)
 
-#define VM_MAP_F_ANON    (1u << 0)
-#define VM_MAP_F_PRIVATE (1u << 1)
-#define VM_MAP_F_FIXED   (1u << 2)
-#define VM_MAP_F_LAZY    (1u << 3)
-#define VM_MAP_F_STACK   (1u << 4)
-#define VM_MAP_F_COW     (1u << 5)
+#define VM_MAP_F_ANON        (1u << 0)
+#define VM_MAP_F_PRIVATE     (1u << 1)
+#define VM_MAP_F_FIXED       (1u << 2)
+#define VM_MAP_F_LAZY        (1u << 3)
+#define VM_MAP_F_STACK       (1u << 4)
+#define VM_MAP_F_COW         (1u << 5)
+#define VM_MAP_F_FRAMEBUFFER (1u << 6)  /* physical MMIO mapping; object_offset = display_idx */
 
 typedef struct vm_map_entry {
     uint64_t start;
@@ -39,6 +40,13 @@ int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys);
 int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags);
 int vm_task_set_brk_base(task_t* task, uint64_t brk_base);
 long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags);
+long vm_task_mmap_object(task_t* task,
+                         uint64_t addr_hint,
+                         uint64_t len,
+                         uint32_t prot,
+                         uint32_t flags,
+                         vm_object_t* obj,
+                         uint64_t object_offset);
 long vm_task_mmap_file(task_t* task,
                        uint64_t addr_hint,
                        uint64_t len,
@@ -47,7 +55,26 @@ long vm_task_mmap_file(task_t* task,
                        const uint8_t* data,
                        uint64_t data_size,
                        uint64_t file_offset);
+/* Takes ownership of fb (freed via vm_object_unref when the mapping is torn down). */
+long vm_task_mmap_file_backing(task_t* task,
+                               uint64_t addr_hint,
+                               uint64_t len,
+                               uint32_t prot,
+                               uint32_t flags,
+                               vm_file_backing_t* fb,
+                               uint64_t file_offset);
+/* Map physical pages (e.g. framebuffer) into user address space eagerly.
+ * display_idx is stored in object_offset for release tracking.
+ * Returns the virtual address on success, or a negative error code. */
+long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
+                       uint32_t prot, uint64_t phys_base, uint32_t display_idx);
+
+/* Register a hook called when a VM_MAP_F_FRAMEBUFFER entry is fully removed.
+ * The hook receives the display_idx stored at mmap time. */
+void vm_set_fb_release_hook(void (*fn)(uint32_t display_idx));
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len);
+int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags);
+int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot);
 long vm_task_brk(task_t* task, uint64_t new_break);
 int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys);
 void vm_task_destroy(task_t* task);

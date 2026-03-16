@@ -29,6 +29,8 @@ rodnix.iso
 
 # Userland rootfs binaries
 userland/rootfs/bin/
+userland/rootfs/lib/modules/*.kmod
+userland/rootfs/lib/modules/*.ko
 
 # Object files (keep source, ignore compiled)
 **/*.o
@@ -54,8 +56,9 @@ desktop.ini
 # Debug files
 *.gdb
 *.gdbsession
-core
-core.*
+# Unix core dump files (only at root or named exactly "core", not directories)
+/core
+core.[0-9]*
 
 # Documentation builds
 docs/_build/

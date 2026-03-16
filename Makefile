@@ -1,16 +1,49 @@
-# ================== RodNIX Makefile (macOS/Linux friendly, 64-bit) ==================
+# ================== RodNIX Makefile (cross-host, multi-arch) ==================
 
 SHELL := /bin/bash
 
-# Toolchain (64-bit)
-CC = x86_64-elf-gcc
+# Architecture selection.
+ARCH ?= x86_64
+SUPPORTED_ARCHES := x86_64 arm64 riscv64
+
+ifeq ($(filter $(ARCH),$(SUPPORTED_ARCHES)),)
+$(error Unsupported ARCH '$(ARCH)'. Supported values: $(SUPPORTED_ARCHES))
+endif
+
+ARCH_DIR := $(ARCH)
+
+# Toolchain defaults.
+ifeq ($(ARCH),x86_64)
+CROSS_COMPILE ?= x86_64-elf-
+CC = $(CROSS_COMPILE)gcc
 AS = nasm
-LD = x86_64-elf-ld
+LD = $(CROSS_COMPILE)ld
+ARCH_CFLAGS = -m64 -mcmodel=kernel -mno-red-zone
+ARCH_ASFLAGS = -f elf64
+ARCH_LDFLAGS = -m elf_x86_64
+QEMU_SYSTEM = qemu-system-x86_64
+else ifeq ($(ARCH),arm64)
+CROSS_COMPILE ?= aarch64-elf-
+CC = $(CROSS_COMPILE)gcc
+AS = $(CC)
+LD = $(CROSS_COMPILE)ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+ARCH_LDFLAGS =
+QEMU_SYSTEM = qemu-system-aarch64
+else ifeq ($(ARCH),riscv64)
+CROSS_COMPILE ?= riscv64-elf-
+CC = $(CROSS_COMPILE)gcc
+AS = $(CC)
+LD = $(CROSS_COMPILE)ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+ARCH_LDFLAGS =
+QEMU_SYSTEM = qemu-system-riscv64
+endif
 
 # Compiler flags (64-bit)
-CFLAGS = -m64 \
-         -mcmodel=kernel \
-         -mno-red-zone \
+CFLAGS = $(ARCH_CFLAGS) \
          -std=c11 \
          -ffreestanding \
          -fno-stack-protector \
@@ -25,18 +58,22 @@ CFLAGS = -m64 \
          -I./include \
          -I./kernel/core \
          -I./kernel/common \
-         -I./kernel/arch/x86_64 \
+         -I./kernel/arch \
+         -I./kernel/arch/$(ARCH_DIR) \
          -I./kernel/fabric \
          -I./kernel/input \
          -I./kernel/fs
 
-ASFLAGS = -f elf64
-LDFLAGS = -m elf_x86_64 -T link.ld --no-warn-mismatch -z max-page-size=0x1000
+ASFLAGS = $(ARCH_ASFLAGS)
+LDFLAGS = $(ARCH_LDFLAGS) -T link.ld --no-warn-mismatch -z max-page-size=0x1000
 
-BUILD_DIR = build
-ISO_DIR   = iso
+BUILD_ROOT = build
+ISO_ROOT   = iso
+BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
+ISO_DIR   = $(ISO_ROOT)/$(ARCH)
 USERLAND_DIR = userland
 USERLAND_ROOTFS = $(USERLAND_DIR)/rootfs
+USERLAND_BUILD_DIR = $(USERLAND_DIR)/build/$(ARCH)
 INITRD_IMG = $(BUILD_DIR)/initrd.img
 
 # ===== Sources =====
@@ -62,7 +99,7 @@ DRIVERS_OBJS = $(addprefix $(BUILD_DIR)/, $(DRIVERS_C_SRCS:.c=.o))
 BOOT_OBJS    = $(addprefix $(BUILD_DIR)/, $(BOOT_ASM_SRCS:.S=.o))
 
 KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
-ISO_OUT    = rodnix.iso
+ISO_OUT    = $(BUILD_DIR)/rodnix.iso
 
 UNAME_S := $(shell uname -s)
 
@@ -77,31 +114,36 @@ XORRISO := xorriso
 LIMINE := limine
 
 # QEMU accel
-# По умолчанию не используем аппаратное ускорение (TCG), чтобы избежать
-# проблем с недоступными ускорителями (hvf/kvm). При желании можно
-# переопределить переменную QEMU_ACCEL снаружи:
+# Use software emulation by default to avoid unavailable host accelerators.
+# Override QEMU_ACCEL externally when acceleration is known to be available:
 #   make run QEMU_ACCEL="-accel hvf"
 QEMU_ACCEL ?=
 
 # QEMU serial backend:
-# - По умолчанию используем mon:stdio для интерактивного ввода/вывода в терминале.
-# - Для старого поведения с логом в файл: QEMU_SERIAL="file:boot.log".
+# - Use mon:stdio by default for interactive terminal I/O.
+# - For file-backed logs, set QEMU_SERIAL="file:boot.log".
 QEMU_SERIAL ?= mon:stdio
 # QEMU NIC for first real Fabric backend (e1000).
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
+QEMU_CPU ?= qemu64,+apic,+x2apic
+QEMU_SMP ?= 1
+QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
+QEMU_DISK_SIZE_MB ?= 128
+QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
 #
-# QEMU flags: включаем APIC, используем классическую PC-машину с PS/2-клавой (i8042)
-# Для стабильного поллинга по портам 0x60/0x64 используем -machine pc.
+# QEMU flags: enable APIC and keep the legacy PS/2 controller path available.
+# Use -machine pc for stable polling on ports 0x60/0x64.
 QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
-                   -machine pc -cpu qemu64,+apic,+x2apic $(QEMU_NET_FLAGS)
+                   -drive file=$(QEMU_DISK_IMG),if=ide,format=raw,index=0,media=disk \
+                   -machine pc -smp $(QEMU_SMP) -cpu $(QEMU_CPU) $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S
 
-IDL_OUT ?= build/idl
+IDL_OUT ?= $(BUILD_DIR)/idl
 IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -196,32 +238,35 @@ iso: $(KERNEL_BIN) initrd
 	fi
 
 # ===== Run / Debug =====
-run:
-	@if [ -n "$(filter debug,$(MAKECMDGOALS))" ]; then \
-		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+run: qemu-disk
+	@if [ "$(V)" = "1" ] || [ "$(VERBOSE)" = "1" ]; then \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	else \
 		$(MAKE) --no-print-directory _run_impl; \
 	fi
 
-_run_impl: iso
-	@if command -v qemu-system-x86_64 >/dev/null 2>&1; then \
+run-verbose: qemu-disk
+	@$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"
+
+_run_impl: iso qemu-disk
+	@if command -v $(QEMU_SYSTEM) >/dev/null 2>&1; then \
 		echo "[*] Running QEMU $(QEMU_ACCEL), serial=$(QEMU_SERIAL), tee -> boot.log"; \
-		( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_ACCEL) || \
-		  qemu-system-x86_64 $(QEMU_FLAGS) ) 2>&1 | tee boot.log; \
+		( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_ACCEL) || \
+		  $(QEMU_SYSTEM) $(QEMU_FLAGS) ) 2>&1 | tee boot.log; \
 	else \
-		echo "[!] qemu-system-x86_64 not found. macOS: brew install qemu"; exit 1; \
+		echo "[!] $(QEMU_SYSTEM) not found. Install QEMU with your host package manager."; exit 1; \
 	fi
 
 debug:
 	@if [ -n "$(filter run,$(MAKECMDGOALS))" ]; then \
 		echo "[*] debug flag enabled for run (verbose boot logs)"; \
 	else \
-		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="startup_debug=verbose bootlog=verbose"; \
+		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	fi
 
-gdb: iso
-	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
-	( qemu-system-x86_64 $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
+gdb: iso qemu-disk
+	( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
+	( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
 	sleep 1
 	@if command -v $(GRUB_FILE) >/dev/null 2>&1 && $(GRUB_FILE) --is-x86-multiboot2 $(KERNEL_BIN); then \
 		echo "[OK] Multiboot2 header detected."; \
@@ -245,7 +290,7 @@ check: $(KERNEL_BIN)
 	}
 
 clean:
-	rm -rf $(BUILD_DIR)/ $(ISO_OUT) $(ISO_DIR)/
+	rm -rf $(BUILD_DIR)/ $(ISO_DIR)/
 	@echo "[+] Cleaned build artifacts"
 
 # Check dependencies
@@ -270,6 +315,18 @@ check-contract-10:
 check-ifconfig-smoke:
 	@bash scripts/ci/smoke_ifconfig_qemu.sh
 
+qemu-disk:
+	@mkdir -p $(dir $(QEMU_DISK_IMG))
+	@if [ ! -f "$(QEMU_DISK_IMG)" ]; then \
+		echo "[*] Creating QEMU disk image: $(QEMU_DISK_IMG) ($(QEMU_DISK_SIZE_MB) MiB)"; \
+		dd if=/dev/zero of="$(QEMU_DISK_IMG)" bs=1m count="$(QEMU_DISK_SIZE_MB)" status=none; \
+	fi
+	@if [ ! -f "$(QEMU_DISK_FS_STAMP)" ]; then \
+		echo "[*] Formatting demo ext2 filesystem on $(QEMU_DISK_IMG)"; \
+		python3 scripts/mkext2_demo.py --output "$(QEMU_DISK_IMG)" --size-mb "$(QEMU_DISK_SIZE_MB)"; \
+		touch "$(QEMU_DISK_FS_STAMP)"; \
+	fi
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -291,7 +348,9 @@ help:
 	@echo "  userland    - Build userland binaries"
 	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
-	@echo "  run         - Run kernel in QEMU"
+	@echo "  run         - Run kernel in QEMU (quiet)"
+	@echo "  run V=1     - Run kernel in QEMU (verbose boot)"
+	@echo "  run-verbose - Same as 'run V=1'"
 	@echo "  debug       - Run with verbose kernel diagnostics"
 	@echo "  gdb         - Run paused for debugger (:1234)"
 	@echo "  check       - Verify Multiboot2 header"
@@ -299,14 +358,28 @@ help:
 	@echo "  check-contract - Run contract CI smoke in QEMU"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
-	@echo "  sync-bsd-abi - Sync userland ABI headers from FreeBSD vendor snapshot"
+	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
 	@echo "  check-deps  - Check if all dependencies are installed"
 	@echo "  help        - Show this help"
+	@echo ""
+	@echo "QEMU overrides:"
+	@echo "  QEMU_CPU=max   - Override the guest CPU model/features"
+	@echo "  QEMU_SMP=2     - Run with more than one virtual CPU (experimental)"
+	@echo ""
+	@echo "Architecture overrides:"
+	@echo "  ARCH=x86_64    - Active target"
+	@echo "  ARCH=arm64     - Bootstrap scaffolding only"
+	@echo "  ARCH=riscv64   - Bootstrap scaffolding only"
+	@echo ""
+	@echo "Artifact layout:"
+	@echo "  Kernel image   - $(BUILD_ROOT)/<arch>/rodnix.kernel"
+	@echo "  ISO image      - $(BUILD_ROOT)/<arch>/rodnix.iso"
+	@echo "  ISO staging    - $(ISO_ROOT)/<arch>/"
 	@echo ""
 	@echo "For installation instructions, see INSTALL.md"
 
 userland: posix-syscalls
-	@$(MAKE) -C $(USERLAND_DIR)
+	@$(MAKE) -C $(USERLAND_DIR) ARCH=$(ARCH)
 
 kernel: $(KERNEL_OBJS)
 

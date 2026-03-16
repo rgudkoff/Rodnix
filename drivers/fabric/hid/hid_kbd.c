@@ -13,8 +13,8 @@
 #include "../../../kernel/fabric/service/service.h"
 #include "../../../kernel/core/interrupts.h"
 #include "../../../kernel/input/input.h"
-#include "../../../kernel/arch/x86_64/pic.h"
-#include "../../../kernel/arch/x86_64/apic.h"
+#include "../../../kernel/arch/pic.h"
+#include "../../../kernel/arch/apic.h"
 #include "../../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -155,6 +155,16 @@ static bool hid_kbd_probe(fabric_device_t *dev)
     kputs("[HID-KBD] probe: NO MATCH\n");
     return false;
 }
+
+static int hid_kbd_match_score(fabric_device_t* dev)
+{
+    return hid_kbd_probe(dev) ? FABRIC_MATCH_GENERIC : FABRIC_MATCH_NONE;
+}
+
+static const fabric_property_t hid_kbd_match_properties[] = {
+    { .key = "bus", .type = FABRIC_PROP_STR, .value.str = "ps2" },
+    { .key = "name", .type = FABRIC_PROP_STR, .value.str = "ps2-keyboard" },
+};
 
 /* Process queued scan codes (internal implementation) */
 static void keyboard_process_queue_internal(void)
@@ -400,6 +410,9 @@ static void hid_kbd_detach(fabric_device_t *dev)
 /* HID Keyboard driver */
 static fabric_driver_t hid_kbd_driver = {
     .name = "hid_kbd",
+    .match_properties = hid_kbd_match_properties,
+    .match_property_count = 2,
+    .match_score = hid_kbd_match_score,
     .probe = hid_kbd_probe,
     .attach = hid_kbd_attach,
     .publish = hid_kbd_publish,

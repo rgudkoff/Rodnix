@@ -70,6 +70,12 @@
   - control chars `intr`, `erase`, `kill`, `eof` (например `stty intr ^C`).
 - Добавлена утилита `/bin/ifconfig` (userspace), работающая через syscall
   `netiflist` и Fabric net-service.
+- Добавлена userspace-утилита `/bin/diskinfo`:
+  - `diskinfo` — список блочных устройств;
+  - `diskinfo -r <dev> <lba>` — чтение сектора через `blockread`.
+- Добавлена userspace-утилита `/bin/kmodctl`:
+  - `kmodctl ls` — список модулей;
+  - `kmodctl load <path>` / `kmodctl unload <name>`.
 - Для CI есть авто-сценарий `/etc/smoke.ifconfig.auto`:
   `init` запускает `/bin/ifconfig`, ждёт завершения и печатает `[SMK]` маркеры.
 - Таблица POSIX syscall-ов теперь ведётся через master-таблицу:
@@ -77,6 +83,9 @@
   - генерация: `scripts/mkposixsyscalls.py`;
   - output: `kernel/posix/posix_sysnums.h`, `userland/include/posix_sysnums.h`,
     `kernel/posix/posix_sysent.inc`.
+- Для kmod-пути в rootfs собираются тестовые образы:
+  - `/lib/modules/demo.kmod` (header-only формат `RDKMOD1`);
+  - `/lib/modules/demo.ko` (ELF relocatable с секцией `.rodnix_mod`).
 
 ## Проверенный smoke‑test
 
@@ -94,6 +103,8 @@
   - `ioctl` (минимум для console TTY)
   - `nanosleep` (таймауты в userspace)
   - `kill/sigaction/sigreturn` (базовый signal path)
+  - `blocklist/blockread` (дисковая диагностика из userland)
+  - `kmodls/kmodload/kmodunload` (контур реестра модулей)
 
 ## Инварианты
 

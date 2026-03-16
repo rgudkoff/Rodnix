@@ -22,6 +22,20 @@ extern "C" {
 #define SEEK_CUR 1
 #define SEEK_END 2
 
+static inline int rdnx_errno_from_status(long r)
+{
+    switch ((int)r) {
+        case -2: return EINVAL;
+        case -3: return ENOMEM;
+        case -4: return ENOENT;
+        case -5: return EBUSY;
+        case -6: return EACCES;
+        case -7: return ENOSYS;
+        case -8: return EAGAIN;
+        default: return EIO;
+    }
+}
+
 static inline int rdnx_open_flags_from_posix(int flags)
 {
     enum {
@@ -63,7 +77,7 @@ static inline ssize_t read(int fd, void* buf, size_t len)
 {
     long r = posix_read(fd, buf, (uint64_t)len);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (ssize_t)r;
@@ -73,7 +87,7 @@ static inline ssize_t write(int fd, const void* buf, size_t len)
 {
     long r = posix_write(fd, buf, (uint64_t)len);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (ssize_t)r;
@@ -83,7 +97,7 @@ static inline int close(int fd)
 {
     long r = posix_close(fd);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (int)r;
@@ -92,6 +106,16 @@ static inline int close(int fd)
 static inline int pipe(int pipefd[2])
 {
     long r = posix_pipe(pipefd);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int pipe2(int pipefd[2], int flags)
+{
+    long r = posix_pipe2(pipefd, flags);
     if (r < 0) {
         errno = (int)(-r);
         return -1;
@@ -119,14 +143,44 @@ static inline int dup2(int oldfd, int newfd)
     return (int)r;
 }
 
+static inline int dup3(int oldfd, int newfd, int flags)
+{
+    long r = posix_dup3(oldfd, newfd, flags);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return (int)r;
+}
+
 static inline off_t lseek(int fd, off_t off, int whence)
 {
     long r = posix_lseek(fd, (long)off, whence);
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return (off_t)-1;
     }
     return (off_t)r;
+}
+
+static inline int truncate(const char* path, off_t length)
+{
+    long r = posix_truncate(path, (uint64_t)length);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
+}
+
+static inline int ftruncate(int fd, off_t length)
+{
+    long r = posix_ftruncate(fd, (uint64_t)length);
+    if (r < 0) {
+        errno = (int)(-r);
+        return -1;
+    }
+    return 0;
 }
 
 static inline int fcntl(int fd, int cmd, int arg)
@@ -143,7 +197,7 @@ static inline int open(const char* path, int flags)
 {
     long r = posix_open(path, rdnx_open_flags_from_posix(flags));
     if (r < 0) {
-        errno = (int)(-r);
+        errno = rdnx_errno_from_status(r);
         return -1;
     }
     return (int)r;
@@ -258,7 +312,7 @@ static inline pid_t spawnv(const char* path, char* const argv[])
 static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
     enum { RDNX_E_BUSY = -5 };
-    enum { SYS_TEST_SLEEP = 62 };
+    enum { SYS_TEST_SLEEP = 120 };
     long wr = posix_waitpid((long)pid, status);
     if ((options & WNOHANG) != 0) {
         if (wr == (long)RDNX_E_BUSY) {

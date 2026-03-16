@@ -7,6 +7,14 @@ cd "$ROOT_DIR"
 LOG_FILE="${LOG_FILE:-boot.log}"
 TIMEOUT_SEC="${TIMEOUT_SEC:-20}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
+QEMU_DISPLAY="${QEMU_DISPLAY:--display none}"
+ARCH="${ARCH:-x86_64}"
+BUILD_DIR="${BUILD_DIR:-build/${ARCH}}"
+ISO_PATH="${ISO_PATH:-${BUILD_DIR}/rodnix.iso}"
+DISK_IMG="${DISK_IMG:-${BUILD_DIR}/rodnix-disk.img}"
+DISK_MB="${DISK_MB:-128}"
+DISK_FS_STAMP="${DISK_FS_STAMP:-${BUILD_DIR}/rodnix-disk.ext2.stamp}"
+FRESH_DISK="${FRESH_DISK:-1}"
 FLAG_FILE="userland/rootfs/etc/contract.auto"
 
 cleanup() {
@@ -28,7 +36,18 @@ dump_diag() {
 touch "$FLAG_FILE"
 rm -f "$LOG_FILE"
 
-make iso
+make iso ARCH="$ARCH"
+mkdir -p "$(dirname "$DISK_IMG")"
+if [ "$FRESH_DISK" = "1" ]; then
+  rm -f "$DISK_IMG" "$DISK_FS_STAMP"
+fi
+if [ ! -f "$DISK_IMG" ]; then
+  dd if=/dev/zero of="$DISK_IMG" bs=1m count="$DISK_MB" status=none
+fi
+if [ ! -f "$DISK_FS_STAMP" ]; then
+  python3 scripts/mkext2_demo.py --output "$DISK_IMG" --size-mb "$DISK_MB"
+  touch "$DISK_FS_STAMP"
+fi
 
 if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
   echo "[contract] qemu not found: $QEMU_BIN"
@@ -36,7 +55,8 @@ if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
 fi
 
 set +e
-"$QEMU_BIN" -m 1G -boot d -cdrom rodnix.iso -serial file:"$LOG_FILE" -no-reboot -no-shutdown &
+"$QEMU_BIN" -m 1G -boot d -cdrom "$ISO_PATH" ${QEMU_DISPLAY} -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
+  -drive file="$DISK_IMG",if=ide,format=raw,index=0,media=disk &
 QEMU_PID=$!
 set -e
 

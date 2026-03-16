@@ -32,6 +32,17 @@ static bool vga_display_probe(fabric_device_t* dev)
     return (dev->class_code == PCI_CLASS_DISPLAY && dev->subclass == PCI_SUBCLASS_VGA);
 }
 
+static int vga_display_match_score(fabric_device_t* dev)
+{
+    return vga_display_probe(dev) ? FABRIC_MATCH_GENERIC : FABRIC_MATCH_NONE;
+}
+
+static const fabric_property_t vga_display_match_properties[] = {
+    { .key = "bus", .type = FABRIC_PROP_STR, .value.str = "pci" },
+    { .key = "class-code", .type = FABRIC_PROP_U32, .value.u32 = PCI_CLASS_DISPLAY },
+    { .key = "subclass", .type = FABRIC_PROP_U32, .value.u32 = PCI_SUBCLASS_VGA },
+};
+
 static int vga_display_attach(fabric_device_t* dev)
 {
     if (!dev) {
@@ -78,6 +89,9 @@ static void vga_display_detach(fabric_device_t* dev)
 
 static fabric_driver_t g_driver = {
     .name = "vga-display-stub",
+    .match_properties = vga_display_match_properties,
+    .match_property_count = 3,
+    .match_score = vga_display_match_score,
     .probe = vga_display_probe,
     .attach = vga_display_attach,
     .publish = vga_display_publish,

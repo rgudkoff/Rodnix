@@ -8,6 +8,7 @@
 #include "../../../kernel/fabric/driver/driver.h"
 #include "../../../kernel/fabric/service/net_service.h"
 #include "../../../kernel/net/net.h"
+#include "../../../kernel/net/socket.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
@@ -31,8 +32,11 @@ static uint32_t g_next_index = 0;
 
 static int virtio_net_tx(fabric_netif_t* iface, const void* frame, uint32_t len)
 {
-    (void)iface;
-    return net_loopback_frame_tx(frame, len);
+    if (!iface || !frame || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    (void)fabric_netif_rx_submit(iface, frame, len);
+    return (net_ingress_frame(frame, len, iface->context) == 0) ? RDNX_OK : RDNX_E_GENERIC;
 }
 
 static bool virtio_net_probe(fabric_device_t* dev)
@@ -48,6 +52,17 @@ static bool virtio_net_probe(fabric_device_t* dev)
     }
     return true;
 }
+
+static int virtio_net_match_score(fabric_device_t* dev)
+{
+    return virtio_net_probe(dev) ? FABRIC_MATCH_DEVICE_EXACT : FABRIC_MATCH_NONE;
+}
+
+static const fabric_property_t virtio_net_match_properties[] = {
+    { .key = "bus", .type = FABRIC_PROP_STR, .value.str = "pci" },
+    { .key = "vendor-id", .type = FABRIC_PROP_U32, .value.u32 = VIRTIO_VENDOR_ID },
+    { .key = "class-code", .type = FABRIC_PROP_U32, .value.u32 = PCI_CLASS_NETWORK },
+};
 
 static int virtio_net_attach(fabric_device_t* dev)
 {
@@ -130,6 +145,9 @@ static void virtio_net_detach(fabric_device_t* dev)
 
 static fabric_driver_t g_driver = {
     .name = "virtio-net-stub",
+    .match_properties = virtio_net_match_properties,
+    .match_property_count = 3,
+    .match_score = virtio_net_match_score,
     .probe = virtio_net_probe,
     .attach = virtio_net_attach,
     .publish = virtio_net_publish,

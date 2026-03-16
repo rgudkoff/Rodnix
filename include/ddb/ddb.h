@@ -1,0 +1,3 @@
+#ifndef _RODNIX_COMPAT_DDB_DDB_H
+#define _RODNIX_COMPAT_DDB_DDB_H
+#endif

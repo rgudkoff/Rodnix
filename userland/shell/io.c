@@ -165,3 +165,19 @@ int read_line(char* out, int out_len)
         }
     }
 }
+
+void shell_print_prompt(void)
+{
+    if (shell_ps1[0] != '\0') {
+        (void)write_str(shell_ps1);
+        return;
+    }
+
+    long uid = rdnx_syscall0(POSIX_SYS_GETEUID);
+    (void)write_str(" ");
+    if (uid == 0) {
+        (void)write_str("# ");
+    } else {
+        (void)write_str("$ ");
+    }
+}

@@ -16,6 +16,7 @@
 #include "../../common/scheduler.h"
 #include "../../common/syscall.h"
 #include "../../common/tracev2.h"
+#include "../../linux/linux_compat.h"
 #include "../../core/task.h"
 #include "../../vm/vm_fault.h"
 #include "interrupt_frame.h"
@@ -103,6 +104,17 @@ static void irq_send_eoi(uint32_t irq)
     } else {
         /* No APIC - use only PIC EOI */
         pic_send_eoi(irq);
+    }
+}
+
+static void interrupt_send_eoi(uint32_t vector)
+{
+    if (vector >= 32 && vector < 48) {
+        irq_send_eoi(vector - 32);
+        return;
+    }
+    if (apic_is_available()) {
+        apic_send_eoi();
     }
 }
 
@@ -220,7 +232,8 @@ static const char* exception_names[] = {
  * @brief Unified interrupt dispatcher
  * 
  * This is the main interrupt handler that routes interrupts to their
- * appropriate handlers. It handles both exceptions (0-31) and IRQs (32-47).
+ * appropriate handlers. It handles exceptions (0-31) and hardware interrupts
+ * (32-255, excluding the syscall gate on 128).
  * 
  * @param regs Pointer to saved CPU registers
  * 
@@ -234,17 +247,8 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         return handle_syscall(regs);
     }
     
-    /* Handle IRQ (32-47) - PIC IRQs are mapped to these vectors */
-    if (vector >= 32 && vector < 48) {
-        uint32_t irq = vector - 32;
-        
-        /* Validate IRQ number */
-        if (irq > 15) {
-            /* Invalid IRQ - send EOI and return silently */
-            irq_send_eoi(irq);
-            return regs;
-        }
-        
+    /* Handle hardware interrupts (32-255), except the syscall gate on 128. */
+    if (vector >= 32 && vector != SYSCALL_VECTOR) {
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -257,19 +261,21 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             ctx.arch_specific = (void*)regs;
             interrupt_handlers[vector](&ctx);
         } else {
-            /* Unhandled IRQ - mask it silently (no panic) */
-            /* Keep timer IRQ enabled to preserve preemption. */
-            if (irq != 0) {
-                extern bool ioapic_is_available(void);
-                if (apic_is_available() && ioapic_is_available()) {
-                    apic_disable_irq((uint8_t)irq);
-                } else {
-                    pic_disable_irq((uint8_t)irq);
+            /* Only legacy PIC IRQs can be safely masked here. */
+            if (vector < 48) {
+                uint32_t irq = vector - 32;
+                if (irq != 0) {
+                    extern bool ioapic_is_available(void);
+                    if (apic_is_available() && ioapic_is_available()) {
+                        apic_disable_irq((uint8_t)irq);
+                    } else {
+                        pic_disable_irq((uint8_t)irq);
+                    }
                 }
             }
         }
-        
-        irq_send_eoi(irq);
+
+        interrupt_send_eoi(vector);
         if (vector == 32) {
             /* Timer tick drives preemption */
             scheduler_tick();
@@ -286,6 +292,9 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             task_t* task = task_get_current();
             if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
                 return regs;
+            }
+            if (task && task_get_abi(task) == TASK_ABI_LINUX) {
+                linux_compat_trace_dump_recent();
             }
         }
         tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);
@@ -450,8 +459,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         return regs;
     }
     
-    /* Unknown interrupt vector (48-255) - ignore silently */
-    /* These are typically spurious interrupts or reserved vectors */
+    /* Unknown vector outside exception/syscall/hardware ranges - ignore silently */
     return regs;
 }
 

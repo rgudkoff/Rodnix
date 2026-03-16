@@ -64,3 +64,26 @@ Use one section per import:
 - Notes:
   - This is a vendor/reference baseline for gradual POSIX/userland integration.
   - Not wired into Rodnix build yet.
+
+### `freebsd-ext2fs-headers-2026-03-15`
+
+- Upstream: official FreeBSD source tree snapshot
+- Upstream branch/tag: `main`
+- Upstream commit: `not pinned (local file snapshot from user-provided mirror)`
+- Imported on: `2026-03-15`
+- Imported by: `codex`
+- License: `BSD-family (as declared in file headers)`
+- Upstream path(s):
+  - `sys/fs/ext2fs/fs.h`
+  - `sys/fs/ext2fs/ext2fs.h`
+  - `sys/fs/ext2fs/ext2_dinode.h`
+  - `sys/fs/ext2fs/inode.h`
+  - `sys/fs/ext2fs/ext2_extern.h`
+  - `sys/fs/ext2fs/ext2_mount.h`
+- Local path(s):
+  - `third_party/freebsd/ext2fs/*`
+- Modifications:
+  - `none (verbatim copy)`
+- Notes:
+  - Imported as reference baseline for EXT2 RW port into Rodnix.
+  - Not wired into Rodnix build yet.

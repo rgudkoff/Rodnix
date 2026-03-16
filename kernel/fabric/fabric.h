@@ -111,6 +111,8 @@ int fabric_driver_register(fabric_driver_t *driver);
 
 /* Device publication */
 int fabric_device_publish(fabric_device_t *device);
+uint32_t fabric_dispatcher_run(void);
+uint32_t fabric_dispatcher_tick(void);
 
 /* Service publication and lookup */
 int fabric_service_publish(fabric_service_t *service);

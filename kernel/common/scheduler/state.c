@@ -4,7 +4,6 @@
 
 bool scheduler_initialized = false;
 bool scheduler_running = false;
-thread_t* current_thread = NULL;
 sched_policy_t current_policy = SCHED_POLICY_PRIORITY;
 scheduler_stats_t stats = {0};
 
@@ -18,6 +17,7 @@ struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 scheduler_reap_stats_t reap_stats = {0};
 waitq_t scheduler_sleep_waitq;
+uint64_t bucket_last_run_tick[READY_QUEUE_LEVELS] = {0};
 
 static bool scheduler_thread_transition_valid(thread_state_t from, thread_state_t to)
 {
@@ -104,12 +104,12 @@ int scheduler_init(void)
         return 0;
     }
 
-    current_thread = NULL;
     thread_set_current(NULL);
     current_policy = SCHED_POLICY_PRIORITY;
     scheduler_running = false;
     for (int i = 0; i < READY_QUEUE_LEVELS; i++) {
         TAILQ_INIT(&ready_queues[i]);
+        bucket_last_run_tick[i] = 0;
     }
     waitq_init(&scheduler_sleep_waitq, "scheduler_sleep");
     ticks_per_slice = 1;
@@ -167,11 +167,11 @@ int scheduler_remove_task(task_t* task)
 
 task_t* scheduler_get_current_task(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return NULL;
     }
-
-    return current_thread->task;
+    return cur->task;
 }
 
 int scheduler_add_thread(thread_t* thread)
@@ -187,6 +187,10 @@ int scheduler_add_thread(thread_t* thread)
     thread->dyn_priority = thread->priority;
     thread->inherited_priority = thread->priority;
     thread->has_inherited = 0;
+    /* Назначить DEFAULT-бакет если не был выставлен явно */
+    if (!thread->sched_bucket_explicit) {
+        thread->sched_bucket = (uint8_t)SCHED_BUCKET_DEFAULT;
+    }
     ready_enqueue(thread);
     stats.total_tasks++;
 

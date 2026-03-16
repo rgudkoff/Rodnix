@@ -1,4 +1,5 @@
 #include <stddef.h>
+#include <errno.h>
 #include <string.h>
 
 size_t strlen(const char* s)
@@ -153,5 +154,42 @@ char* strchr(const char* s, int c)
         if (*s == '\0') {
             return 0;
         }
+    }
+}
+
+char* strerror(int errnum)
+{
+    switch (errnum) {
+        case 0: return "No error";
+        case EPERM: return "Operation not permitted";
+        case ENOENT: return "No such file or directory";
+        case ESRCH: return "No such process";
+        case EINTR: return "Interrupted system call";
+        case EIO: return "Input/output error";
+        case ENXIO: return "Device not configured";
+        case E2BIG: return "Argument list too long";
+        case ENOEXEC: return "Exec format error";
+        case EBADF: return "Bad file descriptor";
+        case ECHILD: return "No child processes";
+        case EDEADLK: return "Resource deadlock avoided";
+        case ENOMEM: return "Cannot allocate memory";
+        case EACCES: return "Permission denied";
+        case EFAULT: return "Bad address";
+        case EBUSY: return "Device or resource busy";
+        case EEXIST: return "File exists";
+        case ENODEV: return "Operation not supported by device";
+        case ENOTDIR: return "Not a directory";
+        case EISDIR: return "Is a directory";
+        case EINVAL: return "Invalid argument";
+        case ENFILE: return "Too many open files in system";
+        case EMFILE: return "Too many open files";
+        case ENOSPC: return "No space left on device";
+        case ESPIPE: return "Illegal seek";
+        case EROFS: return "Read-only file system";
+        case EPIPE: return "Broken pipe";
+        case ERANGE: return "Result too large";
+        case EAGAIN: return "Resource temporarily unavailable";
+        case ENOSYS: return "Function not implemented";
+        default: return "Unknown error";
     }
 }

@@ -1,47 +1,62 @@
 # Документация RodNIX (RU)
 
-Актуальная документация разделена на компактный `core`-набор.
-Устаревшие, дублирующие и исторические материалы вынесены в архив.
+Этот каталог — основной источник актуальной документации проекта.
+Архивные материалы сохранены отдельно и не должны использоваться как текущая
+спецификация.
 
-## Старт
+## Рекомендуемый порядок чтения
 
-- `overview.md` — границы проекта и принципы.
-- `architecture.md` — текущая архитектура и карта подсистем.
-- `build_run.md` — практическая сборка и запуск.
+1. `overview.md` — границы проекта, цели и инженерные принципы.
+2. `architecture.md` — актуальная архитектурная карта.
+3. `build_run.md` — практическая сборка, запуск и рабочие команды.
+4. `debugging.md` — диагностика, логи и сценарии отладки.
+5. `vfs.md` / `userspace.md` / `syscalls.md` — прикладные спецификации
+   подсистем.
+
+## Основной набор документов
+
+- `overview.md` — назначение проекта и ограничения области.
+- `architecture.md` — карта подсистем и текущие архитектурные решения.
+- `boot.md` — путь загрузки и ранняя инициализация.
+- `memory.md` — модель памяти и инварианты VM/PMM.
+- `scheduler.md` — поведение и целевой дизайн планировщика.
+- `vfs.md` — семантика VFS, inode/path/FD слой.
+- `syscalls.md` — syscall ABI, namespaces и статус интерфейсов.
+- `userspace.md` — bootstrap userland и runtime-модель.
+- `debugging.md` — диагностика и debug workflow.
+- `conventions.md` — инженерные правила и соглашения.
+- `failure_model.md` — модель отказов и fail-fast поведение.
+
+## Контракты и governance
+
+- `unix_layer_contract.md` — границы `kernel/unix`.
+- `unix_process_model.md` — модель процессов и lifecycle.
+- `unix_process_contract_tests.md` — контрактные тесты и инварианты.
+- `contract_governance.md` — правила сопровождения контрактов.
+
+## Планы и управление развитием
+
 - `execution_plan_os_foundation.md` — основной исполнимый план.
 - `p0_focus_plan.md` — текущий фокус стабилизации.
-
-## Core-документы
-
-- `adr_darwin_layering.md` — целевая слоистая модель
-  (`kernel mechanisms -> unix layer -> posix ABI`).
-- `unix_layer_contract.md` — контракт и границы `kernel/unix`.
-- `unix_process_model.md` — модель `spawn/exec/wait/exit`.
-- `unix_process_contract_tests.md` — матрица инвариантов и тестов (CT-xxx).
-- `contract_governance.md` — правила CI-gate и эволюции CT-контрактов.
-- `bsd_import_plan.md` — стратегия интеграции BSD-кода.
-- `bsd_posix_userland_plan.md` — план POSIX userland поверх BSD ABI.
-- `boot.md` — путь загрузки.
-- `memory.md` — модель памяти и текущие ограничения.
-- `scheduler.md` — модель планировщика.
-- `syscalls.md` — syscall ABI и правила.
-- `vfs.md` — VFS и каталог/FD семантика.
-- `userspace.md` — userland bootstrap и runtime.
-- `debugging.md` — отладка и диагностика.
-- `conventions.md` — инженерные правила.
 - `industrial_readiness.md` — критерии готовности к выпуску.
-- `industrial_gap.md` — gap-анализ к критериям готовности.
-- `failure_model.md` — fail-fast и модель ошибок.
+- `industrial_gap.md` — gap-анализ относительно критериев готовности.
+
+## Вспомогательные материалы
+
+- `bsd_import_plan.md` — стратегия сопровождения импортированного кода.
+- `bsd_posix_userland_plan.md` — развитие userland-слоя поверх текущего ABI.
+- `code_audit_2026_03_15.md` — отчёт по целевому аудиту кода.
+- `code_review_fix_plan.md` — план исправления замечаний ревью.
 
 ## Архив
 
-- `docs/ru/archive/` — legacy-документы (не являются текущей спецификацией).
-- `docs/archive/` — архив старых EN high-level планов.
+- `docs/ru/archive/` — исторические и снятые с baseline документы.
+- `docs/archive/` — архив высокоуровневых материалов на английском языке.
 
-## Связанные документы (EN)
+## Правила использования
 
-- `README.md`
-- `ARCHITECTURE.md`
-- `64BIT_MIGRATION.md`
-- `ROADMAP.md`
-- `docs/README.md`
+- если документ в архиве, он не является текущим контрактом;
+- если поведение системы меняется, связанный активный документ должен быть
+  обновлён в том же changeset;
+- для операционных и входных документов приоритетом являются краткость,
+  точность и воспроизводимость.

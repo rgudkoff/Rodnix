@@ -5,10 +5,10 @@
 
 #include "loader.h"
 #include "elf.h"
-#include "../arch/x86_64/usermode.h"
-#include "../arch/x86_64/paging.h"
-#include "../arch/x86_64/pmm.h"
-#include "../arch/x86_64/config.h"
+#include "../arch/usermode.h"
+#include "../arch/paging.h"
+#include "../arch/pmm.h"
+#include "../arch/config.h"
 #include "../fs/vfs.h"
 #include "../core/task.h"
 #include "../vm/vm_map.h"
@@ -19,9 +19,13 @@
 #include "../../include/common.h"
 
 #define USER_STACK_TOP 0x0000000080000000ULL
-#define USER_PAGE_SIZE X86_64_PAGE_SIZE_4KB
+#define USER_PAGE_SIZE ARCH_PAGE_SIZE_4KB
 #define LOADER_ARG_MAX 16
+#define LOADER_ENV_MAX 32
 #define LOADER_ARG_STR_MAX 128
+#define LOADER_ENV_STR_MAX 128
+#define ELFOSABI_SYSV 0
+#define ELFOSABI_LINUX 3
 
 static inline uint64_t align_down(uint64_t v, uint64_t align)
 {
@@ -119,7 +123,7 @@ static int loader_map_segment(uint64_t pml4_phys,
             return RDNX_E_GENERIC;
         }
 
-        uint8_t* dst = (uint8_t*)X86_64_PHYS_TO_VIRT(phys);
+        uint8_t* dst = (uint8_t*)ARCH_PHYS_TO_VIRT(phys);
         memset(dst, 0, USER_PAGE_SIZE);
 
         if (va < seg_start) {
@@ -164,13 +168,28 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
         uint64_t va = out_img->stack_bottom + (uint64_t)i * USER_PAGE_SIZE;
         uint64_t phys = pmm_alloc_page_in_zone(PMM_ZONE_NORMAL);
         if (!phys) {
+            /* Rollback pages already mapped (P1-5a) */
+            for (uint32_t j = 0; j < i; j++) {
+                paging_unmap_page_pml4(pml4_phys,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmm_free_page(out_img->stack_phys[j]);
+                out_img->stack_phys[j] = 0;
+            }
             return RDNX_E_NOMEM;
         }
         uint64_t flags = PTE_PRESENT | PTE_USER | PTE_RW;
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
+            /* Free the unmap-failed page, then rollback prior pages */
+            pmm_free_page(phys);
+            for (uint32_t j = 0; j < i; j++) {
+                paging_unmap_page_pml4(pml4_phys,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmm_free_page(out_img->stack_phys[j]);
+                out_img->stack_phys[j] = 0;
+            }
             return RDNX_E_GENERIC;
         }
-        memset(X86_64_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);
+        memset(ARCH_PHYS_TO_VIRT(phys), 0, USER_PAGE_SIZE);
         out_img->stack_phys[i] = phys;
     }
 
@@ -203,7 +222,7 @@ static int loader_stack_write(const loader_image_t* img, uint64_t user_va, const
         if (chunk > rem) {
             chunk = rem;
         }
-        uint8_t* dst = (uint8_t*)X86_64_PHYS_TO_VIRT(img->stack_phys[page_idx]) + in_page;
+        uint8_t* dst = (uint8_t*)ARCH_PHYS_TO_VIRT(img->stack_phys[page_idx]) + in_page;
         memcpy(dst, in, chunk);
         cur += chunk;
         in += chunk;
@@ -213,26 +232,56 @@ static int loader_stack_write(const loader_image_t* img, uint64_t user_va, const
     return RDNX_OK;
 }
 
-static int loader_prepare_user_argv(loader_image_t* img,
+static int loader_prepare_user_args(loader_image_t* img,
                                     int argc,
                                     const char* const argv[],
-                                    uint64_t* out_argv_ptr)
+                                    const char* const envp[],
+                                    uint64_t* out_argv_ptr,
+                                    uint64_t* out_envp_ptr)
 {
-    if (!img || !out_argv_ptr) {
+    if (!img || !out_argv_ptr || !out_envp_ptr) {
         return RDNX_E_INVALID;
     }
     *out_argv_ptr = 0;
-    if (argc <= 0 || !argv) {
-        return RDNX_OK;
+    *out_envp_ptr = 0;
+
+    int envc = 0;
+    if (envp) {
+        while (envc < LOADER_ENV_MAX && envp[envc]) {
+            envc++;
+        }
     }
+
     if (argc > LOADER_ARG_MAX) {
         argc = LOADER_ARG_MAX;
+    }
+    if (argc < 0) {
+        argc = 0;
     }
 
     uint64_t sp = img->user_stack;
     uint64_t argv_user[LOADER_ARG_MAX];
+    uint64_t envp_user[LOADER_ENV_MAX];
+
+    for (int i = envc - 1; i >= 0; i--) {
+        const char* s = envp[i] ? envp[i] : "";
+        size_t slen = 0;
+        while (s[slen] && slen < (LOADER_ENV_STR_MAX - 1)) {
+            slen++;
+        }
+        sp -= (uint64_t)(slen + 1);
+        if (sp < img->stack_bottom) {
+            return RDNX_E_NOMEM;
+        }
+        int wr = loader_stack_write(img, sp, s, slen + 1);
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        envp_user[i] = sp;
+    }
+
     for (int i = argc - 1; i >= 0; i--) {
-        const char* s = argv[i] ? argv[i] : "";
+        const char* s = (argv && argv[i]) ? argv[i] : "";
         size_t slen = 0;
         while (s[slen] && slen < (LOADER_ARG_STR_MAX - 1)) {
             slen++;
@@ -249,24 +298,71 @@ static int loader_prepare_user_argv(loader_image_t* img,
     }
 
     sp &= ~0x7ULL;
-    sp -= (uint64_t)(argc + 1) * sizeof(uint64_t);
+    uint64_t env_slots = (uint64_t)(envc + 1);
+    if (img->abi == TASK_ABI_LINUX) {
+        /* This guest ABI stack layout expects an auxv list terminated by AT_NULL. */
+        env_slots += 2; /* AT_NULL, 0 */
+    }
+    sp -= env_slots * sizeof(uint64_t);
     if (sp < img->stack_bottom) {
         return RDNX_E_NOMEM;
     }
-    for (int i = 0; i < argc; i++) {
-        int wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &argv_user[i], sizeof(uint64_t));
+    for (int i = 0; i < envc; i++) {
+        int wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &envp_user[i], sizeof(uint64_t));
         if (wr != RDNX_OK) {
             return wr;
         }
     }
     uint64_t null_ptr = 0;
-    int wr = loader_stack_write(img, sp + (uint64_t)argc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+    int wr = loader_stack_write(img, sp + (uint64_t)envc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+    if (wr != RDNX_OK) {
+        return wr;
+    }
+    if (img->abi == TASK_ABI_LINUX) {
+        wr = loader_stack_write(img, sp + (uint64_t)(envc + 1) * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        wr = loader_stack_write(img, sp + (uint64_t)(envc + 2) * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+    }
+    *out_envp_ptr = sp;
+
+    sp &= ~0x7ULL;
+    sp -= (uint64_t)(argc + 1) * sizeof(uint64_t);
+    if (sp < img->stack_bottom) {
+        return RDNX_E_NOMEM;
+    }
+    for (int i = 0; i < argc; i++) {
+        wr = loader_stack_write(img, sp + (uint64_t)i * sizeof(uint64_t), &argv_user[i], sizeof(uint64_t));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+    }
+    wr = loader_stack_write(img, sp + (uint64_t)argc * sizeof(uint64_t), &null_ptr, sizeof(uint64_t));
     if (wr != RDNX_OK) {
         return wr;
     }
 
-    img->user_stack = sp & ~0xFULL;
-    *out_argv_ptr = sp;
+    if (img->abi == TASK_ABI_LINUX) {
+        sp &= ~0x7ULL;
+        if (sp < img->stack_bottom + sizeof(uint64_t)) {
+            return RDNX_E_NOMEM;
+        }
+        sp -= sizeof(uint64_t);
+        uint64_t argc_u64 = (uint64_t)(argc > 0 ? argc : 0);
+        wr = loader_stack_write(img, sp, &argc_u64, sizeof(argc_u64));
+        if (wr != RDNX_OK) {
+            return wr;
+        }
+        img->user_stack = sp;
+        *out_argv_ptr = sp + sizeof(uint64_t);
+    } else {
+        img->user_stack = sp & ~0xFULL;
+        *out_argv_ptr = sp;
+    }
     return RDNX_OK;
 }
 
@@ -300,7 +396,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         if (ph[i].p_type != PT_LOAD) {
             continue;
         }
-        if (ph[i].p_vaddr >= X86_64_KERNEL_VIRT_BASE) {
+        if (ph[i].p_vaddr >= ARCH_KERNEL_VIRT_BASE) {
             return RDNX_E_INVALID;
         }
         int ret = loader_map_segment(pml4_phys, image, size, &ph[i], out);
@@ -315,6 +411,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
 
     out->pml4_phys = pml4_phys;
     out->entry = eh->e_entry;
+    out->abi = (eh->e_osabi == ELFOSABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
     out->user_stack = 0;
     out->stack_bottom = 0;
     for (uint32_t i = 0; i < LOADER_USER_STACK_PAGES; i++) {
@@ -364,16 +461,21 @@ int loader_enter_user_stub(void)
         }
         return RDNX_E_INVALID;
     }
-    usermode_enter(entry, user_stack, rsp0, 0, 0);
+    usermode_enter(entry, user_stack, rsp0, 0, 0, 0);
     return 0;
 }
 
 int loader_exec(const char* path)
 {
-    return loader_execve(path, 0, NULL);
+    return loader_execve(path, 0, NULL, NULL);
 }
 
-int loader_execve(const char* path, int argc, const char* const argv[])
+int loader_execve_ex(const char* path,
+                    int argc,
+                    const char* const argv[],
+                    const char* const envp[],
+                    loader_pre_exec_commit_fn pre_commit,
+                    void* pre_commit_ctx)
 {
     if (!path) {
         return RDNX_E_INVALID;
@@ -397,6 +499,10 @@ int loader_execve(const char* path, int argc, const char* const argv[])
         }
         return ret;
     }
+    /* BusyBox prebuilt binaries often use ELFOSABI_SYSV but still expect the guest syscall ABI. */
+    if (path && strncmp(path, "/bin/busybox", 12) == 0) {
+        img.abi = TASK_ABI_LINUX;
+    }
 
     thread_t* cur = thread_get_current();
     uint64_t rsp0 = 0;
@@ -408,14 +514,23 @@ int loader_execve(const char* path, int argc, const char* const argv[])
     }
 
     uint64_t argv_ptr = 0;
-    ret = loader_prepare_user_argv(&img, argc, argv, &argv_ptr);
+    uint64_t envp_ptr = 0;
+    ret = loader_prepare_user_args(&img, argc, argv, envp, &argv_ptr, &envp_ptr);
     if (ret != RDNX_OK) {
         return ret;
+    }
+
+    if (pre_commit) {
+        ret = pre_commit(pre_commit_ctx);
+        if (ret != RDNX_OK) {
+            return ret;
+        }
     }
 
     usermode_set_pml4(img.pml4_phys);
     if (cur && cur->task) {
         cur->task->address_space = (void*)(uintptr_t)img.pml4_phys;
+        task_set_abi(cur->task, (task_abi_t)img.abi);
         if (vm_task_prepare_exec(cur->task, img.pml4_phys) == RDNX_OK) {
             for (uint32_t i = 0; i < img.seg_count; i++) {
                 const loader_segment_t* s = &img.segs[i];
@@ -440,6 +555,12 @@ int loader_execve(const char* path, int argc, const char* const argv[])
                    (void*)(uintptr_t)img.user_stack,
                    rsp0,
                    (uint64_t)(argc > 0 ? argc : 0),
-                   argv_ptr);
+                   argv_ptr,
+                   envp_ptr);
     return RDNX_OK;
+}
+
+int loader_execve(const char* path, int argc, const char* const argv[], const char* const envp[])
+{
+    return loader_execve_ex(path, argc, argv, envp, NULL, NULL);
 }

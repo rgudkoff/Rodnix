@@ -9,7 +9,7 @@
 #include "scstat.h"
 
 #define FD_STDOUT 1
-#define SCSTAT_CAP 64
+#define SCSTAT_CAP 80
 
 static long write_buf(const char* s, uint64_t len)
 {
@@ -53,7 +53,10 @@ static const char* syscall_name(uint32_t n)
         "hwlist", "fabricls", "fabricevents", "sysinfo", "clock_gettime",
         "stat", "fstat", "lseek", "scstat", "pipe", "dup", "dup2", "chdir",
         "getcwd", "mkdir", "unlink", "rmdir", "rename", "ioctl", "nanosleep",
-        "kill", "sigaction", "sigreturn"
+        "kill", "sigaction", "sigreturn", "blocklist", "blockread",
+        "kmodls", "kmodload", "kmodunload", "blockwrite", "truncate",
+        "ftruncate", "poll", "select", "dup3", "pipe2", "futex", "msync",
+        "socket", "bind", "connect", "sendto", "recvfrom", "ping"
     };
     if (n < (uint32_t)(sizeof(kNames) / sizeof(kNames[0]))) {
         return kNames[n];

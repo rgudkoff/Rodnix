@@ -11,8 +11,10 @@
 #include "bus/bus.h"
 #include "bus/pci.h"
 #include "device/device.h"
+#include "dispatcher.h"
 #include "driver/driver.h"
 #include "service/service.h"
+#include "../usb/usb.h"
 #include "../../include/console.h"
 #include "../../include/common.h"
 #include "../../core/interrupts.h"
@@ -60,6 +62,7 @@ static uint32_t driver_count = 0;
 static uint32_t device_count = 0;
 static uint32_t service_count = 0;
 static bool fabric_initialized = false;
+static uint64_t fabric_dispatch_last_tick = 0;
 
 /* Spinlock for thread safety */
 static spinlock_t fabric_lock;
@@ -88,6 +91,15 @@ static uint32_t event_head = 0;
 static uint32_t event_count = 0;
 static uint32_t event_dropped = 0;
 static uint64_t event_seq = 1;
+
+static void fabric_node_set_driver_locked(fabric_device_t* dev, const char* driver_name);
+static void fabric_node_path_for_provider_locked(void* provider, char* out, uint32_t cap);
+static void fabric_event_emit(uint32_t type,
+                              const char* node_path,
+                              const char* subject,
+                              const char* detail,
+                              uint32_t flags);
+static void fabric_device_seed_properties(fabric_device_t* device);
 
 static void f_strcpy(char* dst, uint32_t cap, const char* src)
 {
@@ -243,6 +255,7 @@ static void fabric_node_bootstrap_locked(void)
     int32_t root = fabric_node_add_locked("/fabric", "fabric", "root", "fabric", -1, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     int32_t devices = fabric_node_add_locked("/fabric/devices", "devices", "scope", "device", root, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/devices/pci0", "pci0", "bus", "pci", devices, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
+    (void)fabric_node_add_locked("/fabric/devices/usb0", "usb0", "bus", "usb", devices, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/devices/platform", "platform", "bus", "platform", devices, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/devices/virtual", "virtual", "bus", "virtual", devices, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/devices/unknown", "unknown", "bus", "device", devices, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
@@ -252,6 +265,218 @@ static void fabric_node_bootstrap_locked(void)
     (void)fabric_node_add_locked("/fabric/subsystems/input", "input", "subsystem", "input", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/subsystems/display", "display", "subsystem", "display", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
     (void)fabric_node_add_locked("/fabric/subsystems/storage", "storage", "subsystem", "storage", subsystems, NULL, FABRIC_STATE_ACTIVE, 0, NULL);
+}
+
+static void fabric_snapshot_devices(fabric_device_t** out, uint32_t* out_count)
+{
+    if (!out || !out_count) {
+        return;
+    }
+
+    spinlock_lock(&fabric_lock);
+    uint32_t n = device_count;
+    for (uint32_t i = 0; i < n && i < MAX_DEVICES; i++) {
+        out[i] = device_registry[i];
+    }
+    spinlock_unlock(&fabric_lock);
+    *out_count = n;
+}
+
+static void fabric_snapshot_drivers(fabric_driver_t** out, uint32_t* out_count)
+{
+    if (!out || !out_count) {
+        return;
+    }
+
+    spinlock_lock(&fabric_lock);
+    uint32_t n = driver_count;
+    for (uint32_t i = 0; i < n && i < MAX_DRIVERS; i++) {
+        out[i] = driver_registry[i];
+    }
+    spinlock_unlock(&fabric_lock);
+    *out_count = n;
+}
+
+static void fabric_device_clear_properties(fabric_device_t* device)
+{
+    if (!device) {
+        return;
+    }
+    device->property_count = 0;
+    memset(device->properties, 0, sizeof(device->properties));
+}
+
+static void fabric_device_add_u32_property(fabric_device_t* device, const char* key, uint32_t value)
+{
+    if (!device || !key || device->property_count >= FABRIC_PROPERTY_MAX) {
+        return;
+    }
+    fabric_property_t* prop = &device->properties[device->property_count++];
+    prop->key = key;
+    prop->type = FABRIC_PROP_U32;
+    prop->value.u32 = value;
+}
+
+static void fabric_device_add_str_property(fabric_device_t* device, const char* key, const char* value)
+{
+    if (!device || !key || !value || device->property_count >= FABRIC_PROPERTY_MAX) {
+        return;
+    }
+    fabric_property_t* prop = &device->properties[device->property_count++];
+    prop->key = key;
+    prop->type = FABRIC_PROP_STR;
+    prop->value.str = value;
+}
+
+static void fabric_device_seed_properties(fabric_device_t* device)
+{
+    const char* bus_name = "unknown";
+
+    if (!device) {
+        return;
+    }
+
+    if (strcmp(device->name, "pci-device") == 0 && device->bus_private) {
+        bus_name = "pci";
+    } else if (f_starts_with(device->name, "usb-")) {
+        bus_name = "usb";
+    } else if (f_starts_with(device->name, "ps2-")) {
+        bus_name = "ps2";
+    } else if (f_starts_with(device->name, "virt-")) {
+        bus_name = "virt";
+    } else if (f_starts_with(device->name, "platform-")) {
+        bus_name = "platform";
+    }
+
+    fabric_device_clear_properties(device);
+    fabric_device_add_str_property(device, "name", device->name ? device->name : "device");
+    fabric_device_add_str_property(device, "bus", bus_name);
+    fabric_device_add_u32_property(device, "vendor-id", device->vendor_id);
+    fabric_device_add_u32_property(device, "device-id", device->device_id);
+    fabric_device_add_u32_property(device, "class-code", device->class_code);
+    fabric_device_add_u32_property(device, "subclass", device->subclass);
+    fabric_device_add_u32_property(device, "prog-if", device->prog_if);
+    if (strcmp(bus_name, "pci") == 0 && device->bus_private) {
+        const pci_device_info_t* pci = (const pci_device_info_t*)device->bus_private;
+        fabric_device_add_u32_property(device, "pci-cap-bitmap", pci->capability_bits);
+        fabric_device_add_u32_property(device, "pci-int-line", pci->interrupt_line);
+        fabric_device_add_u32_property(device, "pci-int-pin", pci->interrupt_pin);
+        fabric_device_add_u32_property(device, "pci-secondary-bus", pci->secondary_bus);
+        fabric_device_add_u32_property(device, "pci-subordinate-bus", pci->subordinate_bus);
+    } else if (strcmp(bus_name, "usb") == 0 && device->bus_private) {
+        const usb_port_device_info_t* usb = (const usb_port_device_info_t*)device->bus_private;
+        if (usb->host_name) {
+            fabric_device_add_str_property(device, "usb-host", usb->host_name);
+        }
+        fabric_device_add_u32_property(device, "usb-port", usb->port_number);
+        fabric_device_add_u32_property(device, "usb-speed", usb->speed);
+        fabric_device_add_str_property(device, "usb-speed-name", usb_speed_name(usb->speed));
+        fabric_device_add_str_property(device, "usb-state", usb_device_state_name(usb->state));
+        fabric_device_add_u32_property(device, "usb-slot-id", usb->slot_id);
+        fabric_device_add_u32_property(device, "usb-address", usb->address);
+        fabric_device_add_u32_property(device, "usb-max-packet0", usb->max_packet_size0);
+        fabric_device_add_u32_property(device, "usb-request", usb->setup.bRequest);
+        fabric_device_add_str_property(device, "usb-request-name", usb_request_name(usb->setup.bRequest));
+    }
+}
+
+static uint32_t fabric_dispatcher_run_matches(fabric_device_t** matched_devices,
+                                              fabric_driver_t** matched_drivers,
+                                              uint32_t max_matches)
+{
+    fabric_device_t* devices[MAX_DEVICES];
+    fabric_driver_t* drivers[MAX_DRIVERS];
+    uint32_t device_snapshot_count = 0;
+    uint32_t driver_snapshot_count = 0;
+
+    fabric_snapshot_devices(devices, &device_snapshot_count);
+    fabric_snapshot_drivers(drivers, &driver_snapshot_count);
+
+    return fabric_dispatcher_poll(devices,
+                                  device_snapshot_count,
+                                  drivers,
+                                  driver_snapshot_count,
+                                  matched_devices,
+                                  matched_drivers,
+                                  max_matches);
+}
+
+static int fabric_finalize_driver_attach(fabric_device_t* dev, fabric_driver_t* driver)
+{
+    char node_path[FABRIC_NODE_PATH_MAX];
+
+    if (!dev || !driver) {
+        return -1;
+    }
+
+    spinlock_lock(&fabric_lock);
+    if (dev->dispatch_state == FABRIC_DEV_DISPATCH_ATTACHED) {
+        spinlock_unlock(&fabric_lock);
+        return 0;
+    }
+
+    if (!dev->driver_state) {
+        dev->driver_state = driver;
+    }
+    dev->attached_driver_name = driver->name;
+    dev->dispatch_state = FABRIC_DEV_DISPATCH_ATTACHED;
+    fabric_node_set_driver_locked(dev, driver->name);
+    fabric_node_path_for_provider_locked(dev, node_path, sizeof(node_path));
+    spinlock_unlock(&fabric_lock);
+
+    fabric_log("[fabric] driver attached: %s -> %s\n",
+               driver->name, dev->name);
+    fabric_event_emit(FABRIC_EVENT_DRIVER_ATTACHED,
+                     node_path,
+                     dev->name ? dev->name : "device",
+                     driver->name,
+                     0);
+    if (driver->publish) {
+        (void)driver->publish(dev);
+    }
+    return 0;
+}
+
+uint32_t fabric_dispatcher_run(void)
+{
+    fabric_device_t* matched_devices[MAX_DEVICES];
+    fabric_driver_t* matched_drivers[MAX_DEVICES];
+    uint32_t matched_count = fabric_dispatcher_run_matches(matched_devices,
+                                                           matched_drivers,
+                                                           MAX_DEVICES);
+
+    for (uint32_t i = 0; i < matched_count && i < MAX_DEVICES; i++) {
+        (void)fabric_finalize_driver_attach(matched_devices[i], matched_drivers[i]);
+    }
+
+    return matched_count;
+}
+
+uint32_t fabric_dispatcher_tick(void)
+{
+    uint64_t now = 0;
+    uint32_t matched = 0;
+
+    if (!fabric_initialized) {
+        return 0;
+    }
+
+    extern uint64_t scheduler_get_ticks(void);
+    now = scheduler_get_ticks();
+
+    spinlock_lock(&fabric_lock);
+    if (fabric_dispatch_last_tick != 0 && (now - fabric_dispatch_last_tick) < 50u) {
+        spinlock_unlock(&fabric_lock);
+        return 0;
+    }
+    fabric_dispatch_last_tick = now;
+    spinlock_unlock(&fabric_lock);
+
+    matched = fabric_dispatcher_run();
+    if (matched > 0) {
+        fabric_log("[fabric] dispatcher tick attached=%u\n", matched);
+    }
+    return matched;
 }
 
 static const char* fabric_device_label(const fabric_device_t* dev)
@@ -646,6 +871,8 @@ int fabric_bus_register(fabric_bus_t *bus)
     if (bus->enumerate) {
         bus->enumerate();
     }
+
+    (void)fabric_dispatcher_run();
     
     return 0;
 }
@@ -670,51 +897,9 @@ int fabric_driver_register(fabric_driver_t *driver)
     
     fabric_log("[fabric] driver registered: %s\n", driver->name);
     
-    /* Try to match with existing devices */
-    fabric_log("[fabric] Matching driver with devices (device_count=%u)\n", device_count);
-    spinlock_lock(&fabric_lock);
-    for (uint32_t i = 0; i < device_count; i++) {
-        fabric_device_t *dev = device_registry[i];
-        if (!dev || dev->driver_state) {
-            continue; /* Already has driver */
-        }
-        
-        /* Release lock before probe/attach */
-        spinlock_unlock(&fabric_lock);
-        
-        fabric_log("[fabric] Trying to probe device %u: %s\n", i, dev->name ? dev->name : "(null)");
-        if (driver->probe && driver->probe(dev)) {
-            fabric_log("[fabric] Probe matched, calling attach\n");
-            if (driver->attach && driver->attach(dev) == 0) {
-                fabric_log("[fabric] Attach successful, will mark device as attached\n");
-                /* Mark device as attached - need to reacquire lock first */
-                spinlock_lock(&fabric_lock);
-                dev->driver_state = driver; /* Mark as attached */
-                fabric_node_set_driver_locked(dev, driver->name);
-                char node_path[FABRIC_NODE_PATH_MAX];
-                fabric_node_path_for_provider_locked(dev, node_path, sizeof(node_path));
-                spinlock_unlock(&fabric_lock);
-                fabric_log("[fabric] driver attached: %s -> %s\n", 
-                         driver->name, dev->name);
-                fabric_event_emit(FABRIC_EVENT_DRIVER_ATTACHED,
-                                 node_path,
-                                 dev->name ? dev->name : "device",
-                                 driver->name,
-                                 0);
-                if (driver->publish) {
-                    (void)driver->publish(dev);
-                }
-            } else {
-                fabric_log("[fabric] Attach failed\n");
-            }
-        } else {
-            fabric_log("[fabric] Probe did not match\n");
-        }
-        
-        /* Reacquire lock for next iteration */
-        spinlock_lock(&fabric_lock);
-    }
-    spinlock_unlock(&fabric_lock);
+    /* Try to match with existing devices through the dispatcher. */
+    fabric_log("[fabric] Dispatch driver %s across current devices\n", driver->name);
+    (void)fabric_dispatcher_run();
     
     fabric_log("[fabric] Driver registration complete\n");
     return 0;
@@ -736,7 +921,11 @@ int fabric_device_publish(fabric_device_t *device)
     
     uint32_t dev_index = device_count;
     device_registry[device_count++] = device;
+    device->attached_driver_name = NULL;
     device->driver_state = NULL; /* No driver yet */
+    device->dispatch_state = FABRIC_DEV_DISPATCH_PENDING;
+    device->attach_attempts = 0;
+    fabric_device_seed_properties(device);
 
     char path[FABRIC_NODE_PATH_MAX];
     const char* class_name = "device";
@@ -754,6 +943,11 @@ int fabric_device_publish(fabric_device_t *device)
         fabric_build_pci_path(path, sizeof(path), pci);
         class_name = "pci";
         parent_idx = fabric_node_find_path_locked("/fabric/devices/pci0");
+    } else if (f_starts_with(device->name, "usb-")) {
+        f_strcpy(path, sizeof(path), "/fabric/devices/usb0/dev");
+        f_append(path, sizeof(path), idx_tail);
+        class_name = "usb";
+        parent_idx = fabric_node_find_path_locked("/fabric/devices/usb0");
     } else if (f_starts_with(device->name, "ps2-")) {
         f_strcpy(path, sizeof(path), "/fabric/devices/platform/ps2kbd0");
         class_name = "input";
@@ -785,42 +979,8 @@ int fabric_device_publish(fabric_device_t *device)
                      device->name ? device->name : "device",
                      0);
     
-    /* Try to match with drivers */
-    spinlock_lock(&fabric_lock);
-    for (uint32_t i = 0; i < driver_count; i++) {
-        fabric_driver_t *driver = driver_registry[i];
-        if (!driver || !driver->probe) {
-            continue;
-        }
-        
-        /* Release lock before probe/attach */
-        spinlock_unlock(&fabric_lock);
-        
-        if (driver->probe(device)) {
-            if (driver->attach && driver->attach(device) == 0) {
-                device->driver_state = driver; /* Mark as attached */
-                spinlock_lock(&fabric_lock);
-                fabric_node_set_driver_locked(device, driver->name);
-                char node_path[FABRIC_NODE_PATH_MAX];
-                fabric_node_path_for_provider_locked(device, node_path, sizeof(node_path));
-                spinlock_unlock(&fabric_lock);
-                fabric_log("[fabric] driver attached: %s -> %s\n", 
-                         driver->name, device->name);
-                fabric_event_emit(FABRIC_EVENT_DRIVER_ATTACHED,
-                                 node_path,
-                                 device->name ? device->name : "device",
-                                 driver->name,
-                                 0);
-                if (driver->publish) {
-                    (void)driver->publish(device);
-                }
-                return 0;
-            }
-        }
-        
-        spinlock_lock(&fabric_lock);
-    }
-    spinlock_unlock(&fabric_lock);
+    /* Try to match with registered drivers through the dispatcher. */
+    (void)fabric_dispatcher_run();
     
     return 0;
 }

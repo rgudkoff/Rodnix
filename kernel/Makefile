@@ -2,6 +2,8 @@
 
 KERNEL_C_SRCS += \
 	kernel/main.c \
+	kernel/init/sysinit.c \
+	kernel/init/runtime.c \
 	kernel/common/scheduler/state.c \
 	kernel/common/scheduler/runqueue.c \
 	kernel/common/scheduler/control.c \
@@ -16,7 +18,10 @@ KERNEL_C_SRCS += \
 	kernel/common/security.c \
 	kernel/common/bootstrap.c \
 	kernel/common/loader.c \
+	kernel/common/kmod.c \
 	kernel/common/bootlog.c \
+	kernel/common/ktrace.c \
+	kernel/common/startup_trace.c \
 	kernel/common/tracev2.c \
 	kernel/common/tty_console.c \
 	kernel/common/waitq.c \
@@ -26,16 +31,50 @@ KERNEL_C_SRCS += \
 	kernel/unix/exec/unix_exec.c \
 	kernel/unix/process/unix_process.c \
 	kernel/posix/posix_syscall.c \
+	kernel/posix/posix_sys_ids.c \
+	kernel/posix/posix_sys_file.c \
+	kernel/posix/posix_sys_proc.c \
+	kernel/posix/posix_sys_vm.c \
+	kernel/posix/posix_sys_info.c \
 	kernel/common/console.c \
 	kernel/common/debug.c \
 	kernel/common/task.c \
 	kernel/vm/vm_object.c \
+	kernel/vm/vm_page_ref.c \
 	kernel/vm/vm_pager.c \
 	kernel/vm/vm_map.c \
 	kernel/vm/vm_fault.c \
 	kernel/common/string.c \
 	kernel/common/heap.c \
 	kernel/common/shell.c \
+	kernel/net/net.c \
+	kernel/net/bsd_inet.c \
+	kernel/net/bsd_ether.c \
+	kernel/net/bsd_mbuf.c \
+	kernel/net/bsd_ifnet.c \
+	kernel/net/bsd_netisr.c \
+	kernel/net/stack.c \
+	kernel/net/socket.c \
+	kernel/usb/usb.c \
+	kernel/linux/linux_errno.c \
+	kernel/linux/linux_compat.c \
+	kernel/fabric/fabric.c \
+	kernel/fabric/dispatcher.c \
+	kernel/fabric/spin.c \
+	kernel/fabric/service/net_service.c \
+	kernel/fabric/service/block_service.c \
+	kernel/fabric/service/platform_services.c \
+	kernel/fabric/bus/virt.c \
+	kernel/fabric/bus/pci.c \
+	kernel/fabric/bus/usb.c \
+	kernel/fabric/bus/ps2.c \
+	kernel/input/input_core.c \
+	drivers/fabric/usb/usb_xhci.c \
+	drivers/fabric/usb/usb_host_pci.c \
+	kernel/gfx/gfx.c \
+	kernel/gfx/gfx_console.c
+
+KERNEL_ARCH_X86_64_C_SRCS := \
 	kernel/arch/x86_64/interrupts.c \
 	kernel/arch/x86_64/idt.c \
 	kernel/arch/x86_64/pic.c \
@@ -49,22 +88,27 @@ KERNEL_C_SRCS += \
 	kernel/arch/x86_64/pit.c \
 	kernel/arch/x86_64/memory.c \
 	kernel/arch/x86_64/boot.c \
+	kernel/arch/x86_64/acpi.c \
 	kernel/arch/x86_64/syscall_fast.c \
-	kernel/arch/x86_64/usermode.c \
-	kernel/net/net.c \
-	kernel/net/socket.c \
-	kernel/fabric/fabric.c \
-	kernel/fabric/spin.c \
-	kernel/fabric/service/net_service.c \
-	kernel/fabric/service/block_service.c \
-	kernel/fabric/service/platform_services.c \
-	kernel/fabric/bus/virt.c \
-	kernel/fabric/bus/pci.c \
-	kernel/fabric/bus/ps2.c \
-	kernel/input/input_core.c
+	kernel/arch/x86_64/usermode.c
+
+KERNEL_ARCH_ARM64_C_SRCS := \
+	kernel/arch/arm64/interrupts.c
+
+KERNEL_ARCH_RISCV64_C_SRCS := \
+	kernel/arch/riscv64/interrupts.c
 
 include kernel/fs/Makefile
 
-KERNEL_ASM_SRCS += \
+KERNEL_ARCH_X86_64_ASM_SRCS := \
 	kernel/arch/x86_64/isr_stubs.S \
 	kernel/arch/x86_64/syscall_fast_entry.S
+
+ifeq ($(ARCH),x86_64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_X86_64_C_SRCS)
+KERNEL_ASM_SRCS += $(KERNEL_ARCH_X86_64_ASM_SRCS)
+else ifeq ($(ARCH),arm64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_ARM64_C_SRCS)
+else ifeq ($(ARCH),riscv64)
+KERNEL_C_SRCS += $(KERNEL_ARCH_RISCV64_C_SRCS)
+endif

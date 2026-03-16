@@ -1,37 +1,47 @@
 # Contributing Guidelines
 
-## Scope
+## Purpose
 
-This document defines how changes should be prepared and submitted so the
-repository history stays readable and reviewable.
+This document defines the minimum rules for preparing changes so repository
+history, code review, and operational documentation stay manageable.
 
 ## Before You Start
 
-1. Check open issues and existing plans in `docs/`.
-2. Keep each change focused on one problem.
-3. For large or cross-subsystem work, open an issue first and agree on scope.
+1. Check the active documents under `docs/ru/`.
+2. Keep each change focused on one problem or one engineering objective.
+3. For large or cross-subsystem work, align the scope before implementation.
 
 ## Branching
 
-1. Branch from `main`.
-2. Use descriptive branch names:
-   - `fix/<area>-<issue>`
-   - `feat/<area>-<capability>`
-   - `refactor/<area>-<goal>`
-3. Avoid long-lived branches that mix unrelated work.
+Recommended approach:
 
-## Code Standards
+1. start from the current team baseline branch;
+2. use descriptive branch names;
+3. do not mix unrelated work in the same branch.
 
-1. Prefer clear, explicit code over compact clever patterns.
-2. Keep subsystem boundaries intact (`arch`, `core`, `fabric`, `fs`, `posix`, `userland`).
-3. Add comments only where intent is not obvious from code.
-4. Do not introduce dead code, placeholder paths, or commented-out logic.
+Examples:
 
-## Commit Style
+- `fix/<area>-<issue>`
+- `feat/<area>-<capability>`
+- `refactor/<area>-<goal>`
+- `docs/<area>-<topic>`
 
-One commit must represent one logical change.
+## Change Requirements
 
-Commit message format:
+- preserve subsystem boundaries (`arch`, `core`, `fabric`, `fs`, `posix`,
+  `userland`);
+- do not add dead code, temporary workaround paths without clear purpose, or
+  commented-out logic;
+- source code comments must be short, technical, and written in English;
+- when behavior changes, update the relevant documentation in the same PR or
+  changeset;
+- for imported external code, update the related notice and source metadata.
+
+## Commit Rules
+
+One commit should represent one logical change.
+
+Recommended format:
 
 ```text
 <type>(<scope>): <short summary>
@@ -46,48 +56,59 @@ Validation:
 - commands/tests run
 ```
 
-Recommended `type` values: `fix`, `feat`, `refactor`, `docs`, `build`, `test`, `ci`.
+Recommended `type` values:
 
-Rules:
+- `fix`
+- `feat`
+- `refactor`
+- `docs`
+- `build`
+- `test`
+- `ci`
 
-1. No `WIP`/`tmp`/`misc` commit subjects.
-2. Squash fixup commits before opening PR.
-3. Do not mix refactor and behavior change in the same commit unless required.
-4. Include validation details for kernel/userland behavior changes.
+Mandatory rules:
 
-## Pull Request Style
+1. do not use `WIP`, `tmp`, `misc`, or similar subjects;
+2. do not mix refactoring and behavior change unless it is necessary;
+3. squash noisy fixup commits before submission;
+4. if tests were not run, state that explicitly.
+
+## Pull Request Expectations
 
 A PR should be small enough for one focused review session.
 
-PR description must include:
+The PR description should include:
 
-1. Problem statement.
-2. Design decision and tradeoffs.
-3. Exact user-visible or kernel-visible behavior change.
-4. Validation evidence (build/test/smoke output summary).
-5. Risks and rollback strategy (if applicable).
+1. the problem statement;
+2. the chosen design and trade-offs;
+3. the observable behavior change;
+4. validation evidence;
+5. risks and rollback strategy, when applicable.
 
-## Validation Baseline
+## Minimum Validation
 
 For most changes:
 
 1. `make`
-2. Relevant CI smoke script(s) from `scripts/ci/`
-3. Any targeted checks for modified subsystem
+2. `make -C userland`
+3. relevant smoke or CI scripts from `scripts/ci/`
+4. targeted checks for the modified subsystem
 
-If you skip tests, explicitly state why in the PR.
+If a change affects kernel or userland ABI, also verify the related
+documentation and utility compatibility.
 
 ## Documentation Quality
 
-1. Keep docs concrete and operational.
-2. Prefer local repository paths over machine-specific absolute paths.
-3. Remove stale notes and duplicate sections during related edits.
-4. Update docs in the same PR when behavior or workflow changes.
+- keep documentation concrete and operational;
+- use repository paths instead of local absolute paths;
+- remove stale duplicates and temporary notes during related edits;
+- do not treat archive plans as active specification.
 
-## Licensing
+## Licensing and Third-Party Material
 
-All contributions must follow project licensing and third-party notice rules.
-For imported external code, update:
+For imported external code and related changes, update:
 
 1. `third_party/bsd/SOURCES.md`
 2. `THIRD_PARTY_NOTICES.md`
+
+All changes must remain consistent with the project licensing policy.

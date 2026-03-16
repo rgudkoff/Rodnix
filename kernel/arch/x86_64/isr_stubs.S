@@ -76,31 +76,34 @@ ISR_NOERRCODE 31  ; Reserved
 ; Syscall handler (vector 128 / 0x80)
 ISR_NOERRCODE 128
 
-; IRQ handlers (32-47)
-%macro IRQ 1
-global irq%1
-irq%1:
+; Hardware interrupt handlers (32-255)
+%macro IRQ_VECTOR 1
+global irqvec%1
+irqvec%1:
     push 0                 ; Dummy error code
-    push %1 + 32           ; IRQ number (32-47)
+    push %1                ; Interrupt vector number
     jmp irq_common_stub
 %endmacro
 
-IRQ 0   ; Timer
-IRQ 1   ; Keyboard
-IRQ 2   ; Cascade
-IRQ 3   ; COM2
-IRQ 4   ; COM1
-IRQ 5   ; LPT2
-IRQ 6   ; Floppy
-IRQ 7   ; LPT1
-IRQ 8   ; CMOS clock
-IRQ 9   ; Free
-IRQ 10  ; Free
-IRQ 11  ; Free
-IRQ 12  ; PS/2 mouse
-IRQ 13  ; FPU
-IRQ 14  ; Primary ATA
-IRQ 15  ; Secondary ATA
+%assign i 32
+%rep 224
+    %if i != 128
+        IRQ_VECTOR i
+    %endif
+    %assign i i + 1
+%endrep
+
+global irq_stub_table
+irq_stub_table:
+%assign i 32
+%rep 224
+    %if i == 128
+        dq isr128
+    %else
+        dq irqvec %+ i
+    %endif
+    %assign i i + 1
+%endrep
 
 ; Common ISR stub
 extern isr_handler

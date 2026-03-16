@@ -39,7 +39,8 @@ void scheduler_yield(void)
 
 void scheduler_block(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return;
     }
 
@@ -50,24 +51,24 @@ void scheduler_block(void)
     static int log_count = 0;
     if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block tid=%llu state=%d\n",
-                (unsigned long long)current_thread->thread_id,
-                (int)current_thread->state);
+                (unsigned long long)cur->thread_id,
+                (int)cur->state);
         log_count++;
     }
 
     in_scheduler = true;
 
-    if (current_thread->state != THREAD_STATE_RUNNING) {
-        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)current_thread->thread_id, current_thread->state);
+    if (cur->state != THREAD_STATE_RUNNING) {
+        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)cur->thread_id, cur->state);
     }
-    scheduler_thread_set_state(current_thread, THREAD_STATE_BLOCKED, "scheduler_block");
+    scheduler_thread_set_state(cur, THREAD_STATE_BLOCKED, "scheduler_block");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
-                 current_thread->thread_id, current_thread->state);
-    current_thread->last_sleep_tick = sched_ticks;
+                 cur->thread_id, cur->state);
+    cur->last_sleep_tick = sched_ticks;
     if (bootlog_is_verbose() && log_count < 6) {
         kprintf("[SCHED] block set tid=%llu state=%d\n",
-                (unsigned long long)current_thread->thread_id,
-                (int)current_thread->state);
+                (unsigned long long)cur->thread_id,
+                (int)cur->state);
     }
     stats.blocked_tasks++;
     resched_pending = true;
@@ -135,7 +136,7 @@ void scheduler_wake(thread_t* thread)
         resched_pending = true;
         return;
     }
-    if (!ready_thread_is_queued(thread) && thread != current_thread) {
+    if (!ready_thread_is_queued(thread) && thread != thread_get_current()) {
         ready_enqueue(thread);
         resched_pending = true;
     }
@@ -143,17 +144,18 @@ void scheduler_wake(thread_t* thread)
 
 void scheduler_exit_current(void)
 {
-    if (!current_thread) {
+    thread_t* cur = thread_get_current();
+    if (!cur) {
         return;
     }
 
-    scheduler_exit_wake_joiner(current_thread);
-    scheduler_thread_set_state(current_thread, THREAD_STATE_DEAD, "scheduler_exit_current");
+    scheduler_exit_wake_joiner(cur);
+    scheduler_thread_set_state(cur, THREAD_STATE_DEAD, "scheduler_exit_current");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_EXIT,
-                 current_thread->thread_id,
-                 current_thread->task ? current_thread->task->task_id : 0);
-    if (current_thread->task && current_thread->task->state != TASK_STATE_DEAD) {
-        scheduler_task_set_state(current_thread->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
+                 cur->thread_id,
+                 cur->task ? cur->task->task_id : 0);
+    if (cur->task && cur->task->state != TASK_STATE_DEAD) {
+        scheduler_task_set_state(cur->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
     }
     resched_pending = true;
     __asm__ volatile ("int $32");
@@ -164,7 +166,7 @@ void scheduler_exit_current(void)
 
 void scheduler_sleep(uint64_t milliseconds)
 {
-    if (!current_thread) {
+    if (!thread_get_current()) {
         return;
     }
     if (milliseconds == 0) {
@@ -198,8 +200,12 @@ void scheduler_inherit_priority(thread_t* target, const thread_t* donor)
         return;
     }
     int donor_prio = thread_effective_priority(donor);
-    if (target->inherit_depth < 4) {
+    if (target->inherit_depth < 8) {
         target->inherit_stack[target->inherit_depth++] = target->inherited_priority;
+    } else {
+        target->has_inherit_overflow = 1;
+        kprintf("[SCHED] priority inheritance overflow on thread %llu\n",
+                (unsigned long long)target->thread_id);
     }
     if (!target->has_inherited || target->inherited_priority < donor_prio) {
         target->inherited_priority = donor_prio;
@@ -212,10 +218,27 @@ void scheduler_clear_inherit(thread_t* target)
     if (!target) {
         return;
     }
-    if (target->inherit_depth > 0) {
+    if (target->has_inherit_overflow) {
+        /* Stack was overflowed — restore to base priority conservatively */
+        target->inherited_priority = target->base_priority;
+        target->inherit_depth = 0;
+        target->has_inherit_overflow = 0;
+    } else if (target->inherit_depth > 0) {
         target->inherited_priority = target->inherit_stack[--target->inherit_depth];
     } else {
         target->inherited_priority = target->dyn_priority;
     }
     target->has_inherited = 0;
+}
+
+void scheduler_set_bucket(thread_t* thread, sched_bucket_t bucket)
+{
+    if (!thread) {
+        return;
+    }
+    if ((int)bucket >= (int)SCHED_BUCKET_COUNT) {
+        return;
+    }
+    thread->sched_bucket = (uint8_t)bucket;
+    thread->sched_bucket_explicit = 1;
 }

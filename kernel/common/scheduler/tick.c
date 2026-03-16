@@ -1,21 +1,32 @@
 #include "internal.h"
+#include "../../fabric/fabric.h"
+#include "../../usb/usb.h"
+#include "../../../include/console.h"
 
 void scheduler_tick(void)
 {
+    static uint32_t usb_poll_divider = 0;
+
     if (!scheduler_running) {
         return;
     }
 
     sched_ticks++;
     waitq_tick(sched_ticks);
-    if (current_thread && current_thread->state == THREAD_STATE_RUNNING) {
-        current_thread->sched_usage = (current_thread->sched_usage * 7) / 8;
-        current_thread->sched_usage++;
-        if (current_thread->sched_class == SCHED_CLASS_TIMESHARE) {
-            if ((current_thread->sched_usage % PENALTY_STEP_TICKS) == 0) {
-                int base = current_thread->base_priority;
-                int dyn = current_thread->dyn_priority - 1;
-                current_thread->dyn_priority = clamp_dyn_priority(dyn, base);
+    thread_t* cur = thread_get_current();
+    if (cur && cur->state == THREAD_STATE_RUNNING) {
+        cur->sched_usage = (cur->sched_usage * 7) / 8;
+        cur->sched_usage++;
+        /* Обновить CPU-счётчики группы (task_t.thread_group) */
+        if (cur->task) {
+            cur->task->thread_group.cpu_ticks++;
+            cur->task->thread_group.last_run_tick = sched_ticks;
+        }
+        if (cur->sched_class == SCHED_CLASS_TIMESHARE) {
+            if ((cur->sched_usage % PENALTY_STEP_TICKS) == 0) {
+                int base = cur->base_priority;
+                int dyn = cur->dyn_priority - 1;
+                cur->dyn_priority = clamp_dyn_priority(dyn, base);
             }
         }
     }
@@ -28,6 +39,13 @@ void scheduler_tick(void)
         ticks_until_preempt = ticks_per_slice;
         resched_pending = true;
     }
+
+    (void)fabric_dispatcher_tick();
+    if (++usb_poll_divider >= 10u) {
+        usb_poll_divider = 0;
+        usb_host_poll_all();
+    }
+    console_tick();
 }
 
 void scheduler_set_tick_rate(uint32_t hz)

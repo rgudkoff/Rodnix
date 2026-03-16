@@ -11,6 +11,72 @@ typedef struct {
     char* argv[UNIX_ARG_MAX + 1];
 } unix_spawn_args_t;
 
+static int unix_exec_apply_cloexec(void* ctx)
+{
+    task_t* task = (task_t*)ctx;
+    if (!task) {
+        return RDNX_E_INVALID;
+    }
+    unix_apply_cloexec(task);
+    return RDNX_OK;
+}
+
+static int unix_copy_user_strv(const char* const* user_vec,
+                               int max_count,
+                               int fallback_path_if_empty,
+                               const char* fallback_path,
+                               const char* local_vec[],
+                               char local_buf[][UNIX_PATH_MAX],
+                               int* out_count)
+{
+    if (!local_vec || !local_buf || !out_count || max_count <= 0) {
+        return RDNX_E_INVALID;
+    }
+
+    int count = 0;
+    for (int i = 0; i < max_count + 1; i++) {
+        local_vec[i] = NULL;
+    }
+
+    if (!user_vec || !unix_user_range_ok(user_vec, sizeof(uintptr_t))) {
+        if (fallback_path_if_empty && fallback_path) {
+            local_vec[0] = fallback_path;
+            local_vec[1] = NULL;
+            *out_count = 1;
+            return RDNX_OK;
+        }
+        *out_count = 0;
+        return RDNX_OK;
+    }
+
+    for (int i = 0; i < max_count; i++) {
+        const void* slot = (const void*)(uintptr_t)((uintptr_t)user_vec + (uintptr_t)i * sizeof(uintptr_t));
+        if (!unix_user_range_ok(slot, sizeof(uintptr_t))) {
+            return RDNX_E_INVALID;
+        }
+        const char* uptr = user_vec[i];
+        if (!uptr) {
+            break;
+        }
+        if (unix_copy_user_cstr(local_buf[i], UNIX_PATH_MAX, uptr) != RDNX_OK) {
+            return RDNX_E_INVALID;
+        }
+        local_vec[i] = local_buf[i];
+        count++;
+    }
+
+    if (count == 0 && fallback_path_if_empty && fallback_path) {
+        local_vec[0] = fallback_path;
+        local_vec[1] = NULL;
+        *out_count = 1;
+        return RDNX_OK;
+    }
+
+    local_vec[count] = NULL;
+    *out_count = count;
+    return RDNX_OK;
+}
+
 static void unix_spawn_thread(void* arg)
 {
     unix_spawn_args_t* sa = (unix_spawn_args_t*)arg;
@@ -54,10 +120,12 @@ static void unix_spawn_thread(void* arg)
         return;
     }
     task_t* self = task_get_current();
-    if (self) {
-        unix_apply_cloexec(self);
-    }
-    int ret = loader_execve(path_buf, argc_local, argv_local);
+    int ret = loader_execve_ex(path_buf,
+                               argc_local,
+                               argv_local,
+                               NULL,
+                               unix_exec_apply_cloexec,
+                               self);
     if (sa) {
         for (int i = 0; i < argc_local; i++) {
             if (sa->argv[i]) {
@@ -86,52 +154,43 @@ uint64_t unix_fs_exec(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t u
     char path_buf[UNIX_PATH_MAX];
     const char* argv_local[UNIX_ARG_MAX + 1];
     char argv_buf[UNIX_ARG_MAX][UNIX_PATH_MAX];
+    const char* env_local[UNIX_ENV_MAX + 1];
+    char env_buf[UNIX_ENV_MAX][UNIX_PATH_MAX];
     int argc_local = 0;
-    (void)user_envp;
+    int envc_local = 0;
     int rc = unix_resolve_user_path(user_path, path_buf, sizeof(path_buf));
     if (rc != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    for (int i = 0; i < UNIX_ARG_MAX + 1; i++) {
-        argv_local[i] = NULL;
+    rc = unix_copy_user_strv(user_argv,
+                             UNIX_ARG_MAX,
+                             1,
+                             path_buf,
+                             argv_local,
+                             argv_buf,
+                             &argc_local);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
     }
-    if (!user_argv || !unix_user_range_ok(user_argv, sizeof(uintptr_t))) {
-        argv_local[0] = path_buf;
-        argv_local[1] = NULL;
-        argc_local = 1;
-    } else {
-        int bad_argv = 0;
-        for (int i = 0; i < UNIX_ARG_MAX; i++) {
-            const void* slot = (const void*)(uintptr_t)((uintptr_t)user_argv + (uintptr_t)i * sizeof(uintptr_t));
-            if (!unix_user_range_ok(slot, sizeof(uintptr_t))) {
-                bad_argv = 1;
-                break;
-            }
-            const char* uptr = user_argv[i];
-            if (!uptr) {
-                break;
-            }
-            if (unix_copy_user_cstr(argv_buf[i], sizeof(argv_buf[i]), uptr) != RDNX_OK) {
-                bad_argv = 1;
-                break;
-            }
-            argv_local[i] = argv_buf[i];
-            argc_local++;
-        }
-        if (bad_argv || argc_local == 0) {
-            argv_local[0] = path_buf;
-            argv_local[1] = NULL;
-            argc_local = 1;
-        } else {
-            argv_local[argc_local] = NULL;
-        }
+    rc = unix_copy_user_strv(user_envp,
+                             UNIX_ENV_MAX,
+                             0,
+                             NULL,
+                             env_local,
+                             env_buf,
+                             &envc_local);
+    if (rc != RDNX_OK) {
+        return (uint64_t)rc;
     }
+    (void)envc_local;
 
     task_t* self = task_get_current();
-    if (self) {
-        unix_apply_cloexec(self);
-    }
-    int ret = loader_execve(path_buf, argc_local, argv_local);
+    int ret = loader_execve_ex(path_buf,
+                               argc_local,
+                               argv_local,
+                               env_local,
+                               unix_exec_apply_cloexec,
+                               self);
     return (uint64_t)ret;
 }
 

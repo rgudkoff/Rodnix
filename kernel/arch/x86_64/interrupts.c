@@ -24,6 +24,7 @@
 
 /* Array of registered interrupt handlers (one per vector, 0-255) */
 interrupt_handler_t interrupt_handlers[256];
+static bool interrupt_vector_reserved[256];
 
 /* Current Interrupt Request Level (IRQL) */
 volatile irql_t current_irql = IRQL_PASSIVE;
@@ -121,7 +122,15 @@ int interrupts_init(void)
     /* Clear all interrupt handler registrations */
     for (int i = 0; i < 256; i++) {
         interrupt_handlers[i] = NULL;
+        interrupt_vector_reserved[i] = false;
     }
+    for (int i = 0; i < 32; i++) {
+        interrupt_vector_reserved[i] = true;   /* CPU exceptions */
+    }
+    for (int i = 32; i < 48; i++) {
+        interrupt_vector_reserved[i] = true;   /* legacy IRQ window */
+    }
+    interrupt_vector_reserved[128] = true;     /* syscall gate */
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INT-2] Set IRQL\n");
@@ -175,6 +184,48 @@ int interrupt_unregister(uint32_t vector)
     
     interrupt_handlers[vector] = NULL;
     return 0;
+}
+
+int interrupt_vector_alloc(uint32_t min_vector, uint32_t max_vector)
+{
+    irql_t old_level;
+
+    if (min_vector < 32u) {
+        min_vector = 32u;
+    }
+    if (max_vector >= 256u) {
+        max_vector = 255u;
+    }
+    if (min_vector > max_vector) {
+        return -1;
+    }
+
+    old_level = set_irql(IRQL_HIGH);
+    for (uint32_t vector = min_vector; vector <= max_vector; vector++) {
+        if (!interrupt_vector_reserved[vector] && interrupt_handlers[vector] == NULL) {
+            interrupt_vector_reserved[vector] = true;
+            (void)set_irql(old_level);
+            return (int)vector;
+        }
+    }
+    (void)set_irql(old_level);
+    return -1;
+}
+
+void interrupt_vector_free(uint32_t vector)
+{
+    irql_t old_level;
+
+    if (vector >= 256u) {
+        return;
+    }
+    if (vector < 32u || (vector >= 32u && vector < 48u) || vector == 128u) {
+        return;
+    }
+
+    old_level = set_irql(IRQL_HIGH);
+    interrupt_vector_reserved[vector] = false;
+    (void)set_irql(old_level);
 }
 
 /**

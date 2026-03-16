@@ -1,10 +1,30 @@
 SHELL := /bin/bash
 
+ARCH ?= x86_64
+
+ifeq ($(ARCH),x86_64)
 CC = x86_64-elf-gcc
 AS = nasm
 LD = x86_64-elf-ld
+ARCH_CFLAGS = -m64
+ARCH_ASFLAGS = -f elf64
+else ifeq ($(ARCH),arm64)
+CC = aarch64-elf-gcc
+AS = $(CC)
+LD = aarch64-elf-ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+else ifeq ($(ARCH),riscv64)
+CC = riscv64-elf-gcc
+AS = $(CC)
+LD = riscv64-elf-ld
+ARCH_CFLAGS =
+ARCH_ASFLAGS =
+else
+$(error Unsupported ARCH '$(ARCH)')
+endif
 
-CFLAGS = -m64 \
+CFLAGS = $(ARCH_CFLAGS) \
          -ffreestanding \
          -fno-builtin \
          -fno-stack-protector \
@@ -15,10 +35,11 @@ CFLAGS = -m64 \
          -Wextra \
          -I./include
 
-ASFLAGS = -f elf64
+ASFLAGS = $(ARCH_ASFLAGS)
 LDFLAGS = -T link.ld
 
-BUILD_DIR = build
+BUILD_ROOT = build
+BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
 ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
@@ -29,11 +50,16 @@ LS_SRCS = bin/ls.c
 CAT_SRCS = bin/cat.c
 TRUE_SRCS = bin/true.c
 IFCONFIG_SRCS = bin/ifconfig.c
+PING_SRCS = bin/ping.c
 HWLIST_SRCS = bin/hwlist.c
+DEVREG_SRCS = bin/devreg.c
 FABRICLS_SRCS = bin/fabricls.c
 FABRICEVENTS_SRCS = bin/fabricevents.c
 FABRICNETCHECK_SRCS = bin/fabricnetcheck.c
 HOSTINFO_SRCS = bin/hostinfo.c
+CPUINFO_SRCS = bin/cpuinfo.c
+DISKINFO_SRCS = bin/diskinfo.c
+KMODCTL_SRCS = bin/kmodctl.c
 SLEEP_SRCS = bin/sleep.c
 SIGTEST_SRCS = bin/sigtest.c
 STTY_SRCS = bin/stty.c
@@ -41,7 +67,13 @@ TIMECHECK_SRCS = bin/timecheck.c
 SYSCALLTEST_SRCS = bin/syscalltest.c
 TTYREADTEST_SRCS = bin/ttyreadtest.c
 SCSTAT_SRCS = bin/scstat.c
+STDIO_SMOKE_SRCS = bin/stdio_smoke.c
+POLLTEST_SRCS = bin/polltest.c
+SELECTTEST_SRCS = bin/selecttest.c
+FUTEXTEST_SRCS = bin/futextest.c
 PIPETEST_SRCS = bin/pipetest.c
+UDPTEST_SRCS = bin/udptest.c
+TCPTEST_SRCS = bin/tcptest.c
 FSAPITEST_SRCS = bin/fsapitest.c
 FORKTEST_SRCS = bin/forktest.c
 EXECVETEST_SRCS = bin/execvetest.c
@@ -56,7 +88,7 @@ CONTRACT_FSIO_SRCS = bin/contract_fsio.c
 CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o))
 
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -66,11 +98,16 @@ LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 CAT_OBJS = $(addprefix $(BUILD_DIR)/, $(CAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TRUE_OBJS = $(addprefix $(BUILD_DIR)/, $(TRUE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 IFCONFIG_OBJS = $(addprefix $(BUILD_DIR)/, $(IFCONFIG_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+PING_OBJS = $(addprefix $(BUILD_DIR)/, $(PING_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HWLIST_OBJS = $(addprefix $(BUILD_DIR)/, $(HWLIST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+DEVREG_OBJS = $(addprefix $(BUILD_DIR)/, $(DEVREG_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICLS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICLS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICEVENTS_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICEVENTS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FABRICNETCHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(FABRICNETCHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HOSTINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(HOSTINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+CPUINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(CPUINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+DISKINFO_OBJS = $(addprefix $(BUILD_DIR)/, $(DISKINFO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+KMODCTL_OBJS = $(addprefix $(BUILD_DIR)/, $(KMODCTL_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -78,7 +115,13 @@ TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ)
 SYSCALLTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSCALLTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TTYREADTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TTYREADTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SCSTAT_OBJS = $(addprefix $(BUILD_DIR)/, $(SCSTAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+STDIO_SMOKE_OBJS = $(addprefix $(BUILD_DIR)/, $(STDIO_SMOKE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+POLLTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(POLLTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SELECTTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SELECTTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+FUTEXTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FUTEXTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 PIPETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(PIPETEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+UDPTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(UDPTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TCPTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TCPTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FSAPITEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FSAPITEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FORKTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FORKTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 EXECVETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(EXECVETEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -99,11 +142,16 @@ LS_ELF = $(BUILD_DIR)/ls.elf
 CAT_ELF = $(BUILD_DIR)/cat.elf
 TRUE_ELF = $(BUILD_DIR)/true.elf
 IFCONFIG_ELF = $(BUILD_DIR)/ifconfig.elf
+PING_ELF = $(BUILD_DIR)/ping.elf
 HWLIST_ELF = $(BUILD_DIR)/hwlist.elf
+DEVREG_ELF = $(BUILD_DIR)/devreg.elf
 FABRICLS_ELF = $(BUILD_DIR)/fabricls.elf
 FABRICEVENTS_ELF = $(BUILD_DIR)/fabricevents.elf
 FABRICNETCHECK_ELF = $(BUILD_DIR)/fabricnetcheck.elf
 HOSTINFO_ELF = $(BUILD_DIR)/hostinfo.elf
+CPUINFO_ELF = $(BUILD_DIR)/cpuinfo.elf
+DISKINFO_ELF = $(BUILD_DIR)/diskinfo.elf
+KMODCTL_ELF = $(BUILD_DIR)/kmodctl.elf
 SLEEP_ELF = $(BUILD_DIR)/sleep.elf
 SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
 STTY_ELF = $(BUILD_DIR)/stty.elf
@@ -111,7 +159,13 @@ TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
 SYSCALLTEST_ELF = $(BUILD_DIR)/syscalltest.elf
 TTYREADTEST_ELF = $(BUILD_DIR)/ttyreadtest.elf
 SCSTAT_ELF = $(BUILD_DIR)/scstat.elf
+STDIO_SMOKE_ELF = $(BUILD_DIR)/stdio_smoke.elf
+POLLTEST_ELF = $(BUILD_DIR)/polltest.elf
+SELECTTEST_ELF = $(BUILD_DIR)/selecttest.elf
+FUTEXTEST_ELF = $(BUILD_DIR)/futextest.elf
 PIPETEST_ELF = $(BUILD_DIR)/pipetest.elf
+UDPTEST_ELF = $(BUILD_DIR)/udptest.elf
+TCPTEST_ELF = $(BUILD_DIR)/tcptest.elf
 FSAPITEST_ELF = $(BUILD_DIR)/fsapitest.elf
 FORKTEST_ELF = $(BUILD_DIR)/forktest.elf
 EXECVETEST_ELF = $(BUILD_DIR)/execvetest.elf
@@ -131,19 +185,34 @@ LS_BIN = $(BIN_DIR)/ls
 CAT_BIN = $(BIN_DIR)/cat
 TRUE_BIN = $(BIN_DIR)/true
 IFCONFIG_BIN = $(BIN_DIR)/ifconfig
+PING_BIN = $(BIN_DIR)/ping
 HWLIST_BIN = $(BIN_DIR)/hwlist
+DEVREG_BIN = $(BIN_DIR)/devreg
 FABRICLS_BIN = $(BIN_DIR)/fabricls
 FABRICEVENTS_BIN = $(BIN_DIR)/fabricevents
 FABRICNETCHECK_BIN = $(BIN_DIR)/fabricnetcheck
 HOSTINFO_BIN = $(BIN_DIR)/hostinfo
+CPUINFO_BIN = $(BIN_DIR)/cpuinfo
+DISKINFO_BIN = $(BIN_DIR)/diskinfo
+KMODCTL_BIN = $(BIN_DIR)/kmodctl
 SLEEP_BIN = $(BIN_DIR)/sleep
+MODULES_DIR = $(ROOTFS_DIR)/lib/modules
+DEMO_KMOD = $(MODULES_DIR)/demo.kmod
+DEMO_KO_OBJ = $(BUILD_DIR)/modules/demo_echo.o
+DEMO_KO = $(MODULES_DIR)/demo.ko
 SIGTEST_BIN = $(BIN_DIR)/sigtest
 STTY_BIN = $(BIN_DIR)/stty
 TIMECHECK_BIN = $(BIN_DIR)/timecheck
 SYSCALLTEST_BIN = $(BIN_DIR)/syscalltest
 TTYREADTEST_BIN = $(BIN_DIR)/ttyreadtest
 SCSTAT_BIN = $(BIN_DIR)/scstat
+STDIO_SMOKE_BIN = $(BIN_DIR)/stdio_smoke
+POLLTEST_BIN = $(BIN_DIR)/polltest
+SELECTTEST_BIN = $(BIN_DIR)/selecttest
+FUTEXTEST_BIN = $(BIN_DIR)/futextest
 PIPETEST_BIN = $(BIN_DIR)/pipetest
+UDPTEST_BIN = $(BIN_DIR)/udptest
+TCPTEST_BIN = $(BIN_DIR)/tcptest
 FSAPITEST_BIN = $(BIN_DIR)/fsapitest
 FORKTEST_BIN = $(BIN_DIR)/forktest
 EXECVETEST_BIN = $(BIN_DIR)/execvetest
@@ -159,7 +228,7 @@ CONTRACT_WAIT_NONCHILD_BIN = $(BIN_DIR)/contract_wait_nonchild
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(HWLIST_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(PIPETEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN)
+all: check-bsd-abi $(INIT_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -208,9 +277,17 @@ $(IFCONFIG_ELF): $(IFCONFIG_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(IFCONFIG_OBJS)
 
+$(PING_ELF): $(PING_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(PING_OBJS)
+
 $(HWLIST_ELF): $(HWLIST_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(HWLIST_OBJS)
+
+$(DEVREG_ELF): $(DEVREG_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(DEVREG_OBJS)
 
 $(FABRICLS_ELF): $(FABRICLS_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -227,6 +304,18 @@ $(FABRICNETCHECK_ELF): $(FABRICNETCHECK_OBJS) link.ld
 $(HOSTINFO_ELF): $(HOSTINFO_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(HOSTINFO_OBJS)
+
+$(CPUINFO_ELF): $(CPUINFO_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(CPUINFO_OBJS)
+
+$(DISKINFO_ELF): $(DISKINFO_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(DISKINFO_OBJS)
+
+$(KMODCTL_ELF): $(KMODCTL_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(KMODCTL_OBJS)
 
 $(SLEEP_ELF): $(SLEEP_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -256,9 +345,33 @@ $(SCSTAT_ELF): $(SCSTAT_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(SCSTAT_OBJS)
 
+$(STDIO_SMOKE_ELF): $(STDIO_SMOKE_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(STDIO_SMOKE_OBJS)
+
+$(POLLTEST_ELF): $(POLLTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(POLLTEST_OBJS)
+
+$(SELECTTEST_ELF): $(SELECTTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SELECTTEST_OBJS)
+
+$(FUTEXTEST_ELF): $(FUTEXTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(FUTEXTEST_OBJS)
+
 $(PIPETEST_ELF): $(PIPETEST_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(PIPETEST_OBJS)
+
+$(UDPTEST_ELF): $(UDPTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(UDPTEST_OBJS)
+
+$(TCPTEST_ELF): $(TCPTEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(TCPTEST_OBJS)
 
 $(FSAPITEST_ELF): $(FSAPITEST_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -336,7 +449,15 @@ $(IFCONFIG_BIN): $(IFCONFIG_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
+$(PING_BIN): $(PING_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
 $(HWLIST_BIN): $(HWLIST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(DEVREG_BIN): $(DEVREG_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
@@ -355,6 +476,30 @@ $(FABRICNETCHECK_BIN): $(FABRICNETCHECK_ELF)
 $(HOSTINFO_BIN): $(HOSTINFO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
+
+$(CPUINFO_BIN): $(CPUINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(DISKINFO_BIN): $(DISKINFO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(KMODCTL_BIN): $(KMODCTL_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(DEMO_KMOD): ../scripts/mkkmod.py
+	@mkdir -p $(MODULES_DIR)
+	python3 ../scripts/mkkmod.py --output $@ --name demo.echo --kind misc --version 0.1 --flags 0
+
+$(DEMO_KO_OBJ): modules/demo_echo.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -I../include -fno-asynchronous-unwind-tables -fno-unwind-tables -c $< -o $@
+
+$(DEMO_KO): $(DEMO_KO_OBJ)
+	@mkdir -p $(MODULES_DIR)
+	cp $(DEMO_KO_OBJ) $@
 
 $(SLEEP_BIN): $(SLEEP_ELF)
 	@mkdir -p $(BIN_DIR)
@@ -384,7 +529,31 @@ $(SCSTAT_BIN): $(SCSTAT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 
+$(STDIO_SMOKE_BIN): $(STDIO_SMOKE_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(POLLTEST_BIN): $(POLLTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(SELECTTEST_BIN): $(SELECTTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(FUTEXTEST_BIN): $(FUTEXTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
 $(PIPETEST_BIN): $(PIPETEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(UDPTEST_BIN): $(UDPTEST_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+
+$(TCPTEST_BIN): $(TCPTEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 

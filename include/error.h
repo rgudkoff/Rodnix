@@ -20,5 +20,6 @@
 #define RDNX_E_DENIED       (-6)
 #define RDNX_E_UNSUPPORTED  (-7)
 #define RDNX_E_TIMEOUT      (-8)
+#define RDNX_E_AGAIN        (-9)  /* EAGAIN / EWOULDBLOCK — try again later */
 
 #endif /* _RODNIX_ERROR_H */

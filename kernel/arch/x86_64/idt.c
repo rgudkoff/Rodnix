@@ -92,23 +92,8 @@ extern void isr28(void);
 extern void isr29(void);
 extern void isr30(void);
 extern void isr31(void);
-extern void irq0(void);
-extern void irq1(void);
-extern void irq2(void);
-extern void irq3(void);
-extern void irq4(void);
-extern void irq5(void);
-extern void irq6(void);
-extern void irq7(void);
-extern void irq8(void);
-extern void irq9(void);
-extern void irq10(void);
-extern void irq11(void);
-extern void irq12(void);
-extern void irq13(void);
-extern void irq14(void);
-extern void irq15(void);
 extern void isr128(void);
+extern void* irq_stub_table[];
 
 /* ============================================================================
  * Internal Helper Functions
@@ -167,13 +152,14 @@ static void idt_set_entry(uint8_t num, uint64_t base, uint16_t selector, uint8_t
  * 1. Sets up the IDT pointer structure
  * 2. Clears all IDT entries
  * 3. Registers exception handlers (vectors 0-31)
- * 4. Registers IRQ handlers (vectors 32-47)
+ * 4. Registers hardware interrupt handlers (vectors 32-255)
  * 5. Loads the IDT using LIDT instruction
  * 
  * @return 0 on success
  * 
  * @note Exception handlers are set up as interrupt gates with DPL=0 (kernel only).
- * @note IRQ handlers are mapped to vectors 32-47 (after PIC remapping).
+ * @note Legacy PIC IRQ handlers are mapped to vectors 32-47.
+ * @note Additional vectors 48-255 are available for APIC/MSI-style interrupts.
  */
 int idt_init(void)
 {
@@ -233,25 +219,16 @@ int idt_init(void)
     idt_set_entry(31, (uint64_t)isr31, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
     __asm__ volatile ("" ::: "memory");
     
-    /* Step 4: Setup IRQ handlers (vectors 32-47) */
-    kputs("[IDT-4] Setup IRQ 32-47\n");
+    /* Step 4: Setup hardware interrupt handlers (vectors 32-255) */
+    kputs("[IDT-4] Setup IRQ 32-255\n");
     __asm__ volatile ("" ::: "memory");
-    idt_set_entry(32, (uint64_t)irq0, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(33, (uint64_t)irq1, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(34, (uint64_t)irq2, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(35, (uint64_t)irq3, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(36, (uint64_t)irq4, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(37, (uint64_t)irq5, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(38, (uint64_t)irq6, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(39, (uint64_t)irq7, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(40, (uint64_t)irq8, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(41, (uint64_t)irq9, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(42, (uint64_t)irq10, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(43, (uint64_t)irq11, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(44, (uint64_t)irq12, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(45, (uint64_t)irq13, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(46, (uint64_t)irq14, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
-    idt_set_entry(47, (uint64_t)irq15, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
+    for (int vector = 32; vector < 256; vector++) {
+        idt_set_entry((uint8_t)vector,
+                      (uint64_t)irq_stub_table[vector - 32],
+                      0x08,
+                      IDT_TYPE_INTERRUPT_GATE,
+                      0);
+    }
     __asm__ volatile ("" ::: "memory");
 
     /* Step 4.1: Setup syscall handler (vector 128 / 0x80, DPL=3) */

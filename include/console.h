@@ -128,6 +128,19 @@ void console_reset_color(void);
 /* Log prefix control */
 void console_set_log_prefix_enabled(bool enabled);
 
+/* GFX framebuffer console hook.
+ * When set, every character emitted by kputc() is also forwarded to fn.
+ * Pass NULL to disable.  fn must be safe to call from any context where
+ * kputc() is legal (i.e., after the GFX console has been attached). */
+void console_set_gfx_putc(void (*fn)(char c));
+
+/* Periodic blink hook — called from scheduler_tick() at ~100 Hz.
+ * fn should toggle the cursor; it must be IRQ-safe and non-blocking. */
+void console_set_gfx_blink(void (*fn)(void));
+
+/* Called by scheduler_tick() every tick to drive cursor blinking. */
+void console_tick(void);
+
 /* Uptime (microseconds) */
 uint64_t console_get_uptime_us(void);
 const char* console_get_uptime_source(void);

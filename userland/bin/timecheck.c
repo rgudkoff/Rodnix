@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define FD_STDOUT 1
-#define SYS_TEST_SLEEP 62
+#define SYS_TEST_SLEEP 120
 
 static long write_buf(const char* s, uint64_t len)
 {

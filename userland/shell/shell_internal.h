@@ -27,6 +27,7 @@
 #define SH_ANSI_CLEAR  "\x1b[2J"
 #define SH_ANSI_BOTTOM "\x1b[999;1H"
 #define SH_PATH_MAX 256
+#define SH_PS1_MAX 128
 #define HOSTINFO_HW_MAX 64
 #define HOSTINFO_FABRIC_MAX 128
 #define HOSTINFO_NETIF_MAX 16
@@ -47,6 +48,7 @@ typedef struct {
 } utsname_t;
 
 extern char shell_cwd[SH_PATH_MAX];
+extern char shell_ps1[SH_PS1_MAX];
 
 long write_buf(const char* s, uint64_t len);
 long write_str(const char* s);
@@ -58,6 +60,8 @@ int str_starts(const char* s, const char* p);
 void sanitize_cmd_token(char* s);
 void resolve_path(const char* in, char* out, int out_sz);
 int read_line(char* out, int out_len);
+void shell_print_prompt(void);
+int shell_set_ps1_from_args(int argc, char** argv, int start_idx);
 
 int parse_line(char* line, char** argv, int max_args);
 int line_has_meta(const char* s);

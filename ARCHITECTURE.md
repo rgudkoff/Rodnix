@@ -86,15 +86,19 @@ CPU
 3. Testability: arch-independent code is easier to test
 4. Maintainability: changes in one arch do not spill into others
 
-## Roadmap
+## Current Status
 
 - [x] Base directory structure
 - [x] x86_64 base components (boot, IDT/IRQ, PIC/APIC, PIT, paging/PMM)
+- [x] Task scheduler (preemptive, TIMESHARE/REALTIME, priority inheritance)
+- [x] Memory management (PMM, VM map, vm_object, page fault, COW groundwork)
+- [x] IPC subsystem (ports, queues, refcounted rights)
+- [x] VFS + RAMFS/initrd + EXT2 read/write (direct + single + double indirect)
+- [x] Device drivers via Fabric (HID keyboard, IDE storage, virtio-net stub)
+- [x] POSIX syscall surface (fork, exec, wait, signals, poll, futex, pipes)
+- [x] Userland init and shell with utilities
 - [ ] ARM64 base components
 - [ ] RISC-V64 base components
-- [ ] Task scheduler
-- [ ] Memory management
-- [ ] IPC subsystem
-- [ ] Device drivers via Fabric (expand beyond HID keyboard)
-- [ ] IRQ-based input path through Fabric
-- [ ] Consumers of Fabric services (service lookup)
+- [x] IRQ-based input path through Fabric (IRQ1, polling fallback for disabled-irq paths)
+- [x] Hierarchical scheduler v1 (4 QoS buckets, per-bucket quantum, starvation avoidance, thread_group CPU accounting)
+- [ ] Network: TCP stack + real virtio-net (UDP/ICMP loopback done)

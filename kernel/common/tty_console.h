@@ -24,6 +24,7 @@ enum {
 void tty_console_init(void);
 int tty_console_read(void* buffer, size_t size, bool echo);
 int tty_console_write(const void* buffer, size_t size);
+bool tty_console_poll_readable(void);
 uint32_t tty_console_get_lflag(void);
 void tty_console_set_lflag(uint32_t lflag);
 uint8_t tty_console_get_cc(uint32_t idx);

@@ -287,7 +287,7 @@ void cpu_restore_context(thread_context_t* ctx)
     );
 }
 
-__attribute__((naked)) void cpu_switch_thread(thread_context_t* from, thread_context_t* to)
+__attribute__((naked)) void cpu_switch_thread(thread_context_t*, thread_context_t*)
 {
     __asm__ volatile (
         "push %rbx\n\t"

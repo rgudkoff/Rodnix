@@ -226,6 +226,52 @@ uint64_t paging_create_user_pml4(void)
     return phys;
 }
 
+/**
+ * Free the page-table structure for a user address space.
+ * Only the page-table pages themselves (PML4/PDPT/PD/PT) are freed here;
+ * user data pages are already released by vm_map_remove() → vm_page_ref_release().
+ * Kernel-half entries (PML4[256..511]) are shared and must NOT be freed.
+ */
+void paging_free_user_pml4(uint64_t pml4_phys)
+{
+    if (!pml4_phys) {
+        return;
+    }
+    uint64_t* pml4 = (uint64_t*)(pml4_phys + X86_64_KERNEL_VIRT_BASE);
+    for (int i = 0; i < 256; i++) {
+        if (!(pml4[i] & PTE_PRESENT)) {
+            continue;
+        }
+        uint64_t pdpt_phys = pml4[i] & ~0xFFFULL;
+        uint64_t* pdpt = (uint64_t*)(pdpt_phys + X86_64_KERNEL_VIRT_BASE);
+        for (int j = 0; j < 512; j++) {
+            if (!(pdpt[j] & PTE_PRESENT)) {
+                continue;
+            }
+            if (pdpt[j] & (1ULL << 7)) {
+                /* 1 GB huge page — data freed by vm_map, skip */
+                continue;
+            }
+            uint64_t pd_phys = pdpt[j] & ~0xFFFULL;
+            uint64_t* pd = (uint64_t*)(pd_phys + X86_64_KERNEL_VIRT_BASE);
+            for (int k = 0; k < 512; k++) {
+                if (!(pd[k] & PTE_PRESENT)) {
+                    continue;
+                }
+                if (pd[k] & (1ULL << 7)) {
+                    /* 2 MB huge page — skip */
+                    continue;
+                }
+                uint64_t pt_phys = pd[k] & ~0xFFFULL;
+                pmm_free_page(pt_phys);
+            }
+            pmm_free_page(pd_phys);
+        }
+        pmm_free_page(pdpt_phys);
+    }
+    pmm_free_page(pml4_phys);
+}
+
 static uint64_t* paging_get_pdpt_for(uint64_t* pml4, uint64_t pml4_entry)
 {
     (void)pml4;
@@ -921,6 +967,54 @@ int paging_unmap_page(uint64_t virt)
     return 0;
 }
 
+int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
+{
+    if (!pml4_phys) {
+        return RDNX_E_GENERIC;
+    }
+    uint64_t* pml4 = (uint64_t*)X86_64_PHYS_TO_VIRT(pml4_phys);
+    if (!pml4) {
+        return RDNX_E_GENERIC;
+    }
+
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+    uint64_t pt_idx = paging_get_pt_index(virt);
+
+    uint64_t pml4_entry = pml4[pml4_idx];
+    if (!(pml4_entry & PTE_PRESENT)) {
+        return RDNX_E_GENERIC;
+    }
+
+    uint64_t* pdpt = paging_get_pdpt(pml4_entry);
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        return RDNX_E_GENERIC;
+    }
+
+    uint64_t* pd = paging_get_pd(pdpt_entry);
+    uint64_t pd_entry = pd[pd_idx];
+    if (!(pd_entry & PTE_PRESENT)) {
+        return RDNX_E_GENERIC;
+    }
+
+    if (pd_entry & PTE_SIZE_2MB) {
+        pd[pd_idx] = 0;
+        if (current_pml4_phys == pml4_phys) {
+            paging_flush_tlb((void*)virt);
+        }
+        return 0;
+    }
+
+    uint64_t* pt = paging_get_pt(pd_entry);
+    pt[pt_idx] = 0;
+    if (current_pml4_phys == pml4_phys) {
+        paging_flush_tlb((void*)virt);
+    }
+    return 0;
+}
+
 /**
  * @function paging_get_physical
  * @brief Get physical address for a virtual address
@@ -975,6 +1069,50 @@ uint64_t paging_get_physical(uint64_t virt)
     
     uint64_t phys = (pte & PTE_ADDR_MASK_4KB) | (virt & PAGE_OFFSET_MASK);
     return phys;
+}
+
+uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt)
+{
+    if (!pml4_phys) {
+        return 0;
+    }
+    uint64_t* pml4 = (uint64_t*)X86_64_PHYS_TO_VIRT(pml4_phys);
+    if (!pml4) {
+        return 0;
+    }
+
+    uint64_t pml4_idx = paging_get_pml4_index(virt);
+    uint64_t pdpt_idx = paging_get_pdpt_index(virt);
+    uint64_t pd_idx = paging_get_pd_index(virt);
+    uint64_t pt_idx = paging_get_pt_index(virt);
+
+    uint64_t pml4_entry = pml4[pml4_idx];
+    if (!(pml4_entry & PTE_PRESENT)) {
+        return 0;
+    }
+
+    uint64_t* pdpt = paging_get_pdpt(pml4_entry);
+    uint64_t pdpt_entry = pdpt[pdpt_idx];
+    if (!(pdpt_entry & PTE_PRESENT)) {
+        return 0;
+    }
+
+    uint64_t* pd = paging_get_pd(pdpt_entry);
+    uint64_t pd_entry = pd[pd_idx];
+    if (!(pd_entry & PTE_PRESENT)) {
+        return 0;
+    }
+
+    if (pd_entry & PTE_SIZE_2MB) {
+        return (pd_entry & PTE_ADDR_MASK_2MB) | (virt & 0x1FFFFF);
+    }
+
+    uint64_t* pt = paging_get_pt(pd_entry);
+    uint64_t pte = pt[pt_idx];
+    if (!(pte & PTE_PRESENT)) {
+        return 0;
+    }
+    return (pte & PTE_ADDR_MASK_4KB) | (virt & PAGE_OFFSET_MASK);
 }
 
 /**

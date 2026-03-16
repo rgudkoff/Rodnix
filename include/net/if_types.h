@@ -1,0 +1,4 @@
+#ifndef _RODNIX_COMPAT_NET_IF_TYPES_H
+#define _RODNIX_COMPAT_NET_IF_TYPES_H
+#define IFT_ETHER 0x6
+#endif

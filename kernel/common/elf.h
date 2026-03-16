@@ -12,6 +12,16 @@
 
 #define ELFCLASS64 2
 #define ELFDATA2LSB 1
+#define ET_REL 1
+#define SHT_NULL 0
+#define SHT_PROGBITS 1
+#define SHT_SYMTAB 2
+#define SHT_STRTAB 3
+#define SHT_RELA 4
+#define SHT_NOBITS 8
+#define SHT_REL 9
+#define SHN_UNDEF 0
+#define SHF_ALLOC 0x2
 
 #define ET_EXEC 2
 #define EM_X86_64 62
@@ -55,5 +65,27 @@ typedef struct {
     uint64_t p_memsz;
     uint64_t p_align;
 } elf64_phdr_t;
+
+typedef struct {
+    uint32_t sh_name;
+    uint32_t sh_type;
+    uint64_t sh_flags;
+    uint64_t sh_addr;
+    uint64_t sh_offset;
+    uint64_t sh_size;
+    uint32_t sh_link;
+    uint32_t sh_info;
+    uint64_t sh_addralign;
+    uint64_t sh_entsize;
+} elf64_shdr_t;
+
+typedef struct {
+    uint32_t st_name;
+    uint8_t st_info;
+    uint8_t st_other;
+    uint16_t st_shndx;
+    uint64_t st_value;
+    uint64_t st_size;
+} elf64_sym_t;
 
 #endif /* _RODNIX_COMMON_ELF_H */

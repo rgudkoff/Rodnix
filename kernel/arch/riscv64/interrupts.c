@@ -46,6 +46,18 @@ int interrupt_unregister(uint32_t vector)
     return 0;
 }
 
+int interrupt_vector_alloc(uint32_t min_vector, uint32_t max_vector)
+{
+    (void)min_vector;
+    (void)max_vector;
+    return -1;
+}
+
+void interrupt_vector_free(uint32_t vector)
+{
+    (void)vector;
+}
+
 void interrupts_enable(void)
 {
     uint64_t sstatus;
@@ -93,4 +105,3 @@ int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
     (void)vector;
     return -1;
 }
-

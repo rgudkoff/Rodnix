@@ -120,7 +120,7 @@ static void tty_process_input_char(int c, bool echo)
         return;
     }
 
-    if ((uint8_t)c == tty_cc[TTY_VERASE]) {
+    if ((uint8_t)c == tty_cc[TTY_VERASE] || c == '\b') {
         if (tty_line_len > 0) {
             tty_line_len--;
             if (do_echo) {
@@ -235,6 +235,29 @@ int tty_console_write(const void* buffer, size_t size)
         kputc(s[i]);
     }
     return (int)size;
+}
+
+bool tty_console_poll_readable(void)
+{
+    if (tty_cooked_count > 0 || tty_eof_pending) {
+        return true;
+    }
+
+    /*
+     * Drive pending input through line discipline so poll() in canonical mode
+     * reports readable only when a full line/EOF is available.
+     */
+    while (input_has_char()) {
+        int in = input_read_char();
+        if (in < 0) {
+            break;
+        }
+        tty_process_input_char(in, false);
+        if (tty_cooked_count > 0 || tty_eof_pending) {
+            return true;
+        }
+    }
+    return false;
 }
 
 uint32_t tty_console_get_lflag(void)
