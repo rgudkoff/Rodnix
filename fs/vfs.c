@@ -1199,6 +1199,64 @@ int vfs_fstat(const vfs_file_t* file, vfs_stat_t* out_stat)
     return RDNX_OK;
 }
 
+int vfs_chmod(const char* path, uint16_t mode)
+{
+    if (!path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    vfs_node_t* node = vfs_lookup(path);
+    if (!node || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+    if (node->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return ext2_chmod(node, mode);
+    }
+    node->inode->mode = (uint16_t)(mode & 0x0FFFu);
+    return RDNX_OK;
+}
+
+int vfs_fchmod(vfs_file_t* file, uint16_t mode)
+{
+    if (!file || !file->node || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+    if (file->node->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return ext2_chmod(file->node, mode);
+    }
+    file->node->inode->mode = (uint16_t)(mode & 0x0FFFu);
+    return RDNX_OK;
+}
+
+int vfs_chown(const char* path, uint32_t uid, uint32_t gid)
+{
+    if (!path || !vfs_ready) {
+        return RDNX_E_INVALID;
+    }
+    vfs_node_t* node = vfs_lookup(path);
+    if (!node || !node->inode) {
+        return RDNX_E_NOTFOUND;
+    }
+    if (node->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return ext2_chown(node, uid, gid);
+    }
+    if (uid != (uint32_t)-1) node->inode->uid = uid;
+    if (gid != (uint32_t)-1) node->inode->gid = gid;
+    return RDNX_OK;
+}
+
+int vfs_fchown(vfs_file_t* file, uint32_t uid, uint32_t gid)
+{
+    if (!file || !file->node || !file->node->inode) {
+        return RDNX_E_INVALID;
+    }
+    if (file->node->inode->fs_tag == VFS_FS_TAG_EXT2) {
+        return ext2_chown(file->node, uid, gid);
+    }
+    if (uid != (uint32_t)-1) file->node->inode->uid = uid;
+    if (gid != (uint32_t)-1) file->node->inode->gid = gid;
+    return RDNX_OK;
+}
+
 vfs_node_t* vfs_fs_alloc_node(const char* name, vfs_node_type_t type)
 {
     return vfs_alloc_node(name, type);

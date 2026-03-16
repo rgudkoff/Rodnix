@@ -156,6 +156,8 @@ QEMU_SMP ?= 1
 QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
 QEMU_DISK_SIZE_MB ?= 128
 QEMU_DISK_FS_STAMP ?= $(BUILD_DIR)/rodnix-disk.ext2.stamp
+TCC_AUTO_FLAG ?= $(USERLAND_DIR)/rootfs/etc/tcc.auto
+RUN_DISK_TARGET := $(if $(wildcard $(TCC_AUTO_FLAG)),tcc-disk,qemu-disk)
 #
 # QEMU flags: enable APIC and keep the legacy PS/2 controller path available.
 # Use -machine pc for stable polling on ports 0x60/0x64.
@@ -169,7 +171,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke qemu-disk tcc tcc-disk
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -264,17 +266,17 @@ iso: $(KERNEL_BIN) initrd
 	fi
 
 # ===== Run / Debug =====
-run: qemu-disk
+run: $(RUN_DISK_TARGET)
 	@if [ "$(V)" = "1" ] || [ "$(VERBOSE)" = "1" ]; then \
 		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	else \
 		$(MAKE) --no-print-directory _run_impl; \
 	fi
 
-run-verbose: qemu-disk
+run-verbose: $(RUN_DISK_TARGET)
 	@$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"
 
-_run_impl: iso qemu-disk
+_run_impl: iso $(RUN_DISK_TARGET)
 	@if command -v $(QEMU_SYSTEM) >/dev/null 2>&1; then \
 		echo "[*] Running QEMU $(QEMU_ACCEL), serial=$(QEMU_SERIAL), tee -> boot.log"; \
 		( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_ACCEL) || \
@@ -290,7 +292,7 @@ debug:
 		$(MAKE) --no-print-directory _run_impl KERNEL_CMDLINE="bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose"; \
 	fi
 
-gdb: iso qemu-disk
+gdb: iso $(RUN_DISK_TARGET)
 	( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) $(QEMU_ACCEL) & ) || \
 	( $(QEMU_SYSTEM) $(QEMU_FLAGS) $(QEMU_DEBUG_FLAGS) & )
 	sleep 1
@@ -340,6 +342,9 @@ check-contract-10:
 
 check-ifconfig-smoke:
 	@bash scripts/ci/smoke_ifconfig_qemu.sh
+
+check-tcc-smoke tcc-smoke:
+	@bash scripts/ci/smoke_tcc_qemu.sh
 
 qemu-disk:
 	@mkdir -p $(dir $(QEMU_DISK_IMG))
@@ -410,6 +415,7 @@ help:
 	@echo "  check-contract - Run contract CI smoke in QEMU"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
+	@echo "  tcc-smoke    - Boot with injected TCC and compile a smoke object in QEMU"
 	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
 	@echo "  tcc         - Cross-compile TCC for RodNIX (needs x86_64-elf-gcc)"
 	@echo "  tcc-disk    - Rebuild ext2 disk image with TCC injected"

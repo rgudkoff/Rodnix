@@ -87,3 +87,9 @@
 69 openat          # [experimental] AT_FDCWD supported; mode arg ignored
 70 listen          # [experimental] TCP server listen
 71 accept          # [experimental] TCP server accept with timeout_ms in a3
+72 chmod           # [stable]       path-based permission bits
+77 lstat           # [stub]         like stat; no symlinks yet so identical
+73 fchmod          # [stable]       fd-based permission bits
+74 chown           # [stable]       path-based uid/gid; -1 = leave unchanged
+75 fchown          # [stable]       fd-based uid/gid; -1 = leave unchanged
+76 lchown          # [stub]         same as chown (no symlinks yet)

@@ -75,6 +75,11 @@ uint64_t unix_fs_rename(uint64_t user_old_path_ptr, uint64_t user_new_path_ptr);
 uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr);
 uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr);
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr);
+uint64_t unix_fs_chmod(uint64_t user_path_ptr, uint64_t mode);
+uint64_t unix_fs_fchmod(uint64_t fd, uint64_t mode);
+/* uid/gid = (uint64_t)-1 means "leave unchanged" */
+uint64_t unix_fs_chown(uint64_t user_path_ptr, uint64_t uid, uint64_t gid);
+uint64_t unix_fs_fchown(uint64_t fd, uint64_t uid, uint64_t gid);
 uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg);
 uint64_t unix_fs_pipe(uint64_t user_pipefd_ptr);
 uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags);
