@@ -11,6 +11,7 @@
 #include "../../../include/console.h"
 #include "../../../include/error.h"
 #include "../../../trace/bootlog.h"
+#include "mbr_part.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -346,6 +347,8 @@ static int ide_storage_publish(fabric_device_t* dev)
         }
         if (g_slots[i].present) {
             (void)fabric_blockdev_register(&g_slots[i].blockdev);
+            /* Scan for MBR partitions and register disk0p1, disk0p2, etc. */
+            (void)mbr_scan_and_register(&g_slots[i].blockdev);
         }
         return RDNX_OK;
     }
