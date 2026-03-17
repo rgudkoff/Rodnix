@@ -1,4 +1,5 @@
 SHELL := /bin/bash
+.DEFAULT_GOAL := all
 
 ARCH ?= x86_64
 TOOLCHAIN ?= gcc
@@ -59,7 +60,6 @@ ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
 INIT_SRCS = init/init.c
-LOGIN_SRCS = bin/login.c
 SH_SRCS = shell/main.c shell/io.c shell/parser.c shell/exec.c shell/builtins.c
 ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
@@ -105,11 +105,13 @@ CONTRACT_WAIT_NONCHILD_SRCS = bin/contract_wait_nonchild.c
 CP_SRCS   = bin/cp.c
 MV_SRCS   = bin/mv.c
 RM_SRCS   = bin/rm.c
-GREP_SRCS = bin/grep.c
-FIND_SRCS = bin/find.c
+GREP_SRCS   = bin/grep.c
+FIND_SRCS   = bin/find.c
+LOGIN_SRCS  = bin/login.c
+PASSWD_SRCS = bin/passwd.c
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c
 
 ifeq ($(ARCH),x86_64)
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o
@@ -124,7 +126,6 @@ $(BUILD_DIR)/libc/setjmp.o: libc/setjmp.S
 endif
 
 INIT_OBJS = $(addprefix $(BUILD_DIR)/, $(INIT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
-LOGIN_OBJS = $(addprefix $(BUILD_DIR)/, $(LOGIN_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SH_OBJS = $(addprefix $(BUILD_DIR)/, $(SH_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 ECHO_OBJS = $(addprefix $(BUILD_DIR)/, $(ECHO_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 LS_OBJS = $(addprefix $(BUILD_DIR)/, $(LS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -170,11 +171,12 @@ CONTRACT_WAIT_NONCHILD_OBJS = $(addprefix $(BUILD_DIR)/, $(CONTRACT_WAIT_NONCHIL
 CP_OBJS   = $(addprefix $(BUILD_DIR)/, $(CP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 MV_OBJS   = $(addprefix $(BUILD_DIR)/, $(MV_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 RM_OBJS   = $(addprefix $(BUILD_DIR)/, $(RM_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
-GREP_OBJS = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
-FIND_OBJS = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+GREP_OBJS   = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
+FIND_OBJS   = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
+LOGIN_OBJS  = $(addprefix $(BUILD_DIR)/, $(LOGIN_SRCS:.c=.o))  $(CRT0_OBJ) $(LIBC_OBJS)
+PASSWD_OBJS = $(addprefix $(BUILD_DIR)/, $(PASSWD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
-LOGIN_ELF = $(BUILD_DIR)/login.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
 ECHO_ELF = $(BUILD_DIR)/echo.elf
 LS_ELF = $(BUILD_DIR)/ls.elf
@@ -221,9 +223,12 @@ CP_ELF   = $(BUILD_DIR)/cp.elf
 MV_ELF   = $(BUILD_DIR)/mv.elf
 RM_ELF   = $(BUILD_DIR)/rm.elf
 GREP_ELF = $(BUILD_DIR)/grep.elf
-FIND_ELF = $(BUILD_DIR)/find.elf
-INIT_BIN = $(BIN_DIR)/init
-LOGIN_BIN = $(BIN_DIR)/login
+FIND_ELF   = $(BUILD_DIR)/find.elf
+LOGIN_ELF  = $(BUILD_DIR)/login.elf
+PASSWD_ELF = $(BUILD_DIR)/passwd.elf
+INIT_BIN   = $(BIN_DIR)/init
+LOGIN_BIN  = $(BIN_DIR)/login
+PASSWD_BIN = $(BIN_DIR)/passwd
 SH_BIN = $(BIN_DIR)/sh
 ECHO_BIN = $(BIN_DIR)/echo
 LS_BIN = $(BIN_DIR)/ls
@@ -278,7 +283,7 @@ FIND_BIN = $(BIN_DIR)/find
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -494,6 +499,10 @@ $(GREP_ELF): $(GREP_OBJS) link.ld
 $(FIND_ELF): $(FIND_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(FIND_OBJS)
+
+$(PASSWD_ELF): $(PASSWD_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(PASSWD_OBJS)
 
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
@@ -747,6 +756,11 @@ $(GREP_BIN): $(GREP_ELF)
 	chmod 0755 $@
 
 $(FIND_BIN): $(FIND_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(PASSWD_BIN): $(PASSWD_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@

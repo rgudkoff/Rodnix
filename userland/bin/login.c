@@ -11,9 +11,12 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <errno.h>
+#include <sha256.h>
 #include "posix_syscall.h"
 
-#define PASSWD_PATH   "/etc/passwd"
+/* Persistent passwd on ext2 takes priority over initrd copy */
+#define PASSWD_PATH_MNT "/mnt/etc/passwd"
+#define PASSWD_PATH     "/etc/passwd"
 #define PASSWD_MAX    1024
 #define LINE_MAX      256
 #define NAME_MAX_LEN  64
@@ -129,16 +132,7 @@ static uint32_t str_to_u32(const char* s)
     return v;
 }
 
-static int password_enabled(const char* stored)
-{
-    if (!stored || stored[0] == '\0') {
-        return 0;
-    }
-    if ((stored[0] == '*' || stored[0] == '!') && stored[1] == '\0') {
-        return 0;
-    }
-    return 1;
-}
+/* password_enabled and verification delegated to rdnx_pw_verify (sha256.h) */
 
 static int passwd_lookup(const char* username,
                          const char* password,
@@ -153,7 +147,11 @@ static int passwd_lookup(const char* username,
         return -1;
     }
 
-    fd = open(PASSWD_PATH, O_RDONLY);
+    /* Prefer persistent passwd on ext2, fall back to initrd copy */
+    fd = open(PASSWD_PATH_MNT, O_RDONLY);
+    if (fd < 0) {
+        fd = open(PASSWD_PATH, O_RDONLY);
+    }
     if (fd < 0) {
         return -1;
     }
@@ -204,7 +202,7 @@ static int passwd_lookup(const char* username,
             next_field(&p, f_shell, sizeof(f_shell));
 
             if (str_eq(f_user, username)) {
-                if (!password_enabled(f_pass) || !str_eq(f_pass, password)) {
+                if (!rdnx_pw_verify(password, f_pass)) {
                     return 0;
                 }
                 out_user->uid = str_to_u32(f_uid);
