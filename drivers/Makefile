@@ -6,4 +6,5 @@ DRIVERS_C_SRCS += \
 	drivers/fabric/net/e1000_net.c \
 	drivers/fabric/display/vga_display_stub.c \
 	drivers/fabric/display/bochs_vbe.c \
-	drivers/fabric/storage/ide_storage_stub.c
+	drivers/fabric/storage/ide_storage_stub.c \
+	drivers/fabric/storage/mbr_part.c

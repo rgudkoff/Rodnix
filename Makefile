@@ -171,7 +171,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke usb-image usb-flash
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -384,6 +384,26 @@ tcc-disk: $(TCC_STAMP)
 	@touch "$(TCC_DISK_STAMP)"
 	@echo "[+] Disk image ready with TCC at /usr/bin/tcc"
 
+USB_IMG      ?= $(BUILD_DIR)/rodnix-usb.img
+USB_SIZE_MB  ?= 512
+USB_FAT_MB   ?= 64
+USB_DEV      ?=
+
+usb-image: $(KERNEL_BIN) initrd
+	@python3 scripts/mkusb_image.py \
+		--kernel "$(KERNEL_BIN)" \
+		--initrd "$(INITRD_IMG)" \
+		--output "$(USB_IMG)" \
+		--size-mb "$(USB_SIZE_MB)" \
+		--fat-mb  "$(USB_FAT_MB)"
+
+usb-flash: usb-image
+	@if [ -z "$(USB_DEV)" ]; then \
+		echo "[!] Set USB_DEV to the whole target disk (example: make usb-flash USB_DEV=/dev/disk4)"; \
+		exit 1; \
+	fi
+	@bash scripts/flash_usb.sh "$(USB_IMG)" "$(USB_DEV)"
+
 idl:
 	@mkdir -p $(IDL_OUT)
 	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
@@ -405,6 +425,8 @@ help:
 	@echo "  userland    - Build userland binaries"
 	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
+	@echo "  usb-image   - Create bootable USB disk image (MBR+FAT32+ext2)"
+	@echo "  usb-flash   - Build USB image and write it to USB_DEV"
 	@echo "  run         - Run kernel in QEMU (quiet)"
 	@echo "  run V=1     - Run kernel in QEMU (verbose boot)"
 	@echo "  run-verbose - Same as 'run V=1'"

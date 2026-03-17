@@ -233,11 +233,26 @@ sysinit_vfs(void)
         return RDNX_E_GENERIC;
     }
     (void)vfs_mkdir("/mnt");
-    int mrc = vfs_mount("ext2", "disk0", "/mnt");
-    if (mrc == 0) {
-        klog("vfs", "ext2 disk0 mounted at /mnt\n");
-    } else {
-        klog("vfs", "ext2 mount skipped (rc=%d)\n", mrc);
+    /*
+     * Mount order for ext2 data partition:
+     *   1. disk0p2 — second partition of first disk (real hardware: USB/HDD layout)
+     *   2. disk0p1 — first partition (single-partition setups)
+     *   3. disk0   — raw disk, no partition table (QEMU raw ext2 image)
+     *   4. disk1   — second IDE disk (legacy QEMU two-disk setups)
+     */
+    static const char* const mount_candidates[] = {
+        "disk0p2", "disk0p1", "disk0", "disk1", NULL
+    };
+    int mrc = RDNX_E_NOTFOUND;
+    for (int ci = 0; mount_candidates[ci] != NULL; ci++) {
+        mrc = vfs_mount("ext2", mount_candidates[ci], "/mnt");
+        if (mrc == RDNX_OK) {
+            klog("vfs", "ext2 %s mounted at /mnt\n", mount_candidates[ci]);
+            break;
+        }
+    }
+    if (mrc != RDNX_OK) {
+        klog("vfs", "ext2 mount skipped — no suitable device found\n");
     }
     return RDNX_OK;
 }
