@@ -24,7 +24,9 @@ struct interrupt_frame;
 #define SCHEDULER_DEFAULT_PRIORITY 128
 
 /* Time slice in milliseconds */
-#define SCHEDULER_TIME_SLICE_MS 10
+#define SCHEDULER_TIME_SLICE_MS    10
+/* Real-time time slice — shorter for low-latency tasks */
+#define SCHEDULER_RT_TIME_SLICE_MS  1
 
 /* ============================================================================
  * Scheduling policy

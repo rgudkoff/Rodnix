@@ -4,16 +4,20 @@
  */
 
 #include "usb_host_pci_internal.h"
+#include "../../../kernel/usb/usb_proto.h"
 #include "../../../kernel/fabric/device/device.h"
 #include "../../../kernel/fabric/driver/driver.h"
+#include "../../../kernel/fabric/bus/pci.h"
 #include "../../../trace/bootlog.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 static usb_host_slot_t g_slots[USB_HOST_SLOT_MAX];
 static uint32_t g_usb_host_count = 0;
+static pci_irq_binding_t g_irq_bindings[USB_HOST_SLOT_MAX];
 
 static bool usb_host_pci_probe(fabric_device_t* dev)
 {
@@ -148,6 +152,7 @@ static void usb_host_prepare_ep0_context(usb_host_slot_t* slot, uint32_t port)
 
     info = &slot->port_infos[port - 1u];
     info->host_name = slot->name;
+    info->host = &slot->host;
     info->port_number = (uint8_t)port;
     speed = usb_xhci_port_speed(slot, port);
     info->speed = speed;
@@ -165,6 +170,112 @@ static void usb_host_prepare_ep0_context(usb_host_slot_t* slot, uint32_t port)
                              0u,
                              0u,
                              8u);
+}
+
+static void usb_host_complete_enumeration(usb_host_slot_t* slot, uint32_t port)
+{
+    usb_port_device_info_t* info;
+    uint8_t cfg_buf[512];
+    uint16_t total_len;
+    uint16_t offset;
+    uint8_t blen;
+    uint8_t btype;
+    usb_setup_packet_t set_cfg_setup;
+    int rc;
+    uint8_t i;
+
+    info = &slot->port_infos[port - 1u];
+
+    memset(cfg_buf, 0, sizeof(cfg_buf));
+    rc = usb_xhci_get_config_descriptor(slot, info, cfg_buf, 4u);
+    if (rc != RDNX_OK) {
+        fabric_log("[USB] config-desc header failed: port%u rc=%d\n", port, rc);
+        return;
+    }
+
+    total_len = (uint16_t)(cfg_buf[2] | ((uint16_t)cfg_buf[3] << 8));
+    if (total_len < 9u) {
+        total_len = 9u;
+    }
+    if (total_len > (uint16_t)sizeof(cfg_buf)) {
+        total_len = (uint16_t)sizeof(cfg_buf);
+    }
+
+    memset(cfg_buf, 0, sizeof(cfg_buf));
+    rc = usb_xhci_get_config_descriptor(slot, info, cfg_buf, total_len);
+    if (rc != RDNX_OK) {
+        fabric_log("[USB] config-desc full failed: port%u rc=%d\n", port, rc);
+        return;
+    }
+
+    info->config_value = cfg_buf[5];
+
+    offset = 0u;
+    while (offset + 2u <= total_len) {
+        blen = cfg_buf[offset];
+        btype = cfg_buf[offset + 1u];
+        if (blen < 2u) {
+            break;
+        }
+        if (btype == USB_DESC_INTERFACE &&
+            offset + blen <= total_len &&
+            cfg_buf[offset + 2u] == 0u) {
+            info->interface_class    = cfg_buf[offset + 5u];
+            info->interface_subclass = cfg_buf[offset + 6u];
+            info->interface_protocol = cfg_buf[offset + 7u];
+            fabric_log("[USB] iface0: class=%02x sub=%02x proto=%02x port%u\n",
+                       info->interface_class,
+                       info->interface_subclass,
+                       info->interface_protocol,
+                       port);
+        } else if (btype == USB_DESC_ENDPOINT &&
+                   offset + blen <= total_len &&
+                   slot->xhci_ports[port - 1u].extra_ep_count < USB_EP_MAX) {
+            uint8_t ep_count = slot->xhci_ports[port - 1u].extra_ep_count;
+            usb_endpoint_info_t* ep = &slot->xhci_ports[port - 1u].extra_eps[ep_count];
+            uint8_t ep_addr = cfg_buf[offset + 2u];
+            uint8_t bm_attr = cfg_buf[offset + 3u];
+            uint16_t mps = (uint16_t)(cfg_buf[offset + 4u] |
+                           ((uint16_t)cfg_buf[offset + 5u] << 8));
+            uint8_t binterval = cfg_buf[offset + 6u];
+            uint8_t ep_num = ep_addr & 0x0Fu;
+            uint8_t ep_in  = (ep_addr & USB_EP_DIR_IN) ? 1u : 0u;
+
+            ep->ep_addr  = ep_addr;
+            ep->ep_type  = bm_attr & USB_EP_TYPE_MASK;
+            ep->max_packet = mps & 0x7FFu;
+            ep->interval = (binterval > 0u && binterval <= 64u)
+                               ? (uint8_t)(binterval - 1u) : 0u;
+            ep->xhci_ep_id = (uint8_t)(ep_in ? (2u * ep_num + 1u) : (2u * ep_num));
+            ep->ring_cycle = 1u;
+            ep->ring = NULL;
+            ep->ring_phys = 0u;
+            ep->transfer_buf = NULL;
+            ep->transfer_buf_phys = 0u;
+            slot->xhci_ports[port - 1u].extra_ep_count++;
+            fabric_log("[USB] ep found: port%u addr=%02x type=%u mps=%u xhci_ep=%u\n",
+                       port, ep_addr, ep->ep_type, ep->max_packet, ep->xhci_ep_id);
+        }
+        offset = (uint16_t)(offset + blen);
+    }
+
+    usb_setup_set_configuration(&set_cfg_setup, info->config_value);
+    rc = usb_xhci_control_out_no_data(slot, info, &set_cfg_setup);
+    if (rc != RDNX_OK) {
+        fabric_log("[USB] set-configuration failed: port%u cfg=%u rc=%d\n",
+                   port, info->config_value, rc);
+        return;
+    }
+    info->state = USB_DEVICE_STATE_CONFIGURED;
+    fabric_log("[USB] configured: port%u cfg=%u class=%02x\n",
+               port, info->config_value, info->interface_class);
+
+    for (i = 0u; i < slot->xhci_ports[port - 1u].extra_ep_count; i++) {
+        usb_endpoint_info_t* ep = &slot->xhci_ports[port - 1u].extra_eps[i];
+        if (ep->ep_type == USB_EP_TYPE_BULK || ep->ep_type == USB_EP_TYPE_INTERRUPT) {
+            (void)usb_xhci_configure_endpoint(slot, info, ep);
+        }
+    }
 }
 
 static void usb_host_publish_port_device(usb_host_slot_t* slot, uint32_t port)
@@ -229,6 +340,13 @@ static void usb_host_publish_port_device(usb_host_slot_t* slot, uint32_t port)
                 dev->class_code = desc.bDeviceClass;
                 dev->subclass = desc.bDeviceSubClass;
                 dev->prog_if = desc.bDeviceProtocol;
+                usb_host_complete_enumeration(slot, port);
+                if (dev->class_code == 0u) {
+                    usb_port_device_info_t* pi = &slot->port_infos[port - 1u];
+                    dev->class_code = pi->interface_class;
+                    dev->subclass   = pi->interface_subclass;
+                    dev->prog_if    = pi->interface_protocol;
+                }
             }
         }
     }
@@ -250,6 +368,83 @@ static void usb_host_publish_port_device(usb_host_slot_t* slot, uint32_t port)
                    slot->port_infos[port - 1u].max_packet_size0,
                    slot->port_infos[port - 1u].setup.wLength);
     }
+}
+
+static usb_ep_handle_t usb_host_generic_find_endpoint(usb_host_controller_t* host,
+                                                       usb_port_device_info_t* info,
+                                                       uint8_t ep_type, bool dir_in)
+{
+    usb_host_slot_t* slot;
+    usb_xhci_port_ctx_t* port_ctx;
+    uint8_t e;
+
+    if (!host || !host->context || !info) {
+        return NULL;
+    }
+    if (info->port_number == 0u || info->port_number > USB_PORT_DEVICE_MAX) {
+        return NULL;
+    }
+    slot = (usb_host_slot_t*)host->context;
+    port_ctx = &slot->xhci_ports[info->port_number - 1u];
+    for (e = 0u; e < port_ctx->extra_ep_count; e++) {
+        usb_endpoint_info_t* ep = &port_ctx->extra_eps[e];
+        bool ep_dir_in = (ep->ep_addr & USB_EP_DIR_IN) != 0u;
+        if (ep->ep_type == ep_type && ep_dir_in == dir_in && ep->ring != NULL) {
+            return (usb_ep_handle_t)ep;
+        }
+    }
+    return NULL;
+}
+
+static int usb_host_generic_transfer_in(usb_host_controller_t* host,
+                                         usb_port_device_info_t* info,
+                                         usb_ep_handle_t ep,
+                                         void* buf, uint16_t len, uint16_t* actual)
+{
+    usb_host_slot_t* slot;
+    usb_endpoint_info_t* ep_info;
+
+    if (!host || !host->context || !ep) {
+        return RDNX_E_INVALID;
+    }
+    slot    = (usb_host_slot_t*)host->context;
+    ep_info = (usb_endpoint_info_t*)ep;
+    if (ep_info->ep_type == USB_EP_TYPE_INTERRUPT) {
+        return usb_xhci_transfer_interrupt_in(slot, info, ep_info, buf, len, actual);
+    }
+    return usb_xhci_transfer_bulk_in(slot, info, ep_info, buf, len, actual);
+}
+
+static int usb_host_generic_transfer_out(usb_host_controller_t* host,
+                                          usb_port_device_info_t* info,
+                                          usb_ep_handle_t ep,
+                                          const void* buf, uint16_t len)
+{
+    usb_host_slot_t* slot;
+    usb_endpoint_info_t* ep_info;
+
+    if (!host || !host->context || !ep) {
+        return RDNX_E_INVALID;
+    }
+    slot    = (usb_host_slot_t*)host->context;
+    ep_info = (usb_endpoint_info_t*)ep;
+    return usb_xhci_transfer_bulk_out(slot, info, ep_info, buf, len);
+}
+
+static int usb_host_generic_poll_interrupt_in(usb_host_controller_t* host,
+                                               usb_port_device_info_t* info,
+                                               usb_ep_handle_t ep,
+                                               void* buf, uint16_t len, uint16_t* actual)
+{
+    usb_host_slot_t* slot;
+    usb_endpoint_info_t* ep_info;
+
+    if (!host || !host->context || !ep) {
+        return RDNX_E_INVALID;
+    }
+    slot    = (usb_host_slot_t*)host->context;
+    ep_info = (usb_endpoint_info_t*)ep;
+    return usb_xhci_poll_interrupt_in(slot, info, ep_info, buf, len, actual);
 }
 
 static int usb_host_generic_rescan(usb_host_controller_t* host)
@@ -292,7 +487,14 @@ static int usb_host_generic_rescan(usb_host_controller_t* host)
 
 static int usb_host_generic_poll(usb_host_controller_t* host)
 {
-    (void)host;
+    usb_host_slot_t* slot;
+
+    if (host && host->context) {
+        slot = (usb_host_slot_t*)host->context;
+        if (slot->type == USB_HOST_XHCI && slot->xhci.initialized) {
+            usb_xhci_dispatch_events(slot);
+        }
+    }
     return RDNX_OK;
 }
 
@@ -337,9 +539,13 @@ static int usb_host_pci_attach(fabric_device_t* dev)
         usb_host_make_hub_name(g_slots[i].hub_name,
                                sizeof(g_slots[i].hub_name),
                                g_slots[i].name);
-        g_slots[i].ops.hdr = RDNX_ABI_INIT(usb_host_ops_t);
-        g_slots[i].ops.rescan = usb_host_generic_rescan;
-        g_slots[i].ops.poll = usb_host_generic_poll;
+        g_slots[i].ops.hdr              = RDNX_ABI_INIT(usb_host_ops_t);
+        g_slots[i].ops.rescan           = usb_host_generic_rescan;
+        g_slots[i].ops.poll             = usb_host_generic_poll;
+        g_slots[i].ops.find_endpoint    = usb_host_generic_find_endpoint;
+        g_slots[i].ops.transfer_in      = usb_host_generic_transfer_in;
+        g_slots[i].ops.transfer_out     = usb_host_generic_transfer_out;
+        g_slots[i].ops.poll_interrupt_in = usb_host_generic_poll_interrupt_in;
         g_slots[i].host.hdr = RDNX_ABI_INIT(usb_host_controller_t);
         g_slots[i].host.name = g_slots[i].name;
         g_slots[i].host.type = g_slots[i].type;
@@ -359,6 +565,15 @@ static int usb_host_pci_attach(fabric_device_t* dev)
                 return xrc;
             }
             g_slots[i].host.root_port_count = g_slots[i].xhci.port_count;
+
+            int irc = pci_irq_bind(dev, usb_xhci_irq_handler,
+                                   &g_slots[i], &g_irq_bindings[i]);
+            if (irc == RDNX_OK) {
+                klog("usb-xhci", "%s: IRQ bound (MSI/legacy)\n", g_slots[i].name);
+            } else {
+                klog_warn("usb-xhci", "%s: IRQ bind failed, fallback to polling\n",
+                          g_slots[i].name);
+            }
         }
 
         int urc = usb_host_register(&g_slots[i].host);

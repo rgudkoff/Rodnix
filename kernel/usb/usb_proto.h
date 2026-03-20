@@ -82,4 +82,40 @@ typedef struct __attribute__((packed)) usb_config_descriptor {
     uint8_t bMaxPower;
 } usb_config_descriptor_t;
 
+typedef struct __attribute__((packed)) usb_interface_descriptor {
+    uint8_t bLength;
+    uint8_t bDescriptorType;
+    uint8_t bInterfaceNumber;
+    uint8_t bAlternateSetting;
+    uint8_t bNumEndpoints;
+    uint8_t bInterfaceClass;
+    uint8_t bInterfaceSubClass;
+    uint8_t bInterfaceProtocol;
+    uint8_t iInterface;
+} usb_interface_descriptor_t;
+
+typedef struct __attribute__((packed)) usb_endpoint_descriptor {
+    uint8_t bLength;
+    uint8_t bDescriptorType;
+    uint8_t bEndpointAddress;
+    uint8_t bmAttributes;
+    uint16_t wMaxPacketSize;
+    uint8_t bInterval;
+} usb_endpoint_descriptor_t;
+
+#define USB_EP_DIR_IN         0x80u
+#define USB_EP_TYPE_MASK      0x03u
+#define USB_EP_TYPE_CONTROL   0x00u
+#define USB_EP_TYPE_ISO       0x01u
+#define USB_EP_TYPE_BULK      0x02u
+#define USB_EP_TYPE_INTERRUPT 0x03u
+
+#define USB_CLASS_HID              0x03u
+#define USB_CLASS_MSC              0x08u
+#define USB_HID_SUBCLASS_BOOT      0x01u
+#define USB_HID_PROTOCOL_KBD       0x01u
+#define USB_HID_PROTOCOL_MOUSE     0x02u
+#define USB_MSC_SUBCLASS_SCSI      0x06u
+#define USB_MSC_PROTOCOL_BOT       0x50u
+
 #endif /* _RODNIX_USB_USB_PROTO_H */

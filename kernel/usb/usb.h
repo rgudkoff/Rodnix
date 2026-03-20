@@ -8,9 +8,13 @@
 
 #include "../../include/abi.h"
 #include "usb_proto.h"
+#include <stdbool.h>
 #include <stdint.h>
 
 typedef struct fabric_device fabric_device_t;
+
+/* Opaque handle for a USB endpoint — implementation-defined by the host driver */
+typedef void* usb_ep_handle_t;
 
 typedef enum usb_host_type {
     USB_HOST_UNKNOWN = 0,
@@ -32,6 +36,7 @@ typedef struct usb_host_controller usb_host_controller_t;
 
 typedef struct usb_port_device_info {
     const char* host_name;
+    usb_host_controller_t* host;  /* backlink — set by host driver on enumerate */
     uint8_t port_number;
     uint8_t speed;
     uint8_t state;
@@ -39,6 +44,10 @@ typedef struct usb_port_device_info {
     uint8_t address;
     uint8_t max_packet_size0;
     uint16_t flags;
+    uint8_t interface_class;
+    uint8_t interface_subclass;
+    uint8_t interface_protocol;
+    uint8_t config_value;
     usb_setup_packet_t setup;
 } usb_port_device_info_t;
 
@@ -51,10 +60,22 @@ enum {
     USB_DEVICE_STATE_FAILED = 6u
 };
 
+typedef struct usb_host_controller usb_host_controller_t;
+
 typedef struct usb_host_ops {
     rdnx_abi_header_t hdr;
     int (*rescan)(usb_host_controller_t* host);
     int (*poll)(usb_host_controller_t* host);
+    /* Transfer abstraction — class drivers use these instead of xHCI calls */
+    usb_ep_handle_t (*find_endpoint)(usb_host_controller_t* host,
+                                     usb_port_device_info_t* info,
+                                     uint8_t ep_type, bool dir_in);
+    int (*transfer_in)(usb_host_controller_t* host, usb_port_device_info_t* info,
+                       usb_ep_handle_t ep, void* buf, uint16_t len, uint16_t* actual);
+    int (*transfer_out)(usb_host_controller_t* host, usb_port_device_info_t* info,
+                        usb_ep_handle_t ep, const void* buf, uint16_t len);
+    int (*poll_interrupt_in)(usb_host_controller_t* host, usb_port_device_info_t* info,
+                             usb_ep_handle_t ep, void* buf, uint16_t len, uint16_t* actual);
 } usb_host_ops_t;
 
 typedef struct usb_host_controller {
@@ -70,6 +91,11 @@ typedef struct usb_host_controller {
     fabric_device_t* provider_dev;
     void* context;
 } usb_host_controller_t;
+
+/* USB class driver poll registry — class drivers register their poll fn here */
+typedef void (*usb_class_poll_fn_t)(void);
+void usb_class_poll_register(usb_class_poll_fn_t fn);
+void usb_class_poll_all(void);
 
 void usb_init(void);
 usb_host_type_t usb_host_type_from_prog_if(uint8_t prog_if);

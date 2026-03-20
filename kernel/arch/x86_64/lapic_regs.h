@@ -38,7 +38,14 @@
 #define APIC_SVR_SPURIOUS_VECTOR  0xFF
 
 /* APIC LVT flags */
-#define APIC_LVT_MASKED      (1U << 16)
-#define APIC_LVT_TIMER_PERIODIC   (1U << 17)
+#define APIC_LVT_MASKED               (1U << 16)
+#define APIC_LVT_TIMER_PERIODIC       (1U << 17)  /* bits[18:17]=01 */
+#define APIC_LVT_TIMER_TSC_DEADLINE   (2U << 17)  /* bits[18:17]=10 */
+
+/* MSR for TSC-Deadline mode */
+#define MSR_IA32_TSC_DEADLINE  0x6E0U
+
+/* CPUID.01H:ECX bit indicating TSC-Deadline support */
+#define CPUID_ECX_TSC_DEADLINE (1U << 24)
 
 #endif /* _RODNIX_ARCH_X86_64_LAPIC_REGS_H */
