@@ -1160,6 +1160,10 @@ int apic_timer_init(uint32_t frequency)
                 frequency, apic_timer_ticks_per_ms);
     }
 
+    /* Calibration helpers (pit_init) may have clobbered the scheduler tick
+     * rate.  Restore it to the actual APIC timer frequency before returning. */
+    scheduler_set_tick_rate(frequency);
+
     return 0;
 }
 

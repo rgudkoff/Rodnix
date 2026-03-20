@@ -2,11 +2,22 @@
 #include "../kernel/fabric/fabric.h"
 #include "../kernel/usb/usb.h"
 #include "../include/console.h"
+#include "../include/gfx_console.h"
+
+/* Actual timer frequency set by scheduler_set_tick_rate(); used to derive
+ * dividers that fire at a fixed real-time rate regardless of tick frequency. */
+static uint32_t g_tick_hz = 100u;
+
+/* Target rates for periodic subsystems (Hz). */
+#define CONSOLE_TICK_HZ   100u   /* cursor blink driver */
+#define USB_CLASS_POLL_HZ  50u   /* HID/MSC class poll  (~20 ms) */
+#define USB_HOST_POLL_HZ    1u   /* host safety fallback (~1 s)  */
 
 void scheduler_tick(void)
 {
-    static uint32_t usb_poll_divider = 0;
     static uint32_t usb_class_divider = 0;
+    static uint32_t usb_poll_divider  = 0;
+    static uint32_t console_divider   = 0;
 
     if (!scheduler_running) {
         return;
@@ -42,17 +53,17 @@ void scheduler_tick(void)
     }
 
     (void)fabric_dispatcher_tick();
-    /* USB class poll at ~20 ms (20 ticks at 1000 Hz) — HID, MSC, etc. */
-    if (++usb_class_divider >= 20u) {
-        usb_class_divider = 0;
-        usb_class_poll_all();
-    }
-    /* USB host poll at 1 Hz — safety fallback only (interrupt-driven normally) */
-    if (++usb_poll_divider >= 1000u) {
-        usb_poll_divider = 0;
-        usb_host_poll_all();
-    }
-    console_tick();
+
+#define DIVIDER_FIRE(counter, target_hz, body)          \
+    do {                                                 \
+        uint32_t _p = g_tick_hz / (target_hz);          \
+        if (_p < 1u) { _p = 1u; }                       \
+        if (++(counter) >= _p) { (counter) = 0; body }  \
+    } while (0)
+
+    DIVIDER_FIRE(usb_class_divider, USB_CLASS_POLL_HZ, usb_class_poll_all(););
+    DIVIDER_FIRE(usb_poll_divider,  USB_HOST_POLL_HZ,  usb_host_poll_all(););
+    DIVIDER_FIRE(console_divider,   CONSOLE_TICK_HZ,   console_tick(););
 }
 
 void scheduler_set_tick_rate(uint32_t hz)
@@ -60,6 +71,9 @@ void scheduler_set_tick_rate(uint32_t hz)
     if (hz == 0) {
         return;
     }
+
+    g_tick_hz = hz;
+    gfx_console_set_tick_hz(CONSOLE_TICK_HZ);
 
     uint32_t ticks = (hz * SCHEDULER_TIME_SLICE_MS + 999) / 1000;
     if (ticks == 0) {

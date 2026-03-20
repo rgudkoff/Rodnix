@@ -32,4 +32,8 @@ void gfx_console_clear(void);
 /** Move cursor to (col, row) (0-based). */
 void gfx_console_set_cursor(uint32_t col, uint32_t row);
 
+/** Inform the console how fast blink_tick() will be called (Hz).
+ *  Must be called whenever the console_tick rate changes. */
+void gfx_console_set_tick_hz(uint32_t hz);
+
 #endif /* _RODNIX_GFX_CONSOLE_H */
