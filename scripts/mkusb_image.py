@@ -245,6 +245,11 @@ def limine_bios_install(limine_bin: str, img_path: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _build_limine_cfg(kernel_cmdline: str = "") -> str:
+    fb_lines = [
+        "FRAMEBUFFER_WIDTH=1280",
+        "FRAMEBUFFER_HEIGHT=720",
+        "FRAMEBUFFER_BPP=32",
+    ]
     lines = [
         "TIMEOUT=3",
         "",
@@ -254,13 +259,14 @@ def _build_limine_cfg(kernel_cmdline: str = "") -> str:
     ]
     if kernel_cmdline:
         lines.append(f"KERNEL_CMDLINE={kernel_cmdline}")
-    lines += [
+    lines += fb_lines + [
         "MODULE_PATH=boot:///boot/initrd.img",
         "",
         ":RodNIX (verbose)",
         "PROTOCOL=multiboot2",
         "KERNEL_PATH=boot:///boot/rodnix.kernel",
         "KERNEL_CMDLINE=bootverbose verbose_sysinit=1 startup_debug=verbose bootlog=verbose",
+    ] + fb_lines + [
         "MODULE_PATH=boot:///boot/initrd.img",
     ]
     return "\n".join(lines) + "\n"

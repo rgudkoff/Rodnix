@@ -184,6 +184,7 @@ sysinit_fabric(void)
     extern void virtio_net_stub_init(void);
     extern void e1000_net_stub_init(void);
     extern void vga_display_stub_init(void);
+    extern void mb2_fb_init(void);
     extern void bochs_vbe_init(void);
     extern void ide_storage_stub_init(void);
     extern int fabric_block_service_init(void);
@@ -205,6 +206,7 @@ sysinit_fabric(void)
     virtio_net_stub_init();
     e1000_net_stub_init();
     bochs_vbe_init();
+    mb2_fb_init();
     vga_display_stub_init();
 
     if (fabric_block_service_init() != 0) {
@@ -215,7 +217,7 @@ sysinit_fabric(void)
     ide_storage_stub_init();
     fabric_platform_services_init();
 
-    klog("fabric", "buses: virt pci usb ps2 | drivers: hid_kbd usb_host_pci usb_hid usb_msc virtio_net e1000 bochs_vbe vga ide\n");
+    klog("fabric", "buses: virt pci usb ps2 | drivers: mb2_fb hid_kbd usb_host_pci usb_hid usb_msc virtio_net e1000 bochs_vbe vga ide\n");
     return RDNX_OK;
 }
 

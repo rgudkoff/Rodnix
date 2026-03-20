@@ -485,6 +485,22 @@ static int usb_host_generic_rescan(usb_host_controller_t* host)
     return RDNX_OK;
 }
 
+static int usb_host_generic_control_out(usb_host_controller_t* host,
+                                          usb_port_device_info_t* info,
+                                          const usb_setup_packet_t* setup)
+{
+    usb_host_slot_t* slot;
+
+    if (!host || !host->context || !info || !setup) {
+        return RDNX_E_INVALID;
+    }
+    slot = (usb_host_slot_t*)host->context;
+    if (slot->type != USB_HOST_XHCI) {
+        return RDNX_E_UNSUPPORTED;
+    }
+    return usb_xhci_control_out_no_data(slot, info, setup);
+}
+
 static int usb_host_generic_poll(usb_host_controller_t* host)
 {
     usb_host_slot_t* slot;
@@ -546,6 +562,7 @@ static int usb_host_pci_attach(fabric_device_t* dev)
         g_slots[i].ops.transfer_in      = usb_host_generic_transfer_in;
         g_slots[i].ops.transfer_out     = usb_host_generic_transfer_out;
         g_slots[i].ops.poll_interrupt_in = usb_host_generic_poll_interrupt_in;
+        g_slots[i].ops.control_out       = usb_host_generic_control_out;
         g_slots[i].host.hdr = RDNX_ABI_INIT(usb_host_controller_t);
         g_slots[i].host.name = g_slots[i].name;
         g_slots[i].host.type = g_slots[i].type;

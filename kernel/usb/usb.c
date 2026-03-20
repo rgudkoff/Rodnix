@@ -318,3 +318,26 @@ void usb_setup_set_configuration(usb_setup_packet_t* pkt, uint8_t config_value)
                           0u,
                           0u);
 }
+
+void usb_setup_hid_set_protocol(usb_setup_packet_t* pkt,
+                                 uint8_t interface, uint8_t protocol)
+{
+    usb_setup_packet_init(pkt,
+                          USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                          USB_HID_REQ_SET_PROTOCOL,
+                          protocol,
+                          interface,
+                          0u);
+}
+
+void usb_setup_hid_set_idle(usb_setup_packet_t* pkt,
+                             uint8_t interface, uint8_t duration)
+{
+    /* wValue: high byte = duration (0 = indefinite), low byte = report ID (0 = all) */
+    usb_setup_packet_init(pkt,
+                          USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
+                          USB_HID_REQ_SET_IDLE,
+                          (uint16_t)((uint16_t)duration << 8),
+                          interface,
+                          0u);
+}

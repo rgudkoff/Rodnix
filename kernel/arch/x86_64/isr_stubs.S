@@ -22,6 +22,8 @@ isr_iret_rip:    resq 1
 isr_iret_cs:     resq 1
 isr_iret_rflags: resq 1
 
+extern g_current_tls_fs_base
+
 section .text
 
 %macro ISR_NOERRCODE 1
@@ -175,6 +177,15 @@ isr_done:
     mov fs, ax
     mov gs, ax
 .isr_after_segs:
+    ; Re-apply FS.Base MSR.  Loading a segment selector in 64-bit mode zeroes
+    ; the hidden base field, so the "mov fs, [saved_user_sel]" above cleared
+    ; whatever sched_arch_apply_thread() set.  rax/rdx/ecx are free here —
+    ; their true values are still on the stack and will be restored by pops below.
+    mov    ecx, 0xC0000100
+    mov    rax, [rel g_current_tls_fs_base]
+    mov    rdx, rax
+    shr    rdx, 32
+    wrmsr
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
@@ -279,6 +290,12 @@ irq_done:
     mov fs, ax
     mov gs, ax
 .irq_after_segs:
+    ; Re-apply FS.Base MSR (same reason as in isr_common_stub above).
+    mov    ecx, 0xC0000100
+    mov    rax, [rel g_current_tls_fs_base]
+    mov    rdx, rax
+    shr    rdx, 32
+    wrmsr
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)

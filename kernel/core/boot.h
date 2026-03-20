@@ -32,6 +32,14 @@ typedef struct {
     void* mmap_addr;          /* Multiboot2 memory map tag address */
     uint32_t mmap_size;       /* Multiboot2 memory map tag size */
     uint32_t mmap_entry_size; /* Multiboot2 memory map entry size */
+    /* Multiboot2 linear framebuffer (tag type 8) — zero if not provided */
+    uint64_t fb_phys;         /* Physical base address of the framebuffer */
+    uint32_t fb_width;        /* Width in pixels */
+    uint32_t fb_height;       /* Height in pixels */
+    uint32_t fb_pitch;        /* Bytes per scanline */
+    uint8_t  fb_bpp;          /* Bits per pixel */
+    uint8_t  fb_valid;        /* 1 if framebuffer info is present */
+    uint8_t  _fb_pad[2];
 } boot_info_t;
 
 /* ============================================================================

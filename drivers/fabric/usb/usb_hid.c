@@ -161,7 +161,19 @@ static int usb_hid_attach(fabric_device_t* dev)
     hid->intr_ep = intr_ep;
     g_hid_count++;
 
-    klog("usb-hid", "keyboard attached: port%u\n", info->port_number);
+    /* Put keyboard into boot protocol and disable idle reports.
+     * Some keyboards start in report-protocol mode; without SET_PROTOCOL(boot)
+     * the 8-byte boot report format is not guaranteed.
+     * SET_IDLE(0) stops the keyboard from sending repeated idle reports. */
+    if (host->ops->control_out) {
+        usb_setup_packet_t setup;
+        usb_setup_hid_set_idle(&setup, 0u, 0u);
+        (void)host->ops->control_out(host, info, &setup);
+        usb_setup_hid_set_protocol(&setup, 0u, USB_HID_BOOT_PROTOCOL);
+        (void)host->ops->control_out(host, info, &setup);
+    }
+
+    klog("usb-hid", "keyboard attached: port%u (boot protocol)\n", info->port_number);
     return RDNX_OK;
 }
 
