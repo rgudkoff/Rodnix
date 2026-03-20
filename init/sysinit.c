@@ -102,20 +102,20 @@ sysinit_timer(void)
 
     bool use_apic_timer = false;
     if (apic_is_available()) {
-        if (apic_timer_init(100) == 0) {
+        if (apic_timer_init(1000) == 0) {
             use_apic_timer = true;
         } else if (bootlog_is_verbose()) {
             klog("timer", "LAPIC timer init failed, trying PIT\n");
         }
     }
     if (!use_apic_timer) {
-        if (pit_init(100) != 0) {
+        if (pit_init(1000) != 0) {
             return RDNX_E_GENERIC;
         }
     }
 
     g_timer_use_apic = use_apic_timer;
-    klog("timer", "source: %s @ 100 Hz\n", use_apic_timer ? "LAPIC" : "PIT");
+    klog("timer", "source: %s @ 1000 Hz\n", use_apic_timer ? "LAPIC" : "PIT");
     bootlog_mark("timer", use_apic_timer ? "lapic" : "pit");
     return RDNX_OK;
 }
@@ -179,6 +179,8 @@ sysinit_fabric(void)
     extern void ps2_bus_init(void);
     extern void hid_kbd_init(void);
     extern void usb_host_pci_init(void);
+    extern void usb_hid_init(void);
+    extern void usb_msc_init(void);
     extern void virtio_net_stub_init(void);
     extern void e1000_net_stub_init(void);
     extern void vga_display_stub_init(void);
@@ -198,6 +200,8 @@ sysinit_fabric(void)
     ps2_bus_init();
     hid_kbd_init();
     usb_host_pci_init();
+    usb_hid_init();
+    usb_msc_init();
     virtio_net_stub_init();
     e1000_net_stub_init();
     bochs_vbe_init();
@@ -211,7 +215,7 @@ sysinit_fabric(void)
     ide_storage_stub_init();
     fabric_platform_services_init();
 
-    klog("fabric", "buses: virt pci usb ps2 | drivers: hid_kbd usb_host_pci virtio_net e1000 bochs_vbe vga ide\n");
+    klog("fabric", "buses: virt pci usb ps2 | drivers: hid_kbd usb_host_pci usb_hid usb_msc virtio_net e1000 bochs_vbe vga ide\n");
     return RDNX_OK;
 }
 
@@ -401,10 +405,10 @@ kernel_enable_runtime_interrupts(void)
                     ap0, ap1, apic_timer_get_frequency());
             }
             apic_timer_stop();
-            if (pit_init(100) == 0) {
+            if (pit_init(1000) == 0) {
                 pit_enable();
                 g_timer_use_apic = false;
-                klog("timer", "LAPIC stalled — fell back to PIT\n");
+                klog("timer", "LAPIC stalled — fell back to PIT @ 1000 Hz\n");
             } else {
                 klog("timer", "LAPIC stalled and PIT fallback failed\n");
             }

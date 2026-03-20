@@ -17,6 +17,70 @@ static volatile uint64_t cpu_freq_hz = 0;
 static char cpu_vendor_str[16];
 static char cpu_brand_str[64];
 
+static inline void cpu_outb(uint16_t port, uint8_t val)
+{
+    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline uint8_t cpu_inb(uint16_t port)
+{
+    uint8_t val;
+    __asm__ volatile ("inb %1, %0" : "=a"(val) : "Nd"(port));
+    return val;
+}
+
+static inline uint64_t cpu_rdtsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/*
+ * Calibrate TSC using PIT channel 2 (no interrupts needed).
+ *
+ * PIT channel 2 is independent of channel 0 (system timer) and is
+ * controlled via port 0x61: bit 0 = gate2 (enable), bit 5 = out2 (status).
+ * We program it in mode 0 (one-shot) and spin-poll until count expires.
+ *
+ * Called from cpu_init() before the PIT/APIC timer subsystem is set up.
+ */
+#define TSC_CAL_PIT_BASE_HZ  1193182u
+#define TSC_CAL_MS           10u
+#define TSC_CAL_DIVISOR      ((TSC_CAL_PIT_BASE_HZ * TSC_CAL_MS + 999u) / 1000u)
+
+static uint64_t tsc_calibrate_via_pit(void)
+{
+    /* Save port 0x61 state */
+    uint8_t p61 = cpu_inb(0x61);
+
+    /* Disable gate2 (bit 0 = 0), keep speaker muted (bit 1 = 0) */
+    cpu_outb(0x61, (uint8_t)(p61 & 0xFCu));
+
+    /* Channel 2, lobyte/hibyte, mode 0 (one-shot), binary */
+    cpu_outb(0x43, 0xB0u);
+    cpu_outb(0x42, (uint8_t)(TSC_CAL_DIVISOR & 0xFFu));
+    cpu_outb(0x42, (uint8_t)((TSC_CAL_DIVISOR >> 8) & 0xFFu));
+
+    uint64_t tsc_start = cpu_rdtsc();
+
+    /* Enable gate2 (bit 0 = 1) to start the countdown */
+    cpu_outb(0x61, (uint8_t)((p61 & 0xFCu) | 0x01u));
+
+    /* Spin until OUT2 (bit 5 of port 0x61) goes high */
+    while ((cpu_inb(0x61) & 0x20u) == 0u) {
+        __asm__ volatile ("pause");
+    }
+
+    uint64_t tsc_end = cpu_rdtsc();
+
+    /* Restore port 0x61 */
+    cpu_outb(0x61, p61);
+
+    /* delta TSC ticks / 10ms → Hz */
+    return ((tsc_end - tsc_start) * 1000ULL) / (uint64_t)TSC_CAL_MS;
+}
+
 static inline void cpuid_exec(uint32_t leaf, uint32_t subleaf,
                               uint32_t* eax, uint32_t* ebx, uint32_t* ecx, uint32_t* edx)
 {
@@ -180,6 +244,9 @@ int cpu_init(void)
         if (f15_eax != 0 && f15_ebx != 0 && f15_ecx != 0) {
             freq_hz = ((uint64_t)f15_ecx * (uint64_t)f15_ebx) / (uint64_t)f15_eax;
         }
+    }
+    if (freq_hz == 0) {
+        freq_hz = tsc_calibrate_via_pit();
     }
     cpu_freq_hz = freq_hz;
 

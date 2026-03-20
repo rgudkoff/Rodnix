@@ -13,9 +13,9 @@
 #include "../../../include/error.h"
 #include "../../../include/console.h"
 #include "../../../include/abi.h"
+#include "../../../trace/bootlog.h"
 #include <stdint.h>
 #include <stdbool.h>
-#include <string.h>
 
 #define MBR_SIGNATURE       0xAA55u
 #define MBR_SIG_OFFSET      510
@@ -108,7 +108,8 @@ int mbr_scan_and_register(fabric_blockdev_t* parent)
         slot->lba_offset = (uint64_t)table[i].lba_start;
 
         /* Name: parent name + "p" + digit, e.g. "disk0p1" */
-        size_t plen = strnlen(parent->name, 12);
+        size_t plen = strlen(parent->name);
+        if (plen > 12) { plen = 12; }
         memcpy(slot->name, parent->name, plen);
         slot->name[plen]   = 'p';
         slot->name[plen+1] = (char)('1' + i);

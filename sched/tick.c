@@ -6,6 +6,7 @@
 void scheduler_tick(void)
 {
     static uint32_t usb_poll_divider = 0;
+    static uint32_t usb_class_divider = 0;
 
     if (!scheduler_running) {
         return;
@@ -41,7 +42,13 @@ void scheduler_tick(void)
     }
 
     (void)fabric_dispatcher_tick();
-    if (++usb_poll_divider >= 10u) {
+    /* USB class poll at ~20 ms (20 ticks at 1000 Hz) — HID, MSC, etc. */
+    if (++usb_class_divider >= 20u) {
+        usb_class_divider = 0;
+        usb_class_poll_all();
+    }
+    /* USB host poll at 1 Hz — safety fallback only (interrupt-driven normally) */
+    if (++usb_poll_divider >= 1000u) {
         usb_poll_divider = 0;
         usb_host_poll_all();
     }

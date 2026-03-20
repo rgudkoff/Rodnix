@@ -39,9 +39,11 @@
 
 #define XHCI_USBCMD_RUN     (1u << 0)
 #define XHCI_USBCMD_HCRST   (1u << 1)
+#define XHCI_USBCMD_INTE    (1u << 2)
 #define XHCI_USBSTS_HCH     (1u << 0)
 #define XHCI_USBSTS_CNR     (1u << 11)
 #define XHCI_IMAN_IE        (1u << 1)
+#define XHCI_IMAN_IP        (1u << 0)
 #define XHCI_PORTSC_CCS     (1u << 0)
 #define XHCI_PORTSC_SPEED_SHIFT 10u
 #define XHCI_PORTSC_SPEED_MASK  (0xFu << XHCI_PORTSC_SPEED_SHIFT)
@@ -317,6 +319,144 @@ static int usb_xhci_pending_pop(usb_host_slot_t* slot, xhci_trb_t* out)
     return RDNX_OK;
 }
 
+static int usb_xhci_poll_event(usb_host_slot_t* slot, xhci_trb_t* out);
+
+static int usb_xhci_cmd_mbx_push(usb_host_slot_t* slot, const xhci_trb_t* ev)
+{
+    usb_xhci_state_t* xhci = &slot->xhci;
+    uint8_t idx;
+
+    if (xhci->cmd_mbx_count >= XHCI_CMD_MAILBOX_SIZE) {
+        return RDNX_E_BUSY;
+    }
+    idx = xhci->cmd_mbx_tail % XHCI_CMD_MAILBOX_SIZE;
+    xhci->cmd_mailbox[idx] = *ev;
+    xhci->cmd_mbx_tail = (uint8_t)((xhci->cmd_mbx_tail + 1u) % XHCI_CMD_MAILBOX_SIZE);
+    xhci->cmd_mbx_count++;
+    return RDNX_OK;
+}
+
+static int usb_xhci_cmd_mbx_pop(usb_host_slot_t* slot, xhci_trb_t* out)
+{
+    usb_xhci_state_t* xhci = &slot->xhci;
+    uint8_t idx;
+
+    if (xhci->cmd_mbx_count == 0u) {
+        return RDNX_E_NOTFOUND;
+    }
+    idx = xhci->cmd_mbx_head % XHCI_CMD_MAILBOX_SIZE;
+    if (out) {
+        *out = xhci->cmd_mailbox[idx];
+    }
+    memset(&xhci->cmd_mailbox[idx], 0, sizeof(xhci->cmd_mailbox[idx]));
+    xhci->cmd_mbx_head = (uint8_t)((xhci->cmd_mbx_head + 1u) % XHCI_CMD_MAILBOX_SIZE);
+    xhci->cmd_mbx_count--;
+    return RDNX_OK;
+}
+
+static int usb_xhci_ep_mbx_push(usb_endpoint_info_t* ep, const xhci_trb_t* ev)
+{
+    uint8_t idx;
+
+    if (ep->ep_mbx_count >= XHCI_EP_MAILBOX_SIZE) {
+        return RDNX_E_BUSY;
+    }
+    idx = ep->ep_mbx_tail % XHCI_EP_MAILBOX_SIZE;
+    ep->ep_mailbox[idx] = *ev;
+    ep->ep_mbx_tail = (uint8_t)((ep->ep_mbx_tail + 1u) % XHCI_EP_MAILBOX_SIZE);
+    ep->ep_mbx_count++;
+    return RDNX_OK;
+}
+
+static int usb_xhci_ep_mbx_pop(usb_endpoint_info_t* ep, xhci_trb_t* out)
+{
+    uint8_t idx;
+
+    if (ep->ep_mbx_count == 0u) {
+        return RDNX_E_NOTFOUND;
+    }
+    idx = ep->ep_mbx_head % XHCI_EP_MAILBOX_SIZE;
+    if (out) {
+        *out = ep->ep_mailbox[idx];
+    }
+    memset(&ep->ep_mailbox[idx], 0, sizeof(ep->ep_mailbox[idx]));
+    ep->ep_mbx_head = (uint8_t)((ep->ep_mbx_head + 1u) % XHCI_EP_MAILBOX_SIZE);
+    ep->ep_mbx_count--;
+    return RDNX_OK;
+}
+
+static uint32_t usb_xhci_transfer_ep_id(const xhci_trb_t* trb)
+{
+    if (!trb) {
+        return 0u;
+    }
+    return (trb->dword3 >> 16) & 0x1Fu;
+}
+
+static usb_endpoint_info_t* usb_xhci_find_endpoint(usb_host_slot_t* slot,
+                                                    uint32_t slot_id,
+                                                    uint32_t ep_id)
+{
+    uint32_t p;
+    uint32_t e;
+    usb_xhci_port_ctx_t* port_ctx;
+    usb_endpoint_info_t* ep;
+
+    for (p = 0u; p < USB_PORT_DEVICE_MAX; p++) {
+        port_ctx = &slot->xhci_ports[p];
+        if (!port_ctx->context_ready || port_ctx->slot_id != (uint8_t)slot_id) {
+            continue;
+        }
+        for (e = 0u; e < port_ctx->extra_ep_count; e++) {
+            ep = &port_ctx->extra_eps[e];
+            if (ep->xhci_ep_id == (uint8_t)ep_id) {
+                return ep;
+            }
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Drain all available hardware events and route them to the appropriate
+ * mailbox:
+ *   CMD_COMPLETION         → cmd_mailbox
+ *   TRANSFER (ep_id == 1)  → pending_events  (EP0 backward compat)
+ *   TRANSFER (ep_id >= 2)  → ep->ep_mailbox via find_endpoint
+ */
+void usb_xhci_dispatch_events(usb_host_slot_t* slot)
+{
+    xhci_trb_t ev;
+    uint32_t type;
+    uint32_t slot_id;
+    uint32_t ep_id;
+    usb_endpoint_info_t* ep;
+
+    if (!slot || !slot->xhci.initialized) {
+        return;
+    }
+
+    while (usb_xhci_poll_event(slot, &ev) == RDNX_OK) {
+        type = usb_xhci_trb_type(&ev);
+        if (type == XHCI_TRB_CMD_COMPLETION_EV) {
+            (void)usb_xhci_cmd_mbx_push(slot, &ev);
+        } else if (type == XHCI_TRB_TRANSFER_EVENT) {
+            ep_id   = usb_xhci_transfer_ep_id(&ev);
+            slot_id = usb_xhci_completion_slot_id(&ev);
+            if (ep_id <= 1u) {
+                /* EP0 — route to pending_events queue */
+                (void)usb_xhci_pending_push(slot, &ev);
+            } else {
+                ep = usb_xhci_find_endpoint(slot, slot_id, ep_id);
+                if (ep) {
+                    (void)usb_xhci_ep_mbx_push(ep, &ev);
+                }
+            }
+        }
+    }
+}
+
+/* Read one event directly from the hardware event ring. */
 static int usb_xhci_poll_event(usb_host_slot_t* slot, xhci_trb_t* out)
 {
     usb_xhci_state_t* xhci;
@@ -325,9 +465,6 @@ static int usb_xhci_poll_event(usb_host_slot_t* slot, xhci_trb_t* out)
 
     if (!slot) {
         return RDNX_E_INVALID;
-    }
-    if (out && usb_xhci_pending_pop(slot, out) == RDNX_OK) {
-        return RDNX_OK;
     }
     xhci = &slot->xhci;
     if (!xhci->event_ring) {
@@ -361,14 +498,12 @@ static int usb_xhci_wait_command_completion(usb_host_slot_t* slot, xhci_trb_t* o
     }
 
     for (uint32_t i = 0; i < 1000000u; i++) {
-        if (usb_xhci_poll_event(slot, &ev) == RDNX_OK) {
-            if (usb_xhci_trb_type(&ev) == XHCI_TRB_CMD_COMPLETION_EV) {
-                if (out_ev) {
-                    *out_ev = ev;
-                }
-                return RDNX_OK;
+        usb_xhci_dispatch_events(slot);
+        if (usb_xhci_cmd_mbx_pop(slot, &ev) == RDNX_OK) {
+            if (out_ev) {
+                *out_ev = ev;
             }
-            (void)usb_xhci_pending_push(slot, &ev);
+            return RDNX_OK;
         }
         __asm__ volatile ("pause");
     }
@@ -376,6 +511,7 @@ static int usb_xhci_wait_command_completion(usb_host_slot_t* slot, xhci_trb_t* o
     return RDNX_E_TIMEOUT;
 }
 
+/* Wait for an EP0 TRANSFER event for the given slot (uses pending_events queue). */
 static int usb_xhci_wait_transfer_event(usb_host_slot_t* slot, uint8_t slot_id, xhci_trb_t* out_ev)
 {
     xhci_trb_t ev;
@@ -385,16 +521,40 @@ static int usb_xhci_wait_transfer_event(usb_host_slot_t* slot, uint8_t slot_id, 
     }
 
     for (uint32_t i = 0; i < 1000000u; i++) {
-        if (usb_xhci_poll_event(slot, &ev) == RDNX_OK) {
-            uint32_t type = usb_xhci_trb_type(&ev);
-            if (type == XHCI_TRB_TRANSFER_EVENT &&
-                usb_xhci_completion_slot_id(&ev) == slot_id) {
+        usb_xhci_dispatch_events(slot);
+        if (usb_xhci_pending_pop(slot, &ev) == RDNX_OK) {
+            if (usb_xhci_completion_slot_id(&ev) == slot_id) {
                 if (out_ev) {
                     *out_ev = ev;
                 }
                 return RDNX_OK;
             }
+            /* Wrong slot — push back */
             (void)usb_xhci_pending_push(slot, &ev);
+        }
+        __asm__ volatile ("pause");
+    }
+
+    return RDNX_E_TIMEOUT;
+}
+
+/* Wait for a TRANSFER event for an extra endpoint (ep_id >= 2), using ep_mailbox. */
+int usb_xhci_wait_ep_transfer(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                               usb_endpoint_info_t* ep, xhci_trb_t* out_ev)
+{
+    xhci_trb_t ev;
+
+    if (!slot || !info || !ep) {
+        return RDNX_E_INVALID;
+    }
+
+    for (uint32_t i = 0; i < 1000000u; i++) {
+        usb_xhci_dispatch_events(slot);
+        if (usb_xhci_ep_mbx_pop(ep, &ev) == RDNX_OK) {
+            if (out_ev) {
+                *out_ev = ev;
+            }
+            return RDNX_OK;
         }
         __asm__ volatile ("pause");
     }
@@ -850,7 +1010,8 @@ int usb_xhci_init(usb_host_slot_t* slot)
                   slot->xhci.max_slots);
     usb_xhci_wr32(&slot->xhci,
                   slot->xhci.op_base + XHCI_USBCMD,
-                  usb_xhci_rd32(&slot->xhci, slot->xhci.op_base + XHCI_USBCMD) | XHCI_USBCMD_RUN);
+                  usb_xhci_rd32(&slot->xhci, slot->xhci.op_base + XHCI_USBCMD) |
+                  XHCI_USBCMD_RUN | XHCI_USBCMD_INTE);
     if (usb_xhci_wait_for(&slot->xhci,
                           slot->xhci.op_base + XHCI_USBSTS,
                           XHCI_USBSTS_HCH,
@@ -891,4 +1052,441 @@ uint8_t usb_xhci_port_speed(const usb_host_slot_t* slot, uint32_t port)
 int usb_xhci_port_connected(const usb_host_slot_t* slot, uint32_t port)
 {
     return (usb_xhci_portsc(slot, port) & XHCI_PORTSC_CCS) != 0u;
+}
+
+int usb_xhci_control_out_no_data(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                  const usb_setup_packet_t* setup)
+{
+    usb_xhci_port_ctx_t* port_ctx;
+    xhci_trb_t ev;
+    uint32_t port_index;
+    uint32_t req0;
+    uint32_t req1;
+
+    if (!slot || !info || !setup ||
+        info->port_number == 0u || info->port_number > USB_PORT_DEVICE_MAX) {
+        return RDNX_E_INVALID;
+    }
+    if (info->state < USB_DEVICE_STATE_ADDRESSED) {
+        return RDNX_E_BUSY;
+    }
+
+    port_index = (uint32_t)(info->port_number - 1u);
+    port_ctx = &slot->xhci_ports[port_index];
+    if (!port_ctx->context_ready || port_ctx->slot_id == 0u || !port_ctx->ep0_ring) {
+        return RDNX_E_INVALID;
+    }
+
+    memset(port_ctx->ep0_ring, 0, sizeof(xhci_trb_t) * XHCI_EP0_RING_TRBS);
+
+    req0 = ((uint32_t)setup->bmRequestType) |
+           ((uint32_t)setup->bRequest << 8) |
+           ((uint32_t)setup->wValue << 16);
+    req1 = ((uint32_t)setup->wIndex) |
+           ((uint32_t)setup->wLength << 16);
+
+    port_ctx->ep0_ring[0].dword0 = req0;
+    port_ctx->ep0_ring[0].dword1 = req1;
+    port_ctx->ep0_ring[0].dword2 = 8u;
+    port_ctx->ep0_ring[0].dword3 = XHCI_TRB_CYCLE |
+                                   XHCI_TRB_IDT |
+                                   (XHCI_SETUP_TRT_NONE << XHCI_TRB_TRT_SHIFT) |
+                                   (XHCI_TRB_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    port_ctx->ep0_ring[1].dword3 = XHCI_TRB_CYCLE |
+                                   XHCI_TRB_IOC |
+                                   XHCI_TRB_DIR_IN |
+                                   (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword0 =
+        (uint32_t)(port_ctx->ep0_ring_phys & 0xFFFFFFFFu);
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword1 =
+        (uint32_t)(port_ctx->ep0_ring_phys >> 32);
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword3 =
+        (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+
+    usb_xhci_ring_endpoint_doorbell(slot, port_ctx->slot_id, 1u);
+
+    if (usb_xhci_wait_transfer_event(slot, port_ctx->slot_id, &ev) != RDNX_OK) {
+        fabric_log("[USB] control-out-no-data timeout: port%u slot=%u\n",
+                   info->port_number, port_ctx->slot_id);
+        return RDNX_E_TIMEOUT;
+    }
+    if (usb_xhci_completion_code(&ev) != XHCI_CC_SUCCESS) {
+        fabric_log("[USB] control-out-no-data failed: port%u cc=%u\n",
+                   info->port_number, usb_xhci_completion_code(&ev));
+        return RDNX_E_GENERIC;
+    }
+    return RDNX_OK;
+}
+
+int usb_xhci_get_config_descriptor(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                    void* buf, uint16_t buf_len)
+{
+    usb_xhci_port_ctx_t* port_ctx;
+    usb_setup_packet_t setup;
+    xhci_trb_t ev;
+    uint32_t port_index;
+    uint32_t req0;
+    uint32_t req1;
+    uint16_t transfer_len;
+
+    if (!slot || !info || !buf || buf_len == 0u ||
+        info->port_number == 0u || info->port_number > USB_PORT_DEVICE_MAX) {
+        return RDNX_E_INVALID;
+    }
+    if (info->state < USB_DEVICE_STATE_ADDRESSED) {
+        return RDNX_E_BUSY;
+    }
+
+    port_index = (uint32_t)(info->port_number - 1u);
+    port_ctx = &slot->xhci_ports[port_index];
+    if (!port_ctx->context_ready || !port_ctx->transfer_buf) {
+        return RDNX_E_INVALID;
+    }
+
+    transfer_len = (buf_len > (uint16_t)PAGE_SIZE) ? (uint16_t)PAGE_SIZE : buf_len;
+
+    usb_setup_get_descriptor(&setup, USB_DESC_CONFIGURATION, 0u, 0u, transfer_len);
+
+    req0 = ((uint32_t)setup.bmRequestType) |
+           ((uint32_t)setup.bRequest << 8) |
+           ((uint32_t)setup.wValue << 16);
+    req1 = ((uint32_t)setup.wIndex) |
+           ((uint32_t)setup.wLength << 16);
+
+    memset(port_ctx->ep0_ring, 0, sizeof(xhci_trb_t) * XHCI_EP0_RING_TRBS);
+    memset(port_ctx->transfer_buf, 0, PAGE_SIZE);
+
+    port_ctx->ep0_ring[0].dword0 = req0;
+    port_ctx->ep0_ring[0].dword1 = req1;
+    port_ctx->ep0_ring[0].dword2 = 8u;
+    port_ctx->ep0_ring[0].dword3 = XHCI_TRB_CYCLE |
+                                   XHCI_TRB_CH |
+                                   XHCI_TRB_IDT |
+                                   (XHCI_SETUP_TRT_IN << XHCI_TRB_TRT_SHIFT) |
+                                   (XHCI_TRB_SETUP_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    port_ctx->ep0_ring[1].dword0 = (uint32_t)(port_ctx->transfer_buf_phys & 0xFFFFFFFFu);
+    port_ctx->ep0_ring[1].dword1 = (uint32_t)(port_ctx->transfer_buf_phys >> 32);
+    port_ctx->ep0_ring[1].dword2 = transfer_len;
+    port_ctx->ep0_ring[1].dword3 = XHCI_TRB_CYCLE |
+                                   XHCI_TRB_CH |
+                                   XHCI_TRB_DIR_IN |
+                                   (XHCI_TRB_DATA_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    port_ctx->ep0_ring[2].dword3 = XHCI_TRB_CYCLE |
+                                   XHCI_TRB_IOC |
+                                   (XHCI_TRB_STATUS_STAGE << XHCI_TRB_TYPE_SHIFT);
+
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword0 =
+        (uint32_t)(port_ctx->ep0_ring_phys & 0xFFFFFFFFu);
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword1 =
+        (uint32_t)(port_ctx->ep0_ring_phys >> 32);
+    port_ctx->ep0_ring[XHCI_EP0_RING_TRBS - 1u].dword3 =
+        (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+
+    usb_xhci_ring_endpoint_doorbell(slot, port_ctx->slot_id, 1u);
+
+    if (usb_xhci_wait_transfer_event(slot, port_ctx->slot_id, &ev) != RDNX_OK) {
+        return RDNX_E_TIMEOUT;
+    }
+    if (usb_xhci_completion_code(&ev) != XHCI_CC_SUCCESS) {
+        return RDNX_E_GENERIC;
+    }
+
+    memcpy(buf, port_ctx->transfer_buf, transfer_len);
+    return RDNX_OK;
+}
+
+#define XHCI_TRB_CONFIGURE_EP_CMD 12u
+#define XHCI_EP_TYPE_BULK_OUT      2u
+#define XHCI_EP_TYPE_BULK_IN       6u
+#define XHCI_EP_TYPE_INTERRUPT_OUT 3u
+#define XHCI_EP_TYPE_INTERRUPT_IN  7u
+
+int usb_xhci_configure_endpoint(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                 usb_endpoint_info_t* ep)
+{
+    usb_xhci_port_ctx_t* port_ctx;
+    xhci_trb_t cmd;
+    xhci_trb_t ev;
+    uint32_t port_index;
+    uint32_t* input_ctrl;
+    uint32_t* slot_ctx;
+    uint32_t* ep_ctx;
+    uint32_t ep_ctx_offset;
+    uint32_t xhci_ep_type;
+    uint32_t avg_len;
+
+    if (!slot || !info || !ep ||
+        info->port_number == 0u || info->port_number > USB_PORT_DEVICE_MAX) {
+        return RDNX_E_INVALID;
+    }
+
+    port_index = (uint32_t)(info->port_number - 1u);
+    port_ctx = &slot->xhci_ports[port_index];
+    if (!port_ctx->context_ready || port_ctx->slot_id == 0u) {
+        return RDNX_E_INVALID;
+    }
+
+    ep->ring = (xhci_trb_t*)usb_xhci_alloc_dma(
+        sizeof(xhci_trb_t) * USB_EP_RING_TRBS, &ep->ring_phys);
+    ep->transfer_buf = usb_xhci_alloc_dma(USB_EP_BUF_SIZE, &ep->transfer_buf_phys);
+    if (!ep->ring || !ep->transfer_buf) {
+        return RDNX_E_NOMEM;
+    }
+
+    ep->ring_cycle = 1u;
+    ep->ring[USB_EP_RING_TRBS - 1u].dword0 = (uint32_t)(ep->ring_phys & 0xFFFFFFFFu);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword1 = (uint32_t)(ep->ring_phys >> 32);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword3 =
+        (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+
+    switch (ep->ep_type) {
+        case USB_EP_TYPE_BULK:
+            xhci_ep_type = (ep->ep_addr & USB_EP_DIR_IN)
+                ? XHCI_EP_TYPE_BULK_IN : XHCI_EP_TYPE_BULK_OUT;
+            avg_len = 1024u;
+            break;
+        case USB_EP_TYPE_INTERRUPT:
+            xhci_ep_type = (ep->ep_addr & USB_EP_DIR_IN)
+                ? XHCI_EP_TYPE_INTERRUPT_IN : XHCI_EP_TYPE_INTERRUPT_OUT;
+            avg_len = ep->max_packet;
+            break;
+        default:
+            return RDNX_E_UNSUPPORTED;
+    }
+
+    memset(port_ctx->input_ctx, 0, PAGE_SIZE);
+    input_ctrl = (uint32_t*)port_ctx->input_ctx;
+    slot_ctx   = (uint32_t*)((uint8_t*)port_ctx->input_ctx + XHCI_SLOT_CTX_OFFSET);
+    ep_ctx_offset = XHCI_INPUT_CONTROL_CTX_SIZE +
+                    (uint32_t)ep->xhci_ep_id * XHCI_CTX_STRIDE;
+    ep_ctx = (uint32_t*)((uint8_t*)port_ctx->input_ctx + ep_ctx_offset);
+
+    input_ctrl[1] = (1u << 0) | (1u << ep->xhci_ep_id);
+
+    slot_ctx[0] = ((uint32_t)(ep->xhci_ep_id + 1u) << XHCI_SLOT_CTX_DWORD0_CTX_ENTRIES_SHIFT) |
+                  ((uint32_t)info->speed << XHCI_SLOT_CTX_DWORD0_SPEED_SHIFT);
+    slot_ctx[1] = ((uint32_t)info->port_number << XHCI_SLOT_CTX_DWORD1_ROOT_PORT_SHIFT);
+
+    ep_ctx[0] = (uint32_t)ep->interval << 16;
+    ep_ctx[1] = (3u << XHCI_EP_CTX_DWORD1_CERR_SHIFT) |
+                (xhci_ep_type << XHCI_EP_CTX_DWORD1_EP_TYPE_SHIFT) |
+                ((uint32_t)ep->max_packet << XHCI_EP_CTX_DWORD1_MAX_PACKET_SHIFT);
+    ep_ctx[2] = (uint32_t)(ep->ring_phys & ~0xFu) | (uint32_t)(ep->ring_cycle & 0x1u);
+    ep_ctx[3] = (uint32_t)(ep->ring_phys >> 32);
+    ep_ctx[4] = avg_len;
+
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.dword0 = (uint32_t)(port_ctx->input_ctx_phys & 0xFFFFFFFFu);
+    cmd.dword1 = (uint32_t)(port_ctx->input_ctx_phys >> 32);
+    cmd.dword3 = (XHCI_TRB_CONFIGURE_EP_CMD << XHCI_TRB_TYPE_SHIFT) |
+                 ((uint32_t)port_ctx->slot_id << 24);
+
+    if (usb_xhci_ring_command(slot, &cmd) != RDNX_OK) {
+        return RDNX_E_GENERIC;
+    }
+    if (usb_xhci_wait_command_completion(slot, &ev) != RDNX_OK) {
+        return RDNX_E_TIMEOUT;
+    }
+    if (usb_xhci_completion_code(&ev) != XHCI_CC_SUCCESS) {
+        fabric_log("[USB] configure-ep failed: port%u ep=%02x cc=%u\n",
+                   info->port_number, ep->ep_addr, usb_xhci_completion_code(&ev));
+        return RDNX_E_GENERIC;
+    }
+
+    if (port_ctx->slot_id < (slot->xhci.max_slots + 1u) && slot->xhci.dcbaa) {
+        slot->xhci.dcbaa[port_ctx->slot_id] = port_ctx->output_ctx_phys;
+    }
+
+    fabric_log("[USB] endpoint configured: port%u ep=%02x type=%u mps=%u xhci_ep=%u\n",
+               info->port_number, ep->ep_addr, ep->ep_type,
+               ep->max_packet, ep->xhci_ep_id);
+    return RDNX_OK;
+}
+
+int usb_xhci_transfer_interrupt_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                    usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                                    uint16_t* out_actual)
+{
+    xhci_trb_t ev;
+    uint32_t completion;
+    uint32_t remain;
+    uint16_t transfer_len;
+
+    if (!slot || !info || !ep || !buf || len == 0u) {
+        return RDNX_E_INVALID;
+    }
+    if (!ep->ring || !ep->transfer_buf) {
+        return RDNX_E_INVALID;
+    }
+
+    transfer_len = (len > (uint16_t)USB_EP_BUF_SIZE) ? (uint16_t)USB_EP_BUF_SIZE : len;
+
+    memset(ep->ring, 0, sizeof(xhci_trb_t) * USB_EP_RING_TRBS);
+    memset(ep->transfer_buf, 0, USB_EP_BUF_SIZE);
+
+    ep->ring[0].dword0 = (uint32_t)(ep->transfer_buf_phys & 0xFFFFFFFFu);
+    ep->ring[0].dword1 = (uint32_t)(ep->transfer_buf_phys >> 32);
+    ep->ring[0].dword2 = transfer_len;
+    ep->ring[0].dword3 = XHCI_TRB_CYCLE |
+                         XHCI_TRB_IOC |
+                         (1u << XHCI_TRB_TYPE_SHIFT);
+
+    ep->ring[USB_EP_RING_TRBS - 1u].dword0 = (uint32_t)(ep->ring_phys & 0xFFFFFFFFu);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword1 = (uint32_t)(ep->ring_phys >> 32);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword3 =
+        (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+    __asm__ volatile ("" ::: "memory");
+
+    usb_xhci_ring_endpoint_doorbell(slot, info->slot_id, ep->xhci_ep_id);
+
+    if (usb_xhci_wait_ep_transfer(slot, info, ep, &ev) != RDNX_OK) {
+        return RDNX_E_TIMEOUT;
+    }
+
+    completion = usb_xhci_completion_code(&ev);
+    if (completion != XHCI_CC_SUCCESS) {
+        return RDNX_E_GENERIC;
+    }
+
+    remain = usb_xhci_transfer_remaining(&ev);
+    if (out_actual) {
+        uint32_t actual32 = (remain <= transfer_len) ? (transfer_len - remain) : 0u;
+        *out_actual = (uint16_t)actual32;
+    }
+    memcpy(buf, ep->transfer_buf, transfer_len);
+    return RDNX_OK;
+}
+
+int usb_xhci_transfer_bulk_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                               usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                               uint16_t* out_actual)
+{
+    return usb_xhci_transfer_interrupt_in(slot, info, ep, buf, len, out_actual);
+}
+
+int usb_xhci_poll_interrupt_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                                uint16_t* out_actual)
+{
+    xhci_trb_t ev;
+    uint32_t completion;
+    uint32_t remain;
+    uint16_t transfer_len;
+
+    if (!slot || !info || !ep || !buf || len == 0u ||
+        !ep->ring || !ep->transfer_buf) {
+        return RDNX_E_INVALID;
+    }
+
+    transfer_len = (len > (uint16_t)USB_EP_BUF_SIZE) ? (uint16_t)USB_EP_BUF_SIZE : len;
+
+    if (!ep->transfer_pending) {
+        /* Post new transfer TRB and return — completion checked on next tick */
+        memset(ep->ring, 0, sizeof(xhci_trb_t) * USB_EP_RING_TRBS);
+        memset(ep->transfer_buf, 0, USB_EP_BUF_SIZE);
+
+        ep->ring[0].dword0 = (uint32_t)(ep->transfer_buf_phys & 0xFFFFFFFFu);
+        ep->ring[0].dword1 = (uint32_t)(ep->transfer_buf_phys >> 32);
+        ep->ring[0].dword2 = transfer_len;
+        ep->ring[0].dword3 = XHCI_TRB_CYCLE |
+                             XHCI_TRB_IOC |
+                             (1u << XHCI_TRB_TYPE_SHIFT);
+
+        ep->ring[USB_EP_RING_TRBS - 1u].dword0 = (uint32_t)(ep->ring_phys & 0xFFFFFFFFu);
+        ep->ring[USB_EP_RING_TRBS - 1u].dword1 = (uint32_t)(ep->ring_phys >> 32);
+        ep->ring[USB_EP_RING_TRBS - 1u].dword3 =
+            (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+        __asm__ volatile ("" ::: "memory");
+
+        usb_xhci_ring_endpoint_doorbell(slot, info->slot_id, ep->xhci_ep_id);
+        ep->transfer_pending = 1u;
+        return RDNX_E_BUSY;
+    }
+
+    /* Check ep_mailbox non-blockingly (dispatch already called by generic_poll) */
+    if (usb_xhci_ep_mbx_pop(ep, &ev) != RDNX_OK) {
+        return RDNX_E_BUSY;
+    }
+
+    ep->transfer_pending = 0u;
+    completion = usb_xhci_completion_code(&ev);
+    if (completion != XHCI_CC_SUCCESS) {
+        return RDNX_E_GENERIC;
+    }
+
+    remain = usb_xhci_transfer_remaining(&ev);
+    if (out_actual) {
+        uint32_t actual = (remain <= transfer_len) ? (transfer_len - remain) : 0u;
+        *out_actual = (uint16_t)actual;
+    }
+    memcpy(buf, ep->transfer_buf, transfer_len);
+    return RDNX_OK;
+}
+
+int usb_xhci_transfer_bulk_out(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                usb_endpoint_info_t* ep, const void* buf, uint16_t len)
+{
+    xhci_trb_t ev;
+    uint32_t completion;
+    uint16_t transfer_len;
+
+    if (!slot || !info || !ep || !buf || len == 0u) {
+        return RDNX_E_INVALID;
+    }
+    if (!ep->ring || !ep->transfer_buf) {
+        return RDNX_E_INVALID;
+    }
+
+    transfer_len = (len > (uint16_t)USB_EP_BUF_SIZE) ? (uint16_t)USB_EP_BUF_SIZE : len;
+
+    memset(ep->ring, 0, sizeof(xhci_trb_t) * USB_EP_RING_TRBS);
+    memcpy(ep->transfer_buf, buf, transfer_len);
+
+    ep->ring[0].dword0 = (uint32_t)(ep->transfer_buf_phys & 0xFFFFFFFFu);
+    ep->ring[0].dword1 = (uint32_t)(ep->transfer_buf_phys >> 32);
+    ep->ring[0].dword2 = transfer_len;
+    ep->ring[0].dword3 = XHCI_TRB_CYCLE |
+                         XHCI_TRB_IOC |
+                         (1u << XHCI_TRB_TYPE_SHIFT);
+
+    ep->ring[USB_EP_RING_TRBS - 1u].dword0 = (uint32_t)(ep->ring_phys & 0xFFFFFFFFu);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword1 = (uint32_t)(ep->ring_phys >> 32);
+    ep->ring[USB_EP_RING_TRBS - 1u].dword3 =
+        (XHCI_TRB_LINK << XHCI_TRB_TYPE_SHIFT) | XHCI_TRB_CYCLE;
+    __asm__ volatile ("" ::: "memory");
+
+    usb_xhci_ring_endpoint_doorbell(slot, info->slot_id, ep->xhci_ep_id);
+
+    if (usb_xhci_wait_ep_transfer(slot, info, ep, &ev) != RDNX_OK) {
+        return RDNX_E_TIMEOUT;
+    }
+
+    completion = usb_xhci_completion_code(&ev);
+    return (completion == XHCI_CC_SUCCESS) ? RDNX_OK : RDNX_E_GENERIC;
+}
+
+/*
+ * PCI IRQ handler for xHCI. Called from interrupt context.
+ * Clears the IMAN interrupt pending bit and dispatches all pending events.
+ */
+void usb_xhci_irq_handler(int vector, void* arg)
+{
+    usb_host_slot_t* slot = (usb_host_slot_t*)arg;
+    uint32_t intr_base;
+
+    (void)vector;
+    if (!slot || !slot->xhci.initialized) {
+        return;
+    }
+
+    intr_base = slot->xhci.rtsoff + XHCI_INTR0_BASE;
+    /* Write 1 to IP to acknowledge, keep IE set */
+    usb_xhci_wr32(&slot->xhci, intr_base + XHCI_IMAN, XHCI_IMAN_IE | XHCI_IMAN_IP);
+    __asm__ volatile ("" ::: "memory");
+
+    usb_xhci_dispatch_events(slot);
 }

@@ -51,6 +51,8 @@ KERNEL_C_SRCS += \
 	kernel/input/input_core.c \
 	drivers/fabric/usb/usb_xhci.c \
 	drivers/fabric/usb/usb_host_pci.c \
+	drivers/fabric/usb/usb_hid.c \
+	drivers/fabric/usb/usb_msc.c \
 	kernel/gfx/gfx.c \
 	kernel/gfx/gfx_console.c
 

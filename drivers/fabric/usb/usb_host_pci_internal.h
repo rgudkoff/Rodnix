@@ -11,6 +11,11 @@
 #define USB_HUB_NAME_MAX 24u
 #define USB_PORT_DEVICE_MAX 16u
 #define USB_XHCI_PENDING_EVENTS_MAX 32u
+#define USB_EP_MAX 4u
+#define USB_EP_RING_TRBS 8u
+#define USB_EP_BUF_SIZE 512u
+#define XHCI_CMD_MAILBOX_SIZE 8u
+#define XHCI_EP_MAILBOX_SIZE  4u
 
 typedef struct __attribute__((packed, aligned(16))) xhci_trb {
     uint32_t dword0;
@@ -18,6 +23,24 @@ typedef struct __attribute__((packed, aligned(16))) xhci_trb {
     uint32_t dword2;
     uint32_t dword3;
 } xhci_trb_t;
+
+typedef struct usb_endpoint_info {
+    uint8_t ep_addr;
+    uint8_t ep_type;
+    uint8_t xhci_ep_id;
+    uint8_t ring_cycle;
+    uint16_t max_packet;
+    uint8_t interval;
+    uint8_t transfer_pending;
+    xhci_trb_t* ring;
+    uint64_t ring_phys;
+    void* transfer_buf;
+    uint64_t transfer_buf_phys;
+    xhci_trb_t ep_mailbox[XHCI_EP_MAILBOX_SIZE];
+    uint8_t ep_mbx_head;
+    uint8_t ep_mbx_tail;
+    uint8_t ep_mbx_count;
+} usb_endpoint_info_t;
 
 typedef struct __attribute__((packed)) xhci_erst_entry {
     uint32_t ring_base_lo;
@@ -50,11 +73,15 @@ typedef struct usb_xhci_state {
     uint8_t pending_head;
     uint8_t pending_tail;
     uint8_t pending_count;
+    uint8_t cmd_mbx_head;
+    uint8_t cmd_mbx_tail;
+    uint8_t cmd_mbx_count;
     xhci_trb_t* cmd_ring;
     xhci_trb_t* event_ring;
     xhci_erst_entry_t* erst;
     uint64_t* dcbaa;
     xhci_trb_t pending_events[USB_XHCI_PENDING_EVENTS_MAX];
+    xhci_trb_t cmd_mailbox[XHCI_CMD_MAILBOX_SIZE];
 } usb_xhci_state_t;
 
 typedef struct usb_xhci_port_ctx {
@@ -69,7 +96,9 @@ typedef struct usb_xhci_port_ctx {
     uint8_t slot_id;
     uint8_t context_ready;
     uint8_t ep0_cycle;
-    uint16_t reserved0;
+    uint8_t extra_ep_count;
+    uint8_t reserved0;
+    usb_endpoint_info_t extra_eps[USB_EP_MAX];
 } usb_xhci_port_ctx_t;
 
 typedef struct usb_host_slot {
@@ -95,6 +124,27 @@ int usb_xhci_address_device(usb_host_slot_t* slot, usb_port_device_info_t* info)
 int usb_xhci_get_device_descriptor(usb_host_slot_t* slot,
                                    usb_port_device_info_t* info,
                                    usb_device_descriptor_t* out_desc);
+int usb_xhci_control_out_no_data(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                  const usb_setup_packet_t* setup);
+int usb_xhci_get_config_descriptor(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                    void* buf, uint16_t buf_len);
+int usb_xhci_configure_endpoint(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                 usb_endpoint_info_t* ep);
+int usb_xhci_transfer_interrupt_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                    usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                                    uint16_t* out_actual);
+int usb_xhci_poll_interrupt_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                                uint16_t* out_actual);
+int usb_xhci_transfer_bulk_in(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                               usb_endpoint_info_t* ep, void* buf, uint16_t len,
+                               uint16_t* out_actual);
+int usb_xhci_transfer_bulk_out(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                                usb_endpoint_info_t* ep, const void* buf, uint16_t len);
+void usb_xhci_dispatch_events(usb_host_slot_t* slot);
+void usb_xhci_irq_handler(int vector, void* arg);
+int usb_xhci_wait_ep_transfer(usb_host_slot_t* slot, usb_port_device_info_t* info,
+                               usb_endpoint_info_t* ep, xhci_trb_t* out_ev);
 uint32_t usb_xhci_portsc(const usb_host_slot_t* slot, uint32_t port);
 uint8_t usb_xhci_port_speed(const usb_host_slot_t* slot, uint32_t port);
 int usb_xhci_port_connected(const usb_host_slot_t* slot, uint32_t port);

@@ -11,10 +11,13 @@
 #include "../../include/console.h"
 #include "../../include/error.h"
 
-#define USB_HOST_MAX 8u
+#define USB_HOST_MAX        8u
+#define USB_CLASS_POLL_MAX  8u
 
 static spinlock_t g_usb_lock;
 static usb_host_controller_t* g_usb_hosts[USB_HOST_MAX];
+static usb_class_poll_fn_t g_class_polls[USB_CLASS_POLL_MAX];
+static uint32_t g_class_poll_count = 0u;
 
 void usb_init(void)
 {
@@ -166,6 +169,21 @@ int usb_host_rescan(usb_host_controller_t* host)
         return RDNX_E_UNSUPPORTED;
     }
     return host->ops->rescan(host);
+}
+
+void usb_class_poll_register(usb_class_poll_fn_t fn)
+{
+    if (!fn || g_class_poll_count >= USB_CLASS_POLL_MAX) {
+        return;
+    }
+    g_class_polls[g_class_poll_count++] = fn;
+}
+
+void usb_class_poll_all(void)
+{
+    for (uint32_t i = 0u; i < g_class_poll_count; i++) {
+        g_class_polls[i]();
+    }
 }
 
 void usb_host_poll_all(void)
