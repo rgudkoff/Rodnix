@@ -4,6 +4,7 @@
  */
 
 #include "../../core/cpu.h"
+#include "../../core/task.h"
 #include "types.h"
 #include "gdt.h"
 #include "../../../include/common.h"
@@ -445,4 +446,16 @@ uint64_t cpu_get_time(void)
     uint32_t eax, edx;
     __asm__ volatile ("rdtsc" : "=a"(eax), "=d"(edx));
     return ((uint64_t)edx << 32) | eax;
+}
+
+void sched_arch_apply_thread(void* thread_ptr)
+{
+    thread_t* t = (thread_t*)thread_ptr;
+    if (!t || !t->tls_fs_base) {
+        return;
+    }
+    /* Write FS.Base MSR (0xC0000100) for per-thread TLS. */
+    uint32_t lo = (uint32_t)(t->tls_fs_base & 0xFFFFFFFFu);
+    uint32_t hi = (uint32_t)(t->tls_fs_base >> 32);
+    __asm__ volatile ("wrmsr" :: "c"(0xC0000100u), "a"(lo), "d"(hi) : "memory");
 }

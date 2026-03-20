@@ -214,6 +214,9 @@ typedef struct thread {
     uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
     uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
     void* arch_specific;       /* Архитектурно-зависимые данные */
+    /* Per-thread TLS and POSIX thread support */
+    uint64_t tls_fs_base;      /* Per-thread FS base (set via CLONE_SETTLS); 0 = not set */
+    uint64_t* clear_tid_ptr;   /* User-space TID address cleared to 0 on exit (CLONE_CHILD_CLEARTID) */
 } thread_t;
 
 /* ============================================================================
@@ -348,6 +351,17 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats);
  */
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg);
 thread_t* thread_create_user_clone(task_t* task, const struct interrupt_frame* frame);
+
+/*
+ * Create a new user thread in an existing task (for clone/pthreads).
+ * The new thread shares the task's address space. It starts at the same
+ * return-from-syscall RIP as the calling thread, but with rsp=child_stack
+ * and rax=0. If tls_fs_base != 0, it is set as the thread's FS base.
+ */
+thread_t* thread_create_user_thread(task_t* task,
+                                    const struct interrupt_frame* frame,
+                                    uint64_t child_stack,
+                                    uint64_t tls_fs_base);
 
 /**
  * Удаление потока

@@ -507,4 +507,32 @@ static inline long posix_lchown(const char* path, unsigned int uid, unsigned int
     return rdnx_syscall3(POSIX_SYS_LCHOWN, (long)(uintptr_t)path, (long)uid, (long)gid);
 }
 
+/*
+ * clone(flags, child_stack, ptid, ctid, newtls)
+ * Used by pthreads for thread creation.
+ */
+static inline long posix_clone(unsigned long flags,
+                                void* child_stack,
+                                int* ptid,
+                                int* ctid,
+                                unsigned long newtls)
+{
+    return rdnx_syscall5(POSIX_SYS_CLONE,
+                         (long)flags,
+                         (long)(uintptr_t)child_stack,
+                         (long)(uintptr_t)ptid,
+                         (long)(uintptr_t)ctid,
+                         (long)newtls);
+}
+
+static inline long posix_mprotect(void* addr, uint64_t len, int prot)
+{
+    return rdnx_syscall3(POSIX_SYS_MPROTECT, (long)(uintptr_t)addr, (long)len, (long)prot);
+}
+
+static inline long posix_thread_exit(int status)
+{
+    return rdnx_syscall1(POSIX_SYS_THREAD_EXIT, (long)status);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

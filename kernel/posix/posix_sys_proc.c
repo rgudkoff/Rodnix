@@ -110,3 +110,32 @@ uint64_t posix_futex(uint64_t a1,
 {
     return unix_proc_futex(a1, a2, a3, a4, a5, a6);
 }
+
+/*
+ * clone(flags, child_stack, ptid, ctid, newtls)
+ * a1=flags  a2=child_stack  a3=ptid  a4=ctid  a5=newtls
+ */
+uint64_t posix_clone(uint64_t a1,
+                     uint64_t a2,
+                     uint64_t a3,
+                     uint64_t a4,
+                     uint64_t a5,
+                     uint64_t a6)
+{
+    (void)a6;
+    return unix_proc_clone(a1, a2, a3, a4, a5);
+}
+
+/*
+ * thread_exit(status) — exit current thread only.
+ */
+uint64_t posix_thread_exit(uint64_t a1,
+                           uint64_t a2,
+                           uint64_t a3,
+                           uint64_t a4,
+                           uint64_t a5,
+                           uint64_t a6)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return unix_proc_thread_exit(a1);
+}

@@ -615,3 +615,132 @@ uint64_t unix_proc_futex(uint64_t user_uaddr_ptr,
 
     return (uint64_t)RDNX_E_UNSUPPORTED;
 }
+
+/* ============================================================
+ * CLONE flags (subset, compatible with Linux/POSIX pthreads)
+ * ============================================================ */
+#define CLONE_VM            0x00000100u  /* share address space */
+#define CLONE_FS            0x00000200u  /* share filesystem state */
+#define CLONE_FILES         0x00000400u  /* share fd table */
+#define CLONE_SIGHAND       0x00000800u  /* share signal handlers */
+#define CLONE_THREAD        0x00010000u  /* same thread group as parent */
+#define CLONE_SETTLS        0x00080000u  /* set FS.Base = newtls */
+#define CLONE_PARENT_SETTID 0x00100000u  /* write tid to *ptid in parent */
+#define CLONE_CHILD_CLEARTID 0x00200000u /* zero *ctid and futex_wake on exit */
+#define CLONE_CHILD_SETTID  0x01000000u  /* write tid to *ctid in child */
+
+uint64_t unix_proc_clone(uint64_t flags,
+                         uint64_t child_stack,
+                         uint64_t ptid,
+                         uint64_t ctid,
+                         uint64_t newtls)
+{
+    task_t* task = task_get_current();
+    thread_t* self = thread_get_current();
+    if (!task || !self) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    /* For now only support thread creation (CLONE_VM required). */
+    if (!(flags & CLONE_VM)) {
+        return (uint64_t)RDNX_E_UNSUPPORTED;
+    }
+    if (!child_stack) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    interrupt_frame_t* frame = (interrupt_frame_t*)self->arch_specific;
+    if (!unix_frame_on_thread_stack(self, frame)) {
+        frame = (interrupt_frame_t*)(uintptr_t)self->context.stack_pointer;
+    }
+    if (!unix_frame_on_thread_stack(self, frame)) {
+        return (uint64_t)RDNX_E_GENERIC;
+    }
+
+    uint64_t tls = (flags & CLONE_SETTLS) ? newtls : 0;
+
+    thread_t* child = thread_create_user_thread(task, frame, child_stack, tls);
+    if (!child) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+
+    uint64_t tid = child->thread_id;
+
+    /* CLONE_PARENT_SETTID: write tid to parent address before child runs. */
+    if ((flags & CLONE_PARENT_SETTID) && ptid) {
+        int32_t* p = (int32_t*)(uintptr_t)ptid;
+        if (unix_user_range_ok(p, sizeof(*p))) {
+            *p = (int32_t)tid;
+        }
+    }
+
+    /* CLONE_CHILD_SETTID / CLONE_CHILD_CLEARTID: handled by child on first run.
+     * Store ctid in child thread so it can write its own tid after scheduling. */
+    if ((flags & (CLONE_CHILD_SETTID | CLONE_CHILD_CLEARTID)) && ctid) {
+        child->clear_tid_ptr = (uint64_t*)(uintptr_t)ctid;
+    }
+
+    /* If CLONE_CHILD_SETTID: patch the child's interrupt frame so that,
+     * when the child's first syscall returns, we write the tid.
+     * Simpler: write it now since we share address space. */
+    if ((flags & CLONE_CHILD_SETTID) && ctid) {
+        int32_t* cp = (int32_t*)(uintptr_t)ctid;
+        if (unix_user_range_ok(cp, sizeof(*cp))) {
+            *cp = (int32_t)tid;
+        }
+    }
+
+    child->priority = self->priority;
+    child->base_priority = self->base_priority;
+    child->dyn_priority = self->dyn_priority;
+    scheduler_add_thread(child);
+
+    return tid;
+}
+
+uint64_t unix_proc_thread_exit(uint64_t status)
+{
+    (void)status;
+    thread_t* cur = thread_get_current();
+    task_t* task = task_get_current();
+
+    if (cur && cur->clear_tid_ptr) {
+        /* CLONE_CHILD_CLEARTID: zero the tid word and wake futex waiters. */
+        uint64_t* tidptr = cur->clear_tid_ptr;
+        if (unix_user_range_ok(tidptr, sizeof(uint32_t))) {
+            *(uint32_t*)(uintptr_t)tidptr = 0;
+            /* Wake any thread waiting on this futex (futex_wake(tidptr, 1)). */
+            extern uint64_t unix_proc_futex(uint64_t, uint64_t, uint64_t,
+                                            uint64_t, uint64_t, uint64_t);
+            unix_proc_futex((uint64_t)(uintptr_t)tidptr,
+                            1 /* FUTEX_WAKE */, 1, 0, 0, 0);
+        }
+        cur->clear_tid_ptr = NULL;
+    }
+
+    /* If this is the last thread, close fds and notify parent like proc_exit. */
+    if (task) {
+        uint32_t live = 0;
+        thread_t* t;
+        TAILQ_FOREACH(t, &task->threads, task_link) {
+            if (t != cur && t->state != THREAD_STATE_DEAD) {
+                live++;
+            }
+        }
+        if (live == 0) {
+            unix_proc_close_fds(task);
+            task->exit_code = (int32_t)status;
+            task->exited = 1;
+            unix_proc_notify_waiters(task->parent_task_id);
+            if (task->parent_task_id) {
+                task_t* parent = task_find_by_id(task->parent_task_id);
+                if (parent) {
+                    parent->sig_pending |= (1u << UNIX_SIGCHLD);
+                }
+            }
+        }
+    }
+
+    scheduler_exit_current();
+    return 0;
+}

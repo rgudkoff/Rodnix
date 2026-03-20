@@ -154,8 +154,21 @@ void scheduler_exit_current(void)
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_EXIT,
                  cur->thread_id,
                  cur->task ? cur->task->task_id : 0);
+    /*
+     * Zombie the task only when this is the last live thread.
+     * For multi-threaded processes, other threads continue running.
+     */
     if (cur->task && cur->task->state != TASK_STATE_DEAD) {
-        scheduler_task_set_state(cur->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
+        uint32_t live = 0;
+        thread_t* t;
+        TAILQ_FOREACH(t, &cur->task->threads, task_link) {
+            if (t != cur && t->state != THREAD_STATE_DEAD) {
+                live++;
+            }
+        }
+        if (live == 0) {
+            scheduler_task_set_state(cur->task, TASK_STATE_ZOMBIE, "scheduler_exit_current");
+        }
     }
     resched_pending = true;
     __asm__ volatile ("int $32");
