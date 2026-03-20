@@ -217,3 +217,32 @@ uint64_t posix_brk(uint64_t a1,
     }
     return (uint64_t)vm_task_brk(task, a1);
 }
+
+/*
+ * mprotect(addr, len, prot)
+ * a1=addr  a2=len  a3=prot
+ */
+uint64_t posix_mprotect(uint64_t a1,
+                        uint64_t a2,
+                        uint64_t a3,
+                        uint64_t a4,
+                        uint64_t a5,
+                        uint64_t a6)
+{
+    (void)a4; (void)a5; (void)a6;
+    enum {
+        PROT_READ  = 0x1,
+        PROT_WRITE = 0x2,
+        PROT_EXEC  = 0x4,
+    };
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    uint32_t prot = 0;
+    if (a3 & PROT_READ)  { prot |= VM_PROT_READ; }
+    if (a3 & PROT_WRITE) { prot |= VM_PROT_WRITE; }
+    if (a3 & PROT_EXEC)  { prot |= VM_PROT_EXEC; }
+    int r = vm_task_mprotect(task, a1, a2, prot);
+    return (r == 0) ? 0 : (uint64_t)r;
+}

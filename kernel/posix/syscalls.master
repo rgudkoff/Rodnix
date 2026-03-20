@@ -93,3 +93,6 @@
 74 chown           # [stable]       path-based uid/gid; -1 = leave unchanged
 75 fchown          # [stable]       fd-based uid/gid; -1 = leave unchanged
 76 lchown          # [stub]         same as chown (no symlinks yet)
+78 clone           # [experimental] create thread; CLONE_VM|CLONE_THREAD|CLONE_SETTLS|CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID
+79 mprotect        # [stable]       change memory protection flags on mapped region
+80 thread_exit     # [stable]       exit current thread only (not whole process)

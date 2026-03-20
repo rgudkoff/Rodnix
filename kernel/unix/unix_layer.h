@@ -118,6 +118,27 @@ uint64_t unix_proc_exit(uint64_t status);
 /* CT-001 */
 uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_t user_envp_ptr);
 uint64_t unix_proc_fork(void);
+
+/*
+ * clone() — create a new thread in the current task (CLONE_VM path).
+ * flags:        CLONE_* bitmask (must include CLONE_VM for thread creation)
+ * child_stack:  top of new thread's user-space stack
+ * ptid:         user pointer to write parent TID to (CLONE_PARENT_SETTID), or NULL
+ * ctid:         user pointer to write/clear child TID (CLONE_CHILD_SETTID/CLEARTID), or NULL
+ * newtls:       FS.Base value for new thread (CLONE_SETTLS), or 0
+ */
+uint64_t unix_proc_clone(uint64_t flags,
+                         uint64_t child_stack,
+                         uint64_t ptid,
+                         uint64_t ctid,
+                         uint64_t newtls);
+
+/*
+ * thread_exit() — exit the current thread only.
+ * If this is the last thread in the task, the task is zombied.
+ * clear_tid (if set via CLONE_CHILD_CLEARTID) is zeroed and futex-woken.
+ */
+uint64_t unix_proc_thread_exit(uint64_t status);
 uint64_t unix_proc_kill(uint64_t pid, uint64_t signum);
 uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t user_oldact_ptr);
 uint64_t unix_proc_sigreturn(void);

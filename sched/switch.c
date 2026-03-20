@@ -2,6 +2,7 @@
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../kernel/arch/paging.h"
+#include "../kernel/core/cpu.h"
 #include "../include/debug.h"
 
 static uint64_t scheduler_kernel_pml4 = 0;
@@ -70,6 +71,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         }
         scheduler_switch_address_space(first);
         scheduler_update_tss(first);
+        sched_arch_apply_thread(first);
         stats.running_tasks = 1;
         stats.total_switches++;
         scheduler_thread_set_state(first, THREAD_STATE_RUNNING, "switch_first");
@@ -107,6 +109,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     }
     scheduler_switch_address_space(next);
     scheduler_update_tss(next);
+    sched_arch_apply_thread(next);
     stats.running_tasks = 1;
     stats.total_switches++;
 

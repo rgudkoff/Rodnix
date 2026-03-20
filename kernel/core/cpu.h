@@ -92,6 +92,12 @@ void cpu_restore_context(thread_context_t* ctx);
  */
 void cpu_switch_thread(thread_context_t* from, thread_context_t* to);
 
+/*
+ * Apply per-thread arch state (e.g. FS.Base MSR for TLS) when switching to t.
+ * Called by the scheduler on every context switch.
+ */
+void sched_arch_apply_thread(void* thread_ptr);
+
 /* ============================================================================
  * Барьеры памяти
  * ============================================================================ */
