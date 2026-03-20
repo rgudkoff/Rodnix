@@ -277,7 +277,9 @@ int pthread_create(pthread_t* thread,
     }
 
     tself->tid = (pthread_t)tid;
-    *thread    = (pthread_t)tid;
+    /* Return the tself pointer as the opaque handle so pthread_join can
+     * access tid_futex directly without a thread table. */
+    *thread = (pthread_t)(uintptr_t)tself;
     return 0;
 }
 
@@ -287,21 +289,24 @@ int pthread_create(pthread_t* thread,
 
 int pthread_join(pthread_t thread, void** retval)
 {
-    (void)thread;
+    if (!thread) {
+        return EINVAL;
+    }
     /*
-     * We wait on the tid_futex word that the kernel zeroes on thread exit
-     * (CLONE_CHILD_CLEARTID). The tid_futex address was stored as clear_tid_ptr.
-     *
-     * Since we don't have a per-tid lookup table yet, we use a simplified
-     * approach: the caller must have obtained a reference to tid_futex.
-     * For now, we spin-futex on the global concept. A proper implementation
-     * needs a thread table.
-     *
-     * TODO: maintain a thread table keyed by pthread_t (= kernel tid)
-     *       to look up the tid_futex word.
+     * pthread_t is the tself pointer (set by pthread_create).
+     * CLONE_CHILD_CLEARTID makes the kernel zero tid_futex and wake the futex
+     * when the thread exits — spin-wait on that word.
      */
-    (void)retval;
-    return ENOSYS; /* TODO: implement with thread table */
+    __pthread_self_t* tself = (__pthread_self_t*)(uintptr_t)thread;
+    volatile int32_t* futex_word = &tself->tid_futex;
+    int32_t v;
+    while ((v = *futex_word) != 0) {
+        futex_wait(futex_word, v);
+    }
+    if (retval) {
+        *retval = tself->retval;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */

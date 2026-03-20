@@ -76,6 +76,10 @@ typedef struct usb_host_ops {
                         usb_ep_handle_t ep, const void* buf, uint16_t len);
     int (*poll_interrupt_in)(usb_host_controller_t* host, usb_port_device_info_t* info,
                              usb_ep_handle_t ep, void* buf, uint16_t len, uint16_t* actual);
+    /* EP0 control transfer with no data phase (OUT direction).
+     * Used by class drivers to send SET_PROTOCOL, SET_IDLE, etc. */
+    int (*control_out)(usb_host_controller_t* host, usb_port_device_info_t* info,
+                       const usb_setup_packet_t* setup);
 } usb_host_ops_t;
 
 typedef struct usb_host_controller {
@@ -123,5 +127,16 @@ void usb_setup_get_descriptor(usb_setup_packet_t* pkt,
                               uint16_t length);
 void usb_setup_set_address(usb_setup_packet_t* pkt, uint8_t address);
 void usb_setup_set_configuration(usb_setup_packet_t* pkt, uint8_t config_value);
+
+/* HID class request helpers */
+#define USB_HID_REQ_SET_PROTOCOL  0x0Bu
+#define USB_HID_REQ_SET_IDLE      0x0Au
+#define USB_HID_BOOT_PROTOCOL     0x00u
+#define USB_HID_REPORT_PROTOCOL   0x01u
+
+void usb_setup_hid_set_protocol(usb_setup_packet_t* pkt,
+                                 uint8_t interface, uint8_t protocol);
+void usb_setup_hid_set_idle(usb_setup_packet_t* pkt,
+                             uint8_t interface, uint8_t duration);
 
 #endif /* _RODNIX_USB_USB_H */

@@ -12,5 +12,9 @@
 void gdt_init(void);
 void tss_set_rsp0(uint64_t rsp0);
 extern uint64_t g_tss_rsp0_shadow;
+/* FS.Base value for the currently running thread; updated by
+ * sched_arch_apply_thread() and read by the ISR/IRQ stubs to re-apply
+ * FS.Base after segment-register restoration clears it. */
+extern uint64_t g_current_tls_fs_base;
 
 #endif /* _RODNIX_ARCH_X86_64_GDT_H */

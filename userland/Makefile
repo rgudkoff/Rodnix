@@ -789,5 +789,47 @@ $(PTHREAD_TEST_BIN): $(PTHREAD_TEST_ELF)
 	cp $< $@
 	chmod 0755 $@
 
+# ── Rust utilities ────────────────────────────────────────────────────────────
+#
+# Requirements:
+#   rustup target add x86_64-unknown-none
+#
+# Build separately (not part of default `all`, rust toolchain may be absent):
+#   make rust-utils
+#
+# RUSTC can be overridden: make rust-utils RUSTC=~/.cargo/bin/rustc
+#
+RUSTC ?= rustc
+
+RUST_HELLO_RS  = rust/hello/main.rs
+RUST_HELLO_LIB = $(BUILD_DIR)/rust/hello/libhello.a
+RUST_HELLO_ELF = $(BUILD_DIR)/rust_hello.elf
+RUST_HELLO_BIN = $(BIN_DIR)/rust_hello
+
+$(RUST_HELLO_LIB): $(RUST_HELLO_RS)
+	@mkdir -p $(dir $@)
+	$(RUSTC) --edition 2021 \
+	    --target x86_64-unknown-none \
+	    --crate-type staticlib \
+	    --crate-name hello \
+	    -C opt-level=2 \
+	    -C panic=abort \
+	    -o $@ \
+	    $<
+
+$(RUST_HELLO_ELF): $(RUST_HELLO_LIB) $(CRT0_OBJ) $(LIBC_OBJS) rust/link_rust.ld link.ld
+	@mkdir -p $(dir $@)
+	$(LD) -T rust/link_rust.ld -o $@ $(CRT0_OBJ) $(LIBC_OBJS) $(RUST_HELLO_LIB)
+
+$(RUST_HELLO_BIN): $(RUST_HELLO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+.PHONY: rust-utils
+rust-utils: $(RUST_HELLO_BIN)
+
+# ── clean ─────────────────────────────────────────────────────────────────────
+
 clean:
 	rm -rf $(BUILD_DIR)

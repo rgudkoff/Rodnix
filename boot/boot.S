@@ -31,7 +31,19 @@ mb2_start:
     dd MB2_ARCH
     dd MB2_LEN
     dd MB2_CSUM
+
+    ; Framebuffer request tag (type=5, flags=1=optional, size=20)
+    ; width=height=depth=0 means "any mode, just provide a linear framebuffer"
+align 8
+    dw 5            ; type: framebuffer
+    dw 1            ; flags: optional (bit 0 = 0 means required, 1 = optional)
+    dd 20           ; size
+    dd 0            ; width  (0 = no preference)
+    dd 0            ; height (0 = no preference)
+    dd 0            ; depth  (0 = no preference)
+
     ; tag_end (type=0, size=8)
+align 8
     dd 0
     dd 8
 mb2_end:

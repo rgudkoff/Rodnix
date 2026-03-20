@@ -5,6 +5,8 @@ extern environ
 ; C++ global constructor/destructor table symbols (defined in link.ld)
 extern __init_array_start
 extern __init_array_end
+extern __ctors_start
+extern __ctors_end
 
 section .text
 _start:
@@ -18,7 +20,7 @@ _start:
     push rsi
     push rdx
 
-    ; Call C++ global constructors (.init_array).
+    ; Call C++ global constructors (.init_array — new ABI, forward order).
     lea  rbx, [rel __init_array_start]
     lea  r12, [rel __init_array_end]
 .ctor_loop:
@@ -32,6 +34,21 @@ _start:
     add  rbx, 8
     jmp  .ctor_loop
 .ctor_done:
+
+    ; Call C++ global constructors (.ctors — old ELF ABI used by x86_64-elf-g++,
+    ; reverse order: walk from __ctors_end back to __ctors_start).
+    lea  rbx, [rel __ctors_end]
+    lea  r12, [rel __ctors_start]
+.ctors_loop:
+    cmp  rbx, r12
+    jle  .ctors_done
+    sub  rbx, 8
+    mov  rax, [rbx]
+    test rax, rax
+    jz   .ctors_loop
+    call rax
+    jmp  .ctors_loop
+.ctors_done:
 
     ; Restore argc/argv/envp and call main.
     pop rdx

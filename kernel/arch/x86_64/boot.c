@@ -31,6 +31,12 @@ struct multiboot2_tag {
 #define MB2_TAG_MODULE        3
 #define MB2_TAG_BASIC_MEMINFO 4
 #define MB2_TAG_MMAP          6
+#define MB2_TAG_FRAMEBUFFER   8
+
+/* Multiboot2 framebuffer type values */
+#define MB2_FB_TYPE_INDEXED   0
+#define MB2_FB_TYPE_RGB       1
+#define MB2_FB_TYPE_EGA_TEXT  2
 
 /* Multiboot2 command line tag (type 1) */
 struct multiboot2_tag_string {
@@ -72,6 +78,19 @@ struct multiboot2_mmap_entry {
     uint32_t zero;
 } __attribute__((packed));
 
+/* Multiboot2 framebuffer tag (type 8) */
+struct multiboot2_tag_framebuffer {
+    uint32_t type;
+    uint32_t size;
+    uint64_t framebuffer_addr;
+    uint32_t framebuffer_pitch;
+    uint32_t framebuffer_width;
+    uint32_t framebuffer_height;
+    uint8_t  framebuffer_bpp;
+    uint8_t  framebuffer_type;
+    uint16_t reserved;
+} __attribute__((packed));
+
 /* Multiboot2 memory map entry types */
 #define MB2_MMAP_AVAILABLE 1
 
@@ -104,6 +123,40 @@ static void mb2_parse_meminfo(const struct multiboot2_tag_basic_meminfo* tag)
     /* Convert from KB to bytes */
     boot_info_storage.mem_lower = (uint64_t)tag->mem_lower * 1024ULL;
     boot_info_storage.mem_upper = (uint64_t)tag->mem_upper * 1024ULL;
+}
+
+static void mb2_parse_framebuffer(const struct multiboot2_tag_framebuffer* tag)
+{
+    if (!tag) {
+        return;
+    }
+    /* Only accept RGB (type 1) or direct-color (type 0) linear framebuffers.
+     * Reject EGA text mode (type 2) — no pixels to draw. */
+    if (tag->framebuffer_type == MB2_FB_TYPE_EGA_TEXT) {
+        return;
+    }
+    if (tag->framebuffer_addr == 0u) {
+        return;
+    }
+    if (tag->framebuffer_width == 0u || tag->framebuffer_height == 0u) {
+        return;
+    }
+    /* Only 32-bpp and 24-bpp are handled by gfx_console. */
+    if (tag->framebuffer_bpp != 32u && tag->framebuffer_bpp != 24u) {
+        return;
+    }
+    boot_info_storage.fb_phys   = tag->framebuffer_addr;
+    boot_info_storage.fb_width  = tag->framebuffer_width;
+    boot_info_storage.fb_height = tag->framebuffer_height;
+    boot_info_storage.fb_pitch  = tag->framebuffer_pitch;
+    boot_info_storage.fb_bpp    = tag->framebuffer_bpp;
+    boot_info_storage.fb_valid  = 1u;
+    klog("boot", "framebuffer: %ux%u bpp=%u pitch=%u phys=0x%llx\n",
+         (unsigned)tag->framebuffer_width,
+         (unsigned)tag->framebuffer_height,
+         (unsigned)tag->framebuffer_bpp,
+         (unsigned)tag->framebuffer_pitch,
+         (unsigned long long)tag->framebuffer_addr);
 }
 
 static void mb2_parse_mmap(const struct multiboot2_tag_mmap* tag)
@@ -198,6 +251,14 @@ int boot_early_init(boot_info_t* info)
     boot_info_storage.mmap_size = 0;
     boot_info_storage.mmap_entry_size = 0;
     __asm__ volatile ("" ::: "memory");
+
+    boot_info_storage.fb_phys   = 0u;
+    boot_info_storage.fb_width  = 0u;
+    boot_info_storage.fb_height = 0u;
+    boot_info_storage.fb_pitch  = 0u;
+    boot_info_storage.fb_bpp    = 0u;
+    boot_info_storage.fb_valid  = 0u;
+    __asm__ volatile ("" ::: "memory");
     
     /* Initialize cmdline buffer to empty string (fixed buffer) */
     boot_info_storage.cmdline[0] = '\0';
@@ -242,6 +303,9 @@ int boot_early_init(boot_info_t* info)
                     break;
                 case MB2_TAG_MMAP:
                     mb2_parse_mmap((const struct multiboot2_tag_mmap*)tag);
+                    break;
+                case MB2_TAG_FRAMEBUFFER:
+                    mb2_parse_framebuffer((const struct multiboot2_tag_framebuffer*)tag);
                     break;
                 default:
                     break;

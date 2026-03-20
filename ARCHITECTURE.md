@@ -96,6 +96,92 @@ CPU
 - Atomic ops
 - Memory barriers
 
+## Subsystem Design Decisions
+
+### Network Stack
+
+The network stack lives in the kernel (`net/`), not in userland. This is the
+right architecture for RodNIX today and the foreseeable future:
+
+- **Kernel-resident**: the stack runs in kernel space alongside the scheduler,
+  VM, and VFS. Sockets are kernel objects; data paths avoid costly privilege
+  crossings.
+
+- **Modular inside the kernel**: protocol layers (Ethernet, IP, TCP, UDP, ICMP)
+  are implemented as discrete, replaceable units. The BSD `mbuf`/`ifnet`/`inet`
+  model provides proven internal interfaces without locking the design to any
+  specific userland ABI.
+
+- **Not a microkernel network server**: splitting the stack into a userland
+  process would add IPC overhead on every packet and complicate the memory
+  model for zero-copy paths. That trade-off is not worth it for a
+  single-machine OS without a strong isolation requirement for the network
+  server itself.
+
+- **Migration path preserved**: the internal layer boundaries are kept clean so
+  that individual protocol handlers could later be replicated in userland (e.g.
+  for sandboxed protocol parsers or userland QUIC) or moved to an isolated
+  kernel module without redesigning the socket API.
+
+### Rust in the Network Stack
+
+The network stack is one of the best candidates for introducing Rust into the
+kernel, but selectively — not as a wholesale replacement of C.
+
+**Good targets for Rust:**
+
+- **Packet parsing** — IP, TCP, UDP, ICMP header parsing. Rust's type system
+  and exhaustive pattern matching eliminate a class of off-by-one and
+  bounds-violation bugs that are common in hand-written C parsers. The parsing
+  layer has no interrupt context, no special calling convention, and a clear
+  input/output contract — a clean fit for a `no_std` Rust module.
+
+- **Checksums** — IP and TCP checksum computation is pure arithmetic over a
+  byte slice. Rust gives correctness guarantees for free and compiles to the
+  same code as C.
+
+- **TCP state machine** — the FSM logic (SYN/SYN-ACK/ACK/FIN transitions,
+  timer management, retransmit logic) is complex, stateful, and historically
+  buggy. Encoding it in Rust with explicit state enums and exhaustive match
+  turns illegal state transitions into compile-time errors.
+
+**What stays in C:**
+
+- **Interrupt path and driver glue** — the virtio-net and e1000 drivers fire
+  from interrupt context, interact with MMIO/PCI directly, and must conform
+  to Fabric driver ABI. Keep these in C.
+
+- **mbuf / ifnet integration** — the core buffer management and interface layer
+  are tightly coupled to the kernel memory allocator and scheduler. Rewriting
+  this boundary in Rust would require deep FFI plumbing with no safety gain.
+
+**Integration model:**
+
+Rust modules expose a plain C ABI (`extern "C"`). The C network core calls
+into Rust for parsing and state-machine work; Rust never calls back into C
+except through explicit, documented FFI boundaries. This keeps the `unsafe`
+surface small and auditable.
+
+## Language Policy
+
+Each language is used where it provides a clear advantage:
+
+- **C** — primary language for the kernel and base userland. Direct hardware
+  access, predictable ABI, and zero runtime overhead make it the right tool
+  for anything that runs in privileged mode or forms the core userland runtime.
+
+- **Assembly** — low-level entry points and CPU glue only: boot stubs,
+  interrupt entry/exit, context switch, syscall fast path. Kept to the
+  absolute minimum; the rest is C.
+
+- **Rust** — safe userland utilities, parsers, and protocol handlers where
+  memory safety eliminates a class of bugs with no kernel-ABI cost. Longer
+  term: isolated kernel modules and drivers where the sandbox boundary is
+  well-defined.
+
+- **Python** — host tooling: build scripts, test harnesses, image generation,
+  CI helpers. Not used in the kernel or on-target userland.
+
 ## Benefits
 
 1. Portability: easier to add a new architecture
