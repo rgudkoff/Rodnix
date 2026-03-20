@@ -180,8 +180,8 @@ static bool         g_cursor_drawn = false;
 
 /* Blink state: inhibit during putc/clear/set_cursor to avoid XOR glitches */
 static volatile bool g_blink_inhibit = false;
-static uint32_t      g_blink_counter = 0u;
-#define BLINK_PERIOD_TICKS 50u  /* ~500 ms at 100 Hz */
+static uint32_t      g_blink_counter  = 0u;
+static uint32_t      g_blink_period   = 50u; /* ticks; default = 100 Hz × 0.5 s */
 
 /* =========================================================================
  * Internal helpers
@@ -478,15 +478,25 @@ void gfx_console_set_cursor(uint32_t col, uint32_t row)
     g_blink_inhibit = false;
 }
 
-/* Called from console_tick() at ~100 Hz via scheduler_tick(). */
+/* Called from console_tick() at a rate set by gfx_console_set_tick_hz(). */
 void gfx_console_blink_tick(void)
 {
     if (g_blink_inhibit) return;
     if (!gfx_console_active()) return;
-    if (++g_blink_counter < BLINK_PERIOD_TICKS) return;
+    if (++g_blink_counter < g_blink_period) return;
     g_blink_counter = 0u;
     cursor_toggle();
     g_cursor_drawn = !g_cursor_drawn;
+}
+
+/* Called by the scheduler when the console_tick() call rate is known.
+ * hz = how many times per second gfx_console_blink_tick() will be called. */
+void gfx_console_set_tick_hz(uint32_t hz)
+{
+    uint32_t period = (hz > 0u) ? (hz / 2u) : 50u; /* toggle every 500 ms */
+    if (period < 1u) { period = 1u; }
+    g_blink_period  = period;
+    g_blink_counter = 0u;
 }
 
 void gfx_console_putc(char c)

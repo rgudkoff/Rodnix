@@ -23,10 +23,12 @@ endif
 ifeq ($(TOOLCHAIN),gcc)
 CROSS_COMPILE ?= $(TARGET_TRIPLE)-
 CC = $(CROSS_COMPILE)gcc
+CXX = $(CROSS_COMPILE)g++
 LD = $(CROSS_COMPILE)ld
 COMMON_TC_CFLAGS =
 else ifeq ($(TOOLCHAIN),clang)
 CC = clang
+CXX = clang++
 LD = ld.lld
 COMMON_TC_CFLAGS = --target=$(TARGET_TRIPLE)
 else
@@ -50,6 +52,8 @@ CFLAGS = $(COMMON_TC_CFLAGS) \
          -Wall \
          -Wextra \
          -I./include
+
+CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti -std=c++17 -MMD -MP
 
 ASFLAGS = $(ARCH_ASFLAGS)
 LDFLAGS = -T link.ld
@@ -109,6 +113,7 @@ GREP_SRCS   = bin/grep.c
 FIND_SRCS   = bin/find.c
 LOGIN_SRCS  = bin/login.c
 PASSWD_SRCS = bin/passwd.c
+PTHREAD_TEST_SRCS_CPP = bin/pthread_test.cpp
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
 LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c libc/pthread.c
@@ -179,6 +184,7 @@ GREP_OBJS   = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIB
 FIND_OBJS   = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 LOGIN_OBJS  = $(addprefix $(BUILD_DIR)/, $(LOGIN_SRCS:.c=.o))  $(CRT0_OBJ) $(LIBC_OBJS)
 PASSWD_OBJS = $(addprefix $(BUILD_DIR)/, $(PASSWD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+PTHREAD_TEST_OBJS = $(BUILD_DIR)/bin/pthread_test.o $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
 SH_ELF = $(BUILD_DIR)/sh.elf
@@ -230,6 +236,7 @@ GREP_ELF = $(BUILD_DIR)/grep.elf
 FIND_ELF   = $(BUILD_DIR)/find.elf
 LOGIN_ELF  = $(BUILD_DIR)/login.elf
 PASSWD_ELF = $(BUILD_DIR)/passwd.elf
+PTHREAD_TEST_ELF = $(BUILD_DIR)/pthread_test.elf
 INIT_BIN   = $(BIN_DIR)/init
 LOGIN_BIN  = $(BIN_DIR)/login
 PASSWD_BIN = $(BIN_DIR)/passwd
@@ -284,10 +291,11 @@ MV_BIN   = $(BIN_DIR)/mv
 RM_BIN   = $(BIN_DIR)/rm
 GREP_BIN = $(BIN_DIR)/grep
 FIND_BIN = $(BIN_DIR)/find
+PTHREAD_TEST_BIN = $(BIN_DIR)/pthread_test
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(PTHREAD_TEST_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -303,6 +311,9 @@ $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Auto-generated header dependencies from -MMD -MP.
 DEPFILES := $(shell find $(BUILD_DIR) -name '*.d' 2>/dev/null)
@@ -765,6 +776,15 @@ $(FIND_BIN): $(FIND_ELF)
 	chmod 0755 $@
 
 $(PASSWD_BIN): $(PASSWD_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(PTHREAD_TEST_ELF): $(PTHREAD_TEST_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(PTHREAD_TEST_OBJS)
+
+$(PTHREAD_TEST_BIN): $(PTHREAD_TEST_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@
