@@ -1,6 +1,7 @@
 #include "posix_sys_info.h"
 #include "posix_syscall.h"
 #include "posix_uapi_compat.h"
+#include "../security.h"
 #include "../core/cpu.h"
 #include "../core/memory.h"
 #include "../syscall.h"
@@ -20,6 +21,21 @@
 #include "../arch/config.h"
 #include <stddef.h>
 
+/* Mutable kernel hostname — updated by sethostname(2), read by uname(2).
+ * BusyBox ash resolves \h in PS1 via uname(2) nodename (no separate
+ * gethostname syscall exists on Linux x86_64). */
+static char g_hostname[256];
+static bool g_hostname_init = false;
+
+static void hostname_ensure_init(void)
+{
+    if (!g_hostname_init) {
+        strncpy(g_hostname, RODNIX_NODENAME, sizeof(g_hostname) - 1);
+        g_hostname[sizeof(g_hostname) - 1] = '\0';
+        g_hostname_init = true;
+    }
+}
+
 uint64_t posix_uname(uint64_t a1,
                             uint64_t a2,
                             uint64_t a3,
@@ -36,13 +52,41 @@ uint64_t posix_uname(uint64_t a1,
     if (!unix_user_range_ok(u, sizeof(*u))) {
         return (uint64_t)RDNX_E_INVALID;
     }
+    hostname_ensure_init();
     memset(u, 0, sizeof(*u));
     u->hdr = RDNX_ABI_INIT(utsname_t);
     strncpy(u->sysname, RODNIX_SYSNAME, sizeof(u->sysname) - 1);
-    strncpy(u->nodename, RODNIX_NODENAME, sizeof(u->nodename) - 1);
+    strncpy(u->nodename, g_hostname, sizeof(u->nodename) - 1);
     strncpy(u->release, RODNIX_RELEASE, sizeof(u->release) - 1);
     strncpy(u->version, RODNIX_VERSION, sizeof(u->version) - 1);
     strncpy(u->machine, ARCH_MACHINE, sizeof(u->machine) - 1);
+    return (uint64_t)RDNX_OK;
+}
+
+uint64_t posix_sethostname(uint64_t a1,
+                                  uint64_t a2,
+                                  uint64_t a3,
+                                  uint64_t a4,
+                                  uint64_t a5,
+                                  uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    const char* user_name = (const char*)(uintptr_t)a1;
+    size_t len = (size_t)a2;
+    if (!user_name || len == 0 || len >= sizeof(g_hostname)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!unix_user_range_ok(user_name, len)) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (security_check_euid(0) != SEC_OK) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+    if (unix_copy_from_user(g_hostname, user_name, len) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    g_hostname[len] = '\0';
+    g_hostname_init = true;
     return (uint64_t)RDNX_OK;
 }
 
@@ -645,6 +689,120 @@ uint64_t posix_clock_gettime(uint64_t a1,
     kts.tv_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
     if (unix_copy_to_user(user_out, &kts, sizeof(kts)) != RDNX_OK) {
         return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)RDNX_OK;
+}
+
+uint64_t posix_settimeofday(uint64_t a1,
+                                   uint64_t a2,
+                                   uint64_t a3,
+                                   uint64_t a4,
+                                   uint64_t a5,
+                                   uint64_t a6)
+{
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_usec;
+    } posix_timeval_u_t;
+
+    posix_timeval_u_t ktv;
+    const posix_timeval_u_t* user_tv = (const posix_timeval_u_t*)(uintptr_t)a1;
+
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    if (!user_tv || !unix_user_range_ok(user_tv, sizeof(*user_tv))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (security_check_euid(0) != SEC_OK) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+    if (unix_copy_from_user(&ktv, user_tv, sizeof(ktv)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (ktv.tv_sec < 0 || ktv.tv_usec < 0 || ktv.tv_usec >= 1000000) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    console_set_realtime_us((uint64_t)ktv.tv_sec * 1000000ULL + (uint64_t)ktv.tv_usec);
+    (void)console_set_rtc_us((uint64_t)ktv.tv_sec * 1000000ULL + (uint64_t)ktv.tv_usec);
+    return (uint64_t)RDNX_OK;
+}
+
+uint64_t posix_rtc_gettime(uint64_t a1,
+                                  uint64_t a2,
+                                  uint64_t a3,
+                                  uint64_t a4,
+                                  uint64_t a5,
+                                  uint64_t a6)
+{
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_usec;
+    } posix_timeval_u_t;
+
+    posix_timeval_u_t ktv;
+    uint64_t rtc_us = 0;
+    void* user_out = (void*)(uintptr_t)a1;
+
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    if (!user_out || !unix_user_range_ok(user_out, sizeof(ktv))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!console_get_rtc_us(&rtc_us)) {
+        return (uint64_t)RDNX_E_NOTFOUND;
+    }
+    ktv.tv_sec = (int64_t)(rtc_us / 1000000ULL);
+    ktv.tv_usec = (int64_t)(rtc_us % 1000000ULL);
+    if (unix_copy_to_user(user_out, &ktv, sizeof(ktv)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)RDNX_OK;
+}
+
+uint64_t posix_rtc_settime(uint64_t a1,
+                                  uint64_t a2,
+                                  uint64_t a3,
+                                  uint64_t a4,
+                                  uint64_t a5,
+                                  uint64_t a6)
+{
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_usec;
+    } posix_timeval_u_t;
+
+    posix_timeval_u_t ktv;
+    const posix_timeval_u_t* user_tv = (const posix_timeval_u_t*)(uintptr_t)a1;
+
+    (void)a2;
+    (void)a3;
+    (void)a4;
+    (void)a5;
+    (void)a6;
+
+    if (!user_tv || !unix_user_range_ok(user_tv, sizeof(*user_tv))) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (security_check_euid(0) != SEC_OK) {
+        return (uint64_t)RDNX_E_DENIED;
+    }
+    if (unix_copy_from_user(&ktv, user_tv, sizeof(ktv)) != RDNX_OK) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (ktv.tv_sec < 0 || ktv.tv_usec < 0 || ktv.tv_usec >= 1000000) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (!console_set_rtc_us((uint64_t)ktv.tv_sec * 1000000ULL + (uint64_t)ktv.tv_usec)) {
+        return (uint64_t)RDNX_E_NOTFOUND;
     }
     return (uint64_t)RDNX_OK;
 }

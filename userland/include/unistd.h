@@ -35,6 +35,26 @@ static inline uid_t geteuid(void) { return (uid_t)posix_geteuid(); }
 static inline gid_t getgid(void)  { return (gid_t)posix_getgid();  }
 static inline gid_t getegid(void) { return (gid_t)posix_getegid(); }
 
+static inline int getgroups(int size, gid_t list[])
+{
+    long r = posix_getgroups((uint32_t)((size < 0) ? 0 : size), (uint32_t*)(uintptr_t)list);
+    if (r < 0) {
+        errno = rdnx_errno_from_status(r);
+        return -1;
+    }
+    return (int)r;
+}
+
+static inline int setgroups(size_t size, const gid_t* list)
+{
+    long r = posix_setgroups((uint32_t)size, (const uint32_t*)(uintptr_t)list);
+    if (r < 0) {
+        errno = rdnx_errno_from_status(r);
+        return -1;
+    }
+    return 0;
+}
+
 static inline pid_t getpid(void)
 {
     long r = posix_getpid();

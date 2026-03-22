@@ -16,5 +16,7 @@ uint64_t posix_setuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64
 uint64_t posix_seteuid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_setgid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_setegid(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_getgroups(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_setgroups(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 
 #endif /* _RODNIX_POSIX_SYS_IDS_H */

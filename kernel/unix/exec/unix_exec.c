@@ -255,6 +255,7 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    (void)task_set_supp_groups(child, parent->supp_groups, parent->supp_group_count);
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
     child->cwd[sizeof(child->cwd) - 1] = '\0';
 

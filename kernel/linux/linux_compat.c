@@ -942,6 +942,8 @@ uint64_t linux_compat_dispatch(uint64_t num,
         /* timezone argument ignored */
         return 0;
     }
+    case 164: /* settimeofday */
+        return linux_ret(posix_settimeofday(a1, a2, 0, 0, 0, 0));
     case 99: { /* sysinfo */
         linux_sysinfo_u_t* out = (linux_sysinfo_u_t*)(uintptr_t)a1;
         if (!out || !unix_user_range_ok(out, sizeof(*out))) {
@@ -1138,15 +1140,13 @@ uint64_t linux_compat_dispatch(uint64_t num,
     }
     case 90: { /* chmod */
         char path_buf[UNIX_PATH_MAX];
-        vfs_stat_t st;
+        int rc;
         if (unix_copy_user_cstr(path_buf, sizeof(path_buf), (const char*)(uintptr_t)a1) != RDNX_OK) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        if (linux_symlink_find(path_buf) < 0 && vfs_stat(path_buf, &st) != RDNX_OK) {
-            return (uint64_t)(-LINUX_ENOENT);
-        }
         linux_mode_set(path_buf, (uint16_t)a2);
-        return 0;
+        rc = (int)posix_chmod(a1, a2, 0, 0, 0, 0);
+        return (rc < 0) ? (uint64_t)(-linux_errno_from_rdnx(rc)) : 0;
     }
     case 95: { /* umask */
         task_t* t = task_get_current();
@@ -1157,10 +1157,14 @@ uint64_t linux_compat_dispatch(uint64_t num,
         t->umask = (uint16_t)(a1 & 0777u);
         return (uint64_t)old;
     }
-    case 105: /* setuid — accept, ignore */
-        return 0;
-    case 106: /* setgid — accept, ignore */
-        return 0;
+    case 105: { /* setuid */
+        int rc = (int)posix_setuid(a1, 0, 0, 0, 0, 0);
+        return (rc < 0) ? (uint64_t)(-linux_errno_from_rdnx(rc)) : 0;
+    }
+    case 106: { /* setgid */
+        int rc = (int)posix_setgid(a1, 0, 0, 0, 0, 0);
+        return (rc < 0) ? (uint64_t)(-linux_errno_from_rdnx(rc)) : 0;
+    }
     case 109: { /* setpgid(pid, pgid) */
         task_t* cur = task_get_current();
         uint64_t pid = a1;
@@ -1267,6 +1271,8 @@ uint64_t linux_compat_dispatch(uint64_t num,
         }
         return (uint64_t)(-LINUX_ENOSYS);
     }
+    case 170: /* sethostname */
+        return linux_ret(posix_sethostname(a1, a2, 0, 0, 0, 0));
     case 186: /* gettid */
     {
         return linux_ret(posix_getpid(0, 0, 0, 0, 0, 0));

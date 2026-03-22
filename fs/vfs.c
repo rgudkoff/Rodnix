@@ -877,8 +877,6 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
     /* DAC permission check (P2). */
     {
         task_t* caller = task_get_current();
-        uint32_t euid = caller ? caller->euid : 0;
-        uint32_t egid = caller ? caller->egid : 0;
         int access = SEC_ACCESS_READ;
         if (flags & VFS_OPEN_WRITE) {
             access |= SEC_ACCESS_WRITE;
@@ -892,7 +890,7 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
             if (security_vfs_access(node->inode->mode,
                                     node->inode->uid,
                                     node->inode->gid,
-                                    access, euid, egid) != SEC_OK) {
+                                    access, caller) != SEC_OK) {
                 return RDNX_E_DENIED;
             }
         }
@@ -1228,14 +1226,36 @@ int vfs_access(const char* path, int access_flags)
         return RDNX_OK;
     }
     task_t* caller = task_get_current();
-    uint32_t euid = caller ? caller->euid : 0;
-    uint32_t egid = caller ? caller->egid : 0;
     if (security_vfs_access(node->inode->mode, node->inode->uid,
                              node->inode->gid, access_flags,
-                             euid, egid) != SEC_OK) {
+                             caller) != SEC_OK) {
         return RDNX_E_DENIED;
     }
     return RDNX_OK;
+}
+
+static int vfs_check_can_chmod(const vfs_inode_t* inode)
+{
+    task_t* caller = task_get_current();
+    if (!inode) {
+        return RDNX_E_INVALID;
+    }
+    if (!caller) {
+        return RDNX_E_DENIED;
+    }
+    if (caller->euid == 0 || caller->euid == inode->uid) {
+        return RDNX_OK;
+    }
+    return RDNX_E_DENIED;
+}
+
+static int vfs_check_can_chown(void)
+{
+    task_t* caller = task_get_current();
+    if (!caller) {
+        return RDNX_E_DENIED;
+    }
+    return (caller->euid == 0) ? RDNX_OK : RDNX_E_DENIED;
 }
 
 int vfs_chmod(const char* path, uint16_t mode)
@@ -1246,6 +1266,9 @@ int vfs_chmod(const char* path, uint16_t mode)
     vfs_node_t* node = vfs_lookup(path);
     if (!node || !node->inode) {
         return RDNX_E_NOTFOUND;
+    }
+    if (vfs_check_can_chmod(node->inode) != RDNX_OK) {
+        return RDNX_E_DENIED;
     }
     if (node->inode->fs_tag == VFS_FS_TAG_EXT2) {
         return ext2_chmod(node, mode);
@@ -1258,6 +1281,9 @@ int vfs_fchmod(vfs_file_t* file, uint16_t mode)
 {
     if (!file || !file->node || !file->node->inode) {
         return RDNX_E_INVALID;
+    }
+    if (vfs_check_can_chmod(file->node->inode) != RDNX_OK) {
+        return RDNX_E_DENIED;
     }
     if (file->node->inode->fs_tag == VFS_FS_TAG_EXT2) {
         return ext2_chmod(file->node, mode);
@@ -1275,6 +1301,9 @@ int vfs_chown(const char* path, uint32_t uid, uint32_t gid)
     if (!node || !node->inode) {
         return RDNX_E_NOTFOUND;
     }
+    if (vfs_check_can_chown() != RDNX_OK) {
+        return RDNX_E_DENIED;
+    }
     if (node->inode->fs_tag == VFS_FS_TAG_EXT2) {
         return ext2_chown(node, uid, gid);
     }
@@ -1287,6 +1316,9 @@ int vfs_fchown(vfs_file_t* file, uint32_t uid, uint32_t gid)
 {
     if (!file || !file->node || !file->node->inode) {
         return RDNX_E_INVALID;
+    }
+    if (vfs_check_can_chown() != RDNX_OK) {
+        return RDNX_E_DENIED;
     }
     if (file->node->inode->fs_tag == VFS_FS_TAG_EXT2) {
         return ext2_chown(file->node, uid, gid);

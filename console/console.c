@@ -68,6 +68,9 @@ static char ansi_csi_buf[16];
 static uint8_t ansi_csi_len = 0;
 static const char* uptime_source_name = "unknown";
 static uint64_t uptime_last_us = 0;
+static uint64_t realtime_base_us = 0;
+static uint64_t realtime_anchor_uptime_us = 0;
+static bool realtime_initialized = false;
 
 static inline void outb(uint16_t port, uint8_t value)
 {
@@ -87,9 +90,20 @@ static uint8_t cmos_read(uint8_t reg)
     return inb(0x71);
 }
 
+static void cmos_write(uint8_t reg, uint8_t value)
+{
+    outb(0x70, (uint8_t)(0x80u | (reg & 0x7Fu)));
+    outb(0x71, value);
+}
+
 static uint8_t bcd_to_bin(uint8_t v)
 {
     return (uint8_t)((v & 0x0Fu) + ((v >> 4) * 10u));
+}
+
+static uint8_t bin_to_bcd(uint8_t v)
+{
+    return (uint8_t)(((v / 10u) << 4) | (v % 10u));
 }
 
 static bool rtc_read_datetime(uint32_t* year,
@@ -193,6 +207,66 @@ static uint64_t rtc_unix_seconds(uint32_t y, uint32_t mo, uint32_t d,
     return days * 86400ULL + (uint64_t)h * 3600ULL + (uint64_t)mi * 60ULL + (uint64_t)s;
 }
 
+static bool rtc_write_datetime(uint32_t year,
+                               uint32_t month,
+                               uint32_t day,
+                               uint32_t hour,
+                               uint32_t min,
+                               uint32_t sec)
+{
+    uint8_t regb = 0;
+    uint8_t write_hour = 0;
+    bool binary_mode = false;
+    bool mode_24h = false;
+
+    if (year < 1970u || year > 2099u || month < 1u || month > 12u || day < 1u || day > 31u ||
+        hour > 23u || min > 59u || sec > 59u) {
+        return false;
+    }
+
+    while (cmos_read(0x0A) & 0x80u) {
+    }
+
+    regb = cmos_read(0x0B);
+    binary_mode = (regb & 0x04u) != 0;
+    mode_24h = (regb & 0x02u) != 0;
+
+    cmos_write(0x0B, (uint8_t)(regb | 0x80u));
+
+    if (mode_24h) {
+        write_hour = (uint8_t)hour;
+    } else {
+        bool pm = hour >= 12u;
+        uint32_t hour12 = hour % 12u;
+        if (hour12 == 0u) {
+            hour12 = 12u;
+        }
+        write_hour = (uint8_t)hour12;
+        if (pm) {
+            write_hour |= 0x80u;
+        }
+    }
+
+    if (!binary_mode) {
+        cmos_write(0x00, bin_to_bcd((uint8_t)sec));
+        cmos_write(0x02, bin_to_bcd((uint8_t)min));
+        cmos_write(0x04, (uint8_t)((write_hour & 0x80u) | bin_to_bcd((uint8_t)(write_hour & 0x7Fu))));
+        cmos_write(0x07, bin_to_bcd((uint8_t)day));
+        cmos_write(0x08, bin_to_bcd((uint8_t)month));
+        cmos_write(0x09, bin_to_bcd((uint8_t)(year % 100u)));
+    } else {
+        cmos_write(0x00, (uint8_t)sec);
+        cmos_write(0x02, (uint8_t)min);
+        cmos_write(0x04, write_hour);
+        cmos_write(0x07, (uint8_t)day);
+        cmos_write(0x08, (uint8_t)month);
+        cmos_write(0x09, (uint8_t)(year % 100u));
+    }
+
+    cmos_write(0x0B, (uint8_t)(regb & ~0x80u));
+    return true;
+}
+
 static uint64_t console_get_uptime_us_internal(void)
 {
     extern const char* kernel_timer_source_name(void);
@@ -240,6 +314,78 @@ done:
     }
     return now_us;
 }
+
+static void console_realtime_init_if_needed(void)
+{
+    if (realtime_initialized) {
+        return;
+    }
+
+    realtime_anchor_uptime_us = console_get_uptime_us_internal();
+
+    {
+        uint32_t year = 0;
+        uint32_t month = 0;
+        uint32_t day = 0;
+        uint32_t hour = 0;
+        uint32_t minute = 0;
+        uint32_t second = 0;
+
+        if (rtc_read_datetime(&year, &month, &day, &hour, &minute, &second)) {
+            realtime_base_us = rtc_unix_seconds(year, month, day, hour, minute, second) * 1000000ULL;
+            realtime_initialized = true;
+            return;
+        }
+    }
+
+    realtime_base_us = realtime_anchor_uptime_us;
+    realtime_initialized = true;
+}
+
+static void console_break_unix_seconds(uint64_t unix_sec,
+                                       uint32_t* year,
+                                       uint32_t* month,
+                                       uint32_t* day,
+                                       uint32_t* hour,
+                                       uint32_t* minute,
+                                       uint32_t* second)
+{
+    static const uint32_t days_before_month[2][12] = {
+        { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 },
+        { 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335 }
+    };
+    uint64_t secs = unix_sec;
+    uint64_t days = secs / 86400ULL;
+    uint32_t y = 1970;
+    uint32_t leap = 0;
+    uint32_t mo = 0;
+
+    *second = (uint32_t)(secs % 60ULL);
+    secs /= 60ULL;
+    *minute = (uint32_t)(secs % 60ULL);
+    secs /= 60ULL;
+    *hour = (uint32_t)(secs % 24ULL);
+
+    while (1) {
+        uint32_t diy = rtc_is_leap(y) ? 366u : 365u;
+        if (days < diy) {
+            break;
+        }
+        days -= diy;
+        y++;
+    }
+
+    leap = rtc_is_leap(y) ? 1u : 0u;
+    for (mo = 11; mo > 0; mo--) {
+        if (days >= days_before_month[leap][mo]) {
+            break;
+        }
+    }
+
+    *year = y;
+    *month = mo + 1u;
+    *day = (uint32_t)(days - days_before_month[leap][mo]) + 1u;
+}
 uint64_t console_get_uptime_us(void)
 {
     return console_get_uptime_us_internal();
@@ -252,13 +398,63 @@ const char* console_get_uptime_source(void)
 
 uint64_t console_get_realtime_us(void)
 {
-    uint32_t y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
-    if (rtc_read_datetime(&y, &mo, &d, &h, &mi, &s)) {
-        uint64_t sec = rtc_unix_seconds(y, mo, d, h, mi, s);
-        uint64_t sub = console_get_uptime_us_internal() % 1000000ULL;
-        return sec * 1000000ULL + sub;
+    uint64_t now_uptime_us = 0;
+
+    console_realtime_init_if_needed();
+    now_uptime_us = console_get_uptime_us_internal();
+    if (now_uptime_us < realtime_anchor_uptime_us) {
+        now_uptime_us = realtime_anchor_uptime_us;
     }
-    return console_get_uptime_us_internal();
+    return realtime_base_us + (now_uptime_us - realtime_anchor_uptime_us);
+}
+
+void console_set_realtime_us(uint64_t us)
+{
+    realtime_base_us = us;
+    realtime_anchor_uptime_us = console_get_uptime_us_internal();
+    realtime_initialized = true;
+}
+
+bool console_get_rtc_us(uint64_t* us)
+{
+    uint32_t year = 0;
+    uint32_t month = 0;
+    uint32_t day = 0;
+    uint32_t hour = 0;
+    uint32_t minute = 0;
+    uint32_t second = 0;
+
+    if (!us) {
+        return false;
+    }
+    if (!rtc_read_datetime(&year, &month, &day, &hour, &minute, &second)) {
+        return false;
+    }
+    *us = rtc_unix_seconds(year, month, day, hour, minute, second) * 1000000ULL;
+    return true;
+}
+
+bool console_set_rtc_us(uint64_t us)
+{
+    uint32_t year = 0;
+    uint32_t month = 0;
+    uint32_t day = 0;
+    uint32_t hour = 0;
+    uint32_t minute = 0;
+    uint32_t second = 0;
+
+    console_break_unix_seconds(us / 1000000ULL, &year, &month, &day, &hour, &minute, &second);
+    return rtc_write_datetime(year, month, day, hour, minute, second);
+}
+
+bool console_set_realtime_from_rtc(void)
+{
+    uint64_t rtc_us = 0;
+    if (!console_get_rtc_us(&rtc_us)) {
+        return false;
+    }
+    console_set_realtime_us(rtc_us);
+    return true;
 }
 
 static void console_write_dec_fixed(uint64_t value, int width)
@@ -300,19 +496,18 @@ static void console_write_hex_fixed(uint64_t value, int width)
 
 static void console_write_log_prefix(void)
 {
-    uint64_t us = console_get_uptime_us_internal();
+    uint64_t us = console_get_realtime_us();
     uint64_t sec = us / 1000000ULL;
     uint64_t micros = us % 1000000ULL;
-    uint64_t hours = (sec / 3600ULL) % 24ULL;
-    uint64_t mins = (sec / 60ULL) % 60ULL;
-    uint64_t secs = sec % 60ULL;
+    uint32_t year = 1970, month = 1, day = 1;
+    uint32_t hours = 0, mins = 0, secs = 0;
 
-    /* Use fixed date until RTC is implemented */
-    console_write_dec_fixed(1970, 4);
+    console_break_unix_seconds(sec, &year, &month, &day, &hours, &mins, &secs);
+    console_write_dec_fixed(year, 4);
     kputc('-');
-    console_write_dec_fixed(1, 2);
+    console_write_dec_fixed(month, 2);
     kputc('-');
-    console_write_dec_fixed(1, 2);
+    console_write_dec_fixed(day, 2);
     kputc(' ');
     console_write_dec_fixed(hours, 2);
     kputc(':');

@@ -2,6 +2,7 @@
 #define _RODNIX_COMMON_SECURITY_H
 
 #include <stdint.h>
+#include "core/task.h"
 
 #define SEC_OK   0
 #define SEC_DENY (-1)
@@ -40,8 +41,7 @@ int security_check_euid(uint32_t required_uid);
  * @param inode_uid   inode->uid
  * @param inode_gid   inode->gid
  * @param access      bitset of SEC_ACCESS_READ / _WRITE / _EXEC
- * @param caller_euid effective UID of the calling process
- * @param caller_egid effective GID of the calling process
+ * @param caller      current task
  *
  * Returns SEC_OK if access is granted, SEC_DENY otherwise.
  * Root (euid == 0) always gets SEC_OK.
@@ -50,7 +50,6 @@ int security_vfs_access(uint16_t inode_mode,
                         uint32_t inode_uid,
                         uint32_t inode_gid,
                         int      access,
-                        uint32_t caller_euid,
-                        uint32_t caller_egid);
+                        const task_t* caller);
 
 #endif /* _RODNIX_COMMON_SECURITY_H */

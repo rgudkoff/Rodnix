@@ -63,6 +63,16 @@ static inline long posix_getegid(void)
     return rdnx_syscall0(POSIX_SYS_GETEGID);
 }
 
+static inline long posix_getgroups(uint32_t size, uint32_t* gids)
+{
+    return rdnx_syscall2(POSIX_SYS_GETGROUPS, (long)size, (long)(uintptr_t)gids);
+}
+
+static inline long posix_setgroups(uint32_t count, const uint32_t* gids)
+{
+    return rdnx_syscall2(POSIX_SYS_SETGROUPS, (long)count, (long)(uintptr_t)gids);
+}
+
 static inline long posix_lstat(const char* path, void* st)
 {
     return rdnx_syscall2(POSIX_SYS_LSTAT, (long)(uintptr_t)path, (long)(uintptr_t)st);
@@ -388,6 +398,21 @@ static inline long posix_fork(void)
 static inline long posix_clock_gettime(int clock_id, void* tp)
 {
     return rdnx_syscall2(POSIX_SYS_CLOCK_GETTIME, (long)clock_id, (long)(uintptr_t)tp);
+}
+
+static inline long posix_settimeofday(const void* tv, const void* tz)
+{
+    return rdnx_syscall2(POSIX_SYS_SETTIMEOFDAY, (long)(uintptr_t)tv, (long)(uintptr_t)tz);
+}
+
+static inline long posix_rtc_gettime(void* tv)
+{
+    return rdnx_syscall1(POSIX_SYS_RTC_GETTIME, (long)(uintptr_t)tv);
+}
+
+static inline long posix_rtc_settime(const void* tv)
+{
+    return rdnx_syscall1(POSIX_SYS_RTC_SETTIME, (long)(uintptr_t)tv);
 }
 
 static inline long posix_nanosleep(const void* req, void* rem)
