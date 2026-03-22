@@ -1,5 +1,6 @@
 #include "../unix_layer.h"
 #include "../../../trace/bootlog.h"
+#include "../../../sched/internal.h"
 #include "../../../sched/scheduler.h"
 #include "../../../sched/waitq.h"
 #include "../../fabric/spin.h"
@@ -28,6 +29,7 @@ enum {
     UNIX_SIG_IGN = 1,
     UNIX_SIG_MAX = 31,
     UNIX_SIGKILL = 9,
+    UNIX_SIGTERM = 15,
     UNIX_SIGCHLD  = 17
 };
 
@@ -154,6 +156,78 @@ static int unix_signal_may_send(const task_t* sender, const task_t* target)
         return 1;
     }
     return sender->uid == target->uid;
+}
+
+static void unix_force_remove_ready_thread(thread_t* thread)
+{
+    int q;
+
+    if (!thread || !thread->ready_queued) {
+        return;
+    }
+
+    q = ready_queue_index_for_thread(thread);
+    TAILQ_REMOVE(&ready_queues[q], thread, sched_link);
+    thread->sched_link.tqe_next = NULL;
+    thread->sched_link.tqe_prev = NULL;
+    thread->ready_queued = 0;
+    if (stats.ready_tasks > 0) {
+        stats.ready_tasks--;
+    }
+}
+
+static void unix_force_clear_tid(thread_t* thread)
+{
+    if (!thread || !thread->clear_tid_ptr) {
+        return;
+    }
+
+    uint64_t* tidptr = thread->clear_tid_ptr;
+    if (unix_user_range_ok(tidptr, sizeof(uint32_t))) {
+        *(uint32_t*)(uintptr_t)tidptr = 0;
+        extern uint64_t unix_proc_futex(uint64_t, uint64_t, uint64_t,
+                                        uint64_t, uint64_t, uint64_t);
+        unix_proc_futex((uint64_t)(uintptr_t)tidptr,
+                        1 /* FUTEX_WAKE */, 1, 0, 0, 0);
+    }
+    thread->clear_tid_ptr = NULL;
+}
+
+static void unix_proc_force_terminate_task(task_t* target, int sig)
+{
+    thread_t* thread;
+
+    if (!target || target->exited) {
+        return;
+    }
+
+    unix_proc_close_fds(target);
+    target->exit_code = 128 + sig;
+    target->exited = 1;
+    target->sig_pending = 0;
+    target->sig_in_handler = 0;
+    unix_proc_notify_waiters(target->parent_task_id);
+    if (target->parent_task_id) {
+        task_t* parent = task_find_by_id(target->parent_task_id);
+        if (parent) {
+            parent->sig_pending |= (1u << UNIX_SIGCHLD);
+        }
+    }
+
+    TAILQ_FOREACH(thread, &target->threads, task_link) {
+        if (thread->state == THREAD_STATE_DEAD) {
+            continue;
+        }
+        if (thread->waitq_owner) {
+            (void)waitq_remove(thread->waitq_owner, thread);
+        }
+        unix_force_remove_ready_thread(thread);
+        unix_force_clear_tid(thread);
+        scheduler_thread_set_state(thread, THREAD_STATE_DEAD, "unix_force_signal");
+        scheduler_reap_enqueue(thread);
+    }
+
+    scheduler_task_set_state(target, TASK_STATE_ZOMBIE, "unix_force_signal");
 }
 
 void unix_proc_notify_waiters(uint64_t parent_task_id)
@@ -329,6 +403,11 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
         return (uint64_t)RDNX_E_DENIED;
     }
     if (sig == 0) {
+        return (uint64_t)RDNX_OK;
+    }
+
+    if (target != self && (sig == UNIX_SIGTERM || sig == UNIX_SIGKILL)) {
+        unix_proc_force_terminate_task(target, sig);
         return (uint64_t)RDNX_OK;
     }
 

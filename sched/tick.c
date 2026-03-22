@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../kernel/fabric/fabric.h"
+#include "../kernel/unix/unix_layer.h"
 #include "../kernel/usb/usb.h"
 #include "../include/console.h"
 #include "../include/gfx_console.h"
@@ -91,5 +92,8 @@ void scheduler_ast_check(void)
         return;
     }
 
-    /* Preemption happens on timer IRQ; keep this as a no-op */
+    /* Deliver pending Unix signals in long-running kernel-side loops such as
+     * tty/input reads, where userspace may otherwise never reach a syscall
+     * return boundary. */
+    unix_proc_signal_checkpoint();
 }
