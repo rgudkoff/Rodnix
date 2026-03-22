@@ -7,6 +7,7 @@
 #include "initrd.h"
 #include "ext2.h"
 #include "devfs.h"
+#include "procfs.h"
 #include "../fabric/service/block_service.h"
 #include "../console/tty_console.h"
 #include "../lib/heap.h"
@@ -353,7 +354,7 @@ static int vfs_resize_file(vfs_file_t* file, size_t new_size)
 
     vfs_inode_t* inode = file->node->inode;
     if ((inode->flags & (VFS_INODE_CONSOLE | VFS_INODE_CHARDEV | VFS_INODE_BLOCKDEV |
-                         VFS_INODE_FRAMEBUFFER)) != 0) {
+                         VFS_INODE_FRAMEBUFFER | VFS_INODE_PROCFS)) != 0) {
         return RDNX_E_UNSUPPORTED;
     }
 
@@ -659,6 +660,7 @@ int vfs_init(void)
     (void)vfs_register_fs(&vfs_ramfs_driver);
     (void)devfs_fs_init();
     (void)ext2_fs_init();
+    (void)procfs_fs_init();
     if (vfs_mount_root_ramfs() != 0) {
         return RDNX_E_GENERIC;
     }
@@ -670,6 +672,11 @@ int vfs_init(void)
     vfs_ready = 1;
     if (vfs_mount_devfs() != 0) {
         kputs("[VFS] devfs mount failed\n");
+    }
+    if (vfs_mkdir("/proc") == RDNX_OK) {
+        if (vfs_mount("procfs", NULL, "/proc") != RDNX_OK) {
+            kputs("[VFS] procfs mount failed\n");
+        }
     }
     return RDNX_OK;
 }
@@ -943,6 +950,9 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
         return RDNX_E_INVALID;
     }
     vfs_inode_t* inode = file->node->inode;
+    if (inode->read_fn) {
+        return inode->read_fn(file, buffer, size);
+    }
     if (inode->flags & VFS_INODE_CONSOLE) {
         /* TTY echo is governed by termios local flags, not by whether this
          * particular fd was opened writable.  Interactive programs often read

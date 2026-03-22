@@ -10,6 +10,7 @@
  */
 
 #include "../../../include/console.h"
+
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
 #include "../../core/interrupts.h"

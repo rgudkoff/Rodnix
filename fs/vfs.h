@@ -11,6 +11,9 @@
 
 typedef struct vm_object vm_object_t;
 
+struct vfs_file;
+typedef int (*vfs_read_fn_t)(struct vfs_file* file, void* buf, size_t size);
+
 typedef enum {
     VFS_NODE_FILE = 0,
     VFS_NODE_DIR  = 1
@@ -32,6 +35,7 @@ typedef struct vfs_inode {
     uint16_t mode;   /* permission bits — S_IRWXU / S_IRWXG / S_IRWXO */
     uint32_t uid;    /* owner UID */
     uint32_t gid;    /* owner GID */
+    vfs_read_fn_t read_fn; /* optional dynamic read callback (procfs) */
 } vfs_inode_t;
 
 typedef struct vfs_node {
@@ -97,7 +101,8 @@ enum {
     VFS_INODE_DEV_ZERO = 1u << 2,
     VFS_INODE_CHARDEV = 1u << 3,
     VFS_INODE_BLOCKDEV = 1u << 4,
-    VFS_INODE_FRAMEBUFFER = 1u << 5
+    VFS_INODE_FRAMEBUFFER = 1u << 5,
+    VFS_INODE_PROCFS = 1u << 6
 };
 
 /* Pixel format identifiers for fb_dev_info_t.pixel_format. */
@@ -121,7 +126,8 @@ typedef struct {
 
 enum {
     VFS_FS_TAG_NONE = 0u,
-    VFS_FS_TAG_EXT2 = 1u
+    VFS_FS_TAG_EXT2 = 1u,
+    VFS_FS_TAG_PROCFS = 2u
 };
 
 int vfs_init(void);
