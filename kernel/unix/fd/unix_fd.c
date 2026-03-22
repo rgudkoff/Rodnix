@@ -44,7 +44,8 @@ enum {
     UNIX_TTY_IOCTL_ISATTY = 0x7401,
     UNIX_TTY_IOCTL_GETATTR = 0x7402,
     UNIX_TTY_IOCTL_SETATTR = 0x7403,
-    UNIX_TTY_IOCTL_GETWINSZ = 0x7404
+    UNIX_TTY_IOCTL_GETWINSZ = 0x7404,
+    UNIX_TTY_IOCTL_SETWINSZ = 0x7405
 };
 
 enum {
@@ -1154,6 +1155,8 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
             }
             unix_termios_u_t kterm;
             memset(&kterm, 0, sizeof(kterm));
+            kterm.c_iflag = tty_console_get_iflag();
+            kterm.c_oflag = tty_console_get_oflag();
             kterm.c_lflag = tty_console_get_lflag();
             for (uint32_t i = 0; i < 20; i++) {
                 kterm.c_cc[i] = tty_console_get_cc(i);
@@ -1171,6 +1174,8 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
             if (unix_copy_from_user(&kterm, (const void*)(uintptr_t)user_arg_ptr, sizeof(kterm)) != RDNX_OK) {
                 return (uint64_t)RDNX_E_INVALID;
             }
+            tty_console_set_iflag(kterm.c_iflag);
+            tty_console_set_oflag(kterm.c_oflag);
             tty_console_set_lflag(kterm.c_lflag);
             for (uint32_t i = 0; i < 20; i++) {
                 tty_console_set_cc(i, kterm.c_cc[i]);
@@ -1187,13 +1192,28 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
             if (!unix_user_range_ok((void*)(uintptr_t)user_arg_ptr, sizeof(kws))) {
                 return (uint64_t)RDNX_E_INVALID;
             }
-            kws.ws_row = 25;
-            kws.ws_col = 80;
-            kws.ws_xpixel = 0;
-            kws.ws_ypixel = 0;
+            tty_console_get_winsize(&kws.ws_row, &kws.ws_col,
+                                    &kws.ws_xpixel, &kws.ws_ypixel);
             if (unix_copy_to_user((void*)(uintptr_t)user_arg_ptr, &kws, sizeof(kws)) != RDNX_OK) {
                 return (uint64_t)RDNX_E_INVALID;
             }
+            return (uint64_t)RDNX_OK;
+        }
+        case UNIX_TTY_IOCTL_SETWINSZ: {
+            struct unix_winsize_u {
+                uint16_t ws_row;
+                uint16_t ws_col;
+                uint16_t ws_xpixel;
+                uint16_t ws_ypixel;
+            } kws;
+            if (!unix_user_range_ok((void*)(uintptr_t)user_arg_ptr, sizeof(kws))) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            if (unix_copy_from_user(&kws, (const void*)(uintptr_t)user_arg_ptr, sizeof(kws)) != RDNX_OK) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            tty_console_set_winsize(kws.ws_row, kws.ws_col,
+                                    kws.ws_xpixel, kws.ws_ypixel);
             return (uint64_t)RDNX_OK;
         }
         default:

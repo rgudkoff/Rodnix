@@ -28,6 +28,8 @@ void input_push_scancode(uint16_t scancode, bool pressed);
 bool input_has_char(void);
 int  input_read_char(void);                  /* -1 if no character */
 size_t input_read_line(char *buf, size_t n); /* blocking line read */
+int input_inject_char(uint8_t c);
+int input_inject_bytes(const char *buf, size_t n);
 
 /* Process queued scan codes from interrupt handler */
 void input_process_queue(void);

@@ -140,6 +140,8 @@ void console_set_gfx_blink(void (*fn)(void));
 
 /* Called by scheduler_tick() every tick to drive cursor blinking. */
 void console_tick(void);
+void console_get_cursor_position(uint32_t* row, uint32_t* col);
+uint64_t console_get_vga_blink_toggle_count(void);
 
 /* Uptime (microseconds) */
 uint64_t console_get_uptime_us(void);

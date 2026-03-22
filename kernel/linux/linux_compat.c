@@ -509,6 +509,19 @@ enum {
     LINUX_VERASE = 2,
     LINUX_VKILL  = 3,
     LINUX_VEOF   = 4,
+    LINUX_VTIME  = 5,
+    LINUX_VMIN   = 6,
+};
+
+enum {
+    LINUX_IFLAG_INLCR = 0x00000040u,
+    LINUX_IFLAG_IGNCR = 0x00000080u,
+    LINUX_IFLAG_ICRNL = 0x00000100u,
+};
+
+enum {
+    LINUX_OFLAG_OPOST = 0x00000001u,
+    LINUX_OFLAG_ONLCR = 0x00000004u,
 };
 
 enum {
@@ -518,6 +531,60 @@ enum {
     LINUX_LFLAG_ECHOCTL = 0x00000200u,
     LINUX_LFLAG_IEXTEN  = 0x00008000u,
 };
+
+static uint32_t linux_iflag_from_tty(uint32_t tty_iflag)
+{
+    uint32_t out = 0;
+    if (tty_iflag & TTY_IFLAG_INLCR) {
+        out |= LINUX_IFLAG_INLCR;
+    }
+    if (tty_iflag & TTY_IFLAG_IGNCR) {
+        out |= LINUX_IFLAG_IGNCR;
+    }
+    if (tty_iflag & TTY_IFLAG_ICRNL) {
+        out |= LINUX_IFLAG_ICRNL;
+    }
+    return out;
+}
+
+static uint32_t linux_iflag_to_tty(uint32_t linux_iflag)
+{
+    uint32_t out = 0;
+    if (linux_iflag & LINUX_IFLAG_INLCR) {
+        out |= TTY_IFLAG_INLCR;
+    }
+    if (linux_iflag & LINUX_IFLAG_IGNCR) {
+        out |= TTY_IFLAG_IGNCR;
+    }
+    if (linux_iflag & LINUX_IFLAG_ICRNL) {
+        out |= TTY_IFLAG_ICRNL;
+    }
+    return out;
+}
+
+static uint32_t linux_oflag_from_tty(uint32_t tty_oflag)
+{
+    uint32_t out = 0;
+    if (tty_oflag & TTY_OFLAG_OPOST) {
+        out |= LINUX_OFLAG_OPOST;
+    }
+    if (tty_oflag & TTY_OFLAG_ONLCR) {
+        out |= LINUX_OFLAG_ONLCR;
+    }
+    return out;
+}
+
+static uint32_t linux_oflag_to_tty(uint32_t linux_oflag)
+{
+    uint32_t out = 0;
+    if (linux_oflag & LINUX_OFLAG_OPOST) {
+        out |= TTY_OFLAG_OPOST;
+    }
+    if (linux_oflag & LINUX_OFLAG_ONLCR) {
+        out |= TTY_OFLAG_ONLCR;
+    }
+    return out;
+}
 
 static uint32_t linux_lflag_from_tty(uint32_t tty_lflag)
 {
@@ -572,6 +639,10 @@ static uint8_t linux_cc_from_tty(uint32_t linux_idx)
         return tty_console_get_cc(TTY_VKILL);
     case LINUX_VEOF:
         return tty_console_get_cc(TTY_VEOF);
+    case LINUX_VTIME:
+        return tty_console_get_cc(TTY_VTIME);
+    case LINUX_VMIN:
+        return tty_console_get_cc(TTY_VMIN);
     default:
         return 0;
     }
@@ -591,6 +662,12 @@ static void linux_cc_to_tty(uint32_t linux_idx, uint8_t value)
         break;
     case LINUX_VEOF:
         tty_console_set_cc(TTY_VEOF, value);
+        break;
+    case LINUX_VTIME:
+        tty_console_set_cc(TTY_VTIME, value);
+        break;
+    case LINUX_VMIN:
+        tty_console_set_cc(TTY_VMIN, value);
         break;
     default:
         break;
@@ -773,6 +850,7 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 16: { /* ioctl */
         enum {
             LINUX_TIOCGWINSZ = 0x5413u,
+            LINUX_TIOCSWINSZ = 0x5414u,
             LINUX_TCGETS     = 0x5401u,
             LINUX_TCSETS     = 0x5402u,
             LINUX_TCSETSW    = 0x5403u,
@@ -787,10 +865,25 @@ uint64_t linux_compat_dispatch(uint64_t num,
             if (!ws || !unix_user_range_ok(ws, sizeof(*ws))) {
                 return (uint64_t)(-LINUX_EINVAL);
             }
-            ws->ws_row = 25;
-            ws->ws_col = 80;
-            ws->ws_xpixel = 0;
-            ws->ws_ypixel = 0;
+            linux_winsize_u_t kws;
+            tty_console_get_winsize(&kws.ws_row, &kws.ws_col,
+                                    &kws.ws_xpixel, &kws.ws_ypixel);
+            if (unix_copy_to_user(ws, &kws, sizeof(kws)) != RDNX_OK) {
+                return (uint64_t)(-LINUX_EINVAL);
+            }
+            return 0;
+        }
+        if (req == LINUX_TIOCSWINSZ) {
+            linux_winsize_u_t* ws = (linux_winsize_u_t*)(uintptr_t)a3;
+            linux_winsize_u_t kws;
+            if (!ws || !unix_user_range_ok(ws, sizeof(*ws))) {
+                return (uint64_t)(-LINUX_EINVAL);
+            }
+            if (unix_copy_from_user(&kws, ws, sizeof(kws)) != RDNX_OK) {
+                return (uint64_t)(-LINUX_EINVAL);
+            }
+            tty_console_set_winsize(kws.ws_row, kws.ws_col,
+                                    kws.ws_xpixel, kws.ws_ypixel);
             return 0;
         }
         if (req == LINUX_TCGETS) {
@@ -804,6 +897,8 @@ uint64_t linux_compat_dispatch(uint64_t num,
             }
             linux_termios_u_t klt;
             memset(&klt, 0, sizeof(klt));
+            klt.c_iflag = linux_iflag_from_tty(tty_console_get_iflag());
+            klt.c_oflag = linux_oflag_from_tty(tty_console_get_oflag());
             klt.c_lflag = linux_lflag_from_tty(tty_console_get_lflag());
             klt.c_line  = 0; /* N_TTY */
             for (int _i = 0; _i < 19; _i++) {
@@ -827,6 +922,8 @@ uint64_t linux_compat_dispatch(uint64_t num,
             if ((int64_t)rc < 0) {
                 return (uint64_t)(-LINUX_ENOTTY);
             }
+            tty_console_set_iflag(linux_iflag_to_tty(klt.c_iflag));
+            tty_console_set_oflag(linux_oflag_to_tty(klt.c_oflag));
             tty_console_set_lflag(linux_lflag_to_tty(klt.c_lflag));
             for (int _i = 0; _i < 19; _i++) {
                 linux_cc_to_tty((uint32_t)_i, klt.c_cc[_i]);
