@@ -6,6 +6,7 @@ global x86_64_syscall_fast_entry
 extern x86_64_syscall_fast_dispatch_frame
 extern g_tss_rsp0_shadow
 extern g_syscall_user_rsp_shadow
+extern g_current_tls_fs_base
 
 %define TF_GS       0
 %define TF_FS       8
@@ -99,6 +100,17 @@ x86_64_syscall_fast_entry:
     mov rsi, [rsp + TF_RSI]
     mov rdx, [rsp + TF_RDX]
     mov rbx, [rsp + TF_RBX]
+
+    ; Re-apply userspace FS.Base before SYSRET. Linux guests rely on TLS in the
+    ; first instructions after syscall return (e.g. ash child after fork). Even
+    ; on the fast path the hidden FS base can end up stale/zero after nested
+    ; kernel activity, so restore it from the scheduler-maintained shadow.
+    mov ecx, 0xC0000100
+    mov rax, [rel g_current_tls_fs_base]
+    mov rdx, rax
+    shr rdx, 32
+    wrmsr
+
     mov rax, [rsp + TF_RAX]
 
     mov rcx, [rsp + TF_RIP]

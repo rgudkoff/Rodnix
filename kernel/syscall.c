@@ -2,6 +2,7 @@
 #include "posix/posix_syscall.h"
 #include "linux/linux_compat.h"
 #include "core/task.h"
+#include "unix/unix_layer.h"
 #include "../sched/scheduler.h"
 #include "../include/error.h"
 #include "../include/console.h"
@@ -124,6 +125,11 @@ uint64_t syscall_dispatch(uint64_t num,
     if (abi == TASK_ABI_LINUX) {
         uint64_t ret = linux_compat_dispatch(num, a1, a2, a3, a4, a5, a6);
         linux_compat_apply_user_state();
+        /* Linux signal delivery is still only partially compatible with the
+         * userspace ABI.  Running the generic checkpoint on every syscall
+         * corrupts the post-fork child path used by BusyBox ash (`gettid`
+         * + `rt_sigprocmask` -> RIP=0).  Keep Linux tasks wait-driven/polling-
+         * driven for now and avoid injecting signal frames on syscall exit. */
         return ret;
     }
 

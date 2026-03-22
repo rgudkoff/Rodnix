@@ -4,6 +4,7 @@
 #include "vm_page_ref.h"
 #include "../kernel/arch/paging.h"
 #include "../kernel/arch/config.h"
+#include "../include/console.h"
 #include "../include/common.h"
 #include "../include/error.h"
 
@@ -17,6 +18,20 @@ static uint64_t vm_pte_flags_from_prot(uint32_t prot)
         flags |= PTE_NX;
     }
     return flags;
+}
+
+static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
+{
+    if (!e) {
+        return 0;
+    }
+    if (!e->object) {
+        return 0;
+    }
+    if ((e->flags & VM_MAP_F_PRIVATE) == 0) {
+        return 0;
+    }
+    return 1;
 }
 
 int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)
@@ -51,7 +66,8 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
 
     uint64_t current_phys = paging_get_physical(va) & ~(VM_PAGE_SIZE - 1u);
 
-    if (current_phys != 0 && is_write && (e->flags & VM_MAP_F_COW)) {
+    if (current_phys != 0 && is_write &&
+        ((e->flags & VM_MAP_F_COW) || vm_entry_uses_private_object_cow(e))) {
         uint64_t new_phys = vm_pager_alloc_zero_page();
         if (!new_phys) {
             return RDNX_E_NOMEM;
@@ -96,14 +112,21 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
                     memcpy(ARCH_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
                 }
             }
-            if (e->object) {
+            if (e->object && !(is_write && vm_entry_uses_private_object_cow(e))) {
                 (void)vm_object_set_resident_page(e->object, obj_page_idx, phys);
             }
+        }
+        uint32_t eff_prot = e->prot;
+        if (!is_write && vm_entry_uses_private_object_cow(e) && (eff_prot & VM_PROT_WRITE)) {
+            /* Private file-backed pages must fault again on first write so the
+             * writing task receives its own anonymous copy instead of mutating
+             * the shared vm_object resident page. */
+            eff_prot &= ~VM_PROT_WRITE;
         }
         int rc = paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,
                                           va,
                                           phys,
-                                          vm_pte_flags_from_prot(e->prot));
+                                          vm_pte_flags_from_prot(eff_prot));
         if (rc != RDNX_OK) {
             return rc;
         }

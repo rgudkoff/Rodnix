@@ -20,6 +20,7 @@ static size_t tty_cooked_count = 0;
 static bool tty_eof_pending = false;
 static uint32_t tty_lflag = 0;
 static uint8_t tty_cc[TTY_NCCS];
+static uint64_t tty_fg_pgrp = 0;
 
 static bool tty_enqueue(char c)
 {
@@ -175,6 +176,7 @@ void tty_console_init(void)
                 TTY_MODE_ISIG |
                 TTY_MODE_ICANON |
                 TTY_MODE_IEXTEN;
+    tty_fg_pgrp = 0;
     for (uint32_t i = 0; i < TTY_NCCS; i++) {
         tty_cc[i] = 0;
     }
@@ -188,6 +190,7 @@ int tty_console_read(void* buffer, size_t size, bool echo)
 {
     char* out = (char*)buffer;
     size_t nread = 0;
+    bool canonical = (tty_lflag & TTY_MODE_ICANON) != 0;
 
     if (!out) {
         return -1;
@@ -200,6 +203,9 @@ int tty_console_read(void* buffer, size_t size, bool echo)
         char c = 0;
         if (tty_dequeue(&c)) {
             out[nread++] = c;
+            if (!canonical) {
+                break;
+            }
             continue;
         }
 
@@ -284,4 +290,14 @@ void tty_console_set_cc(uint32_t idx, uint8_t value)
         return;
     }
     tty_cc[idx] = value;
+}
+
+uint64_t tty_console_get_fg_pgrp(void)
+{
+    return tty_fg_pgrp;
+}
+
+void tty_console_set_fg_pgrp(uint64_t pgrp)
+{
+    tty_fg_pgrp = pgrp;
 }

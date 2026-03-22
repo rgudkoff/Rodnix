@@ -2,8 +2,10 @@
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../kernel/arch/paging.h"
+#include "../kernel/arch/x86_64/gdt.h"
 #include "../kernel/core/cpu.h"
 #include "../include/debug.h"
+#include "../include/console.h"
 
 static uint64_t scheduler_kernel_pml4 = 0;
 

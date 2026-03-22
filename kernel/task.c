@@ -13,6 +13,7 @@
 #include "core/interrupts.h"
 #include "../fs/vfs.h"
 #include "unix/unix_layer.h"
+#include "../include/console.h"
 #include "../include/error.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -244,6 +245,8 @@ task_t* task_create(void)
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
+    task->session_id = task->task_id;
+    task->process_group_id = task->task_id;
     task->umask = 0022;
     for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
         task->fd_table[i] = NULL;
@@ -331,6 +334,31 @@ task_t* task_find_by_id(uint64_t task_id)
     key.task_id = task_id;
     irql_t old = task_registry_lock();
     task_t* found = RB_FIND(task_id_index, &all_tasks_by_id, &key);
+    task_registry_unlock(old);
+    return found;
+}
+
+task_t* task_find_child_by_parent(uint64_t parent_task_id, int require_exited, int include_waited)
+{
+    task_t* found = NULL;
+    irql_t old = task_registry_lock();
+    for (task_t* it = all_tasks_head; it; it = it->next_all) {
+        bool child_exited;
+        if (it->parent_task_id != parent_task_id) {
+            continue;
+        }
+        if (!include_waited && it->waited) {
+            continue;
+        }
+        child_exited = it->exited ||
+                       (it->state == TASK_STATE_ZOMBIE) ||
+                       (it->state == TASK_STATE_DEAD);
+        if (require_exited && !child_exited) {
+            continue;
+        }
+        found = it;
+        break;
+    }
     task_registry_unlock(old);
     return found;
 }
@@ -488,6 +516,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->reap_queued = 0;
     thread->reap_after_tick = 0;
     thread->arch_specific = NULL;
+    thread->tls_fs_base = 0;
     task->thread_count++;
     TAILQ_INSERT_TAIL(&task->threads, thread, task_link);
     if (!task->main_thread) {
@@ -676,6 +705,21 @@ void thread_switch(thread_t* from, thread_t* to)
     if (to->task) {
         task_set_current(to->task);
     }
+
+    /* x86_64: TSS.RSP0 must point to the incoming thread's kernel stack top
+     * so that ring-3 → ring-0 transitions (int 0x80, syscall) land on the
+     * correct stack.  Without this update every thread after the first one
+     * would use the FIRST thread's kernel stack, corrupting it. */
+    if (to->stack) {
+        extern void tss_set_rsp0(uint64_t rsp0);
+        tss_set_rsp0((uint64_t)(uintptr_t)to->stack + to->stack_size);
+    }
+
+    /* Apply the incoming thread's FS.Base (TLS) to the hardware and update
+     * the ISR shadow variable.  sched_arch_apply_thread handles both cases:
+     *   - thread->tls_fs_base set (CLONE_SETTLS / inherited fork child)
+     *   - Linux ABI tasks where arch_prctl only updates task->tls_fs_base */
+    sched_arch_apply_thread(to);
 
     if (!from) {
         cpu_restore_context(&to->context);

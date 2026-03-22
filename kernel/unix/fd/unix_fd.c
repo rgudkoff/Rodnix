@@ -12,10 +12,12 @@
 #include "../../../include/fb_abi.h"
 
 enum {
+    UNIX_F_DUPFD = 0,
     UNIX_F_GETFD = 1,
     UNIX_F_SETFD = 2,
     UNIX_F_GETFL = 3,
     UNIX_F_SETFL = 4,
+    UNIX_F_DUPFD_CLOEXEC = 1030,
     /* fd_flags bits (stored in task->fd_flags[fd]) */
     UNIX_FD_CLOEXEC  = 1,
     UNIX_FD_NONBLOCK = 2,   /* O_NONBLOCK state for non-VFS fds (pipes, sockets) */
@@ -561,6 +563,43 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
         return (uint64_t)orc;
     }
     /* Store only access mode + status flags; strip one-shot flags (O_CREAT, O_TRUNC). */
+    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+
+    task_t* task = task_get_current();
+    if (!task) {
+        vfs_close(file);
+        kfree(file);
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    int fd = task_fd_alloc(task, file);
+    if (fd < 0) {
+        vfs_close(file);
+        kfree(file);
+        return (uint64_t)RDNX_E_BUSY;
+    }
+    task->fd_kind[fd] = UNIX_FD_KIND_VFS;
+    if (posix_flags & UNIX_O_CLOEXEC)  task->fd_flags[fd] |= UNIX_FD_CLOEXEC;
+    if (posix_flags & UNIX_O_NONBLOCK) task->fd_flags[fd] |= UNIX_FD_NONBLOCK;
+    return (uint64_t)fd;
+}
+
+uint64_t unix_fs_open_kernel_path(const char* path, uint64_t flags)
+{
+    int posix_flags = (int)flags;
+    if (!path || path[0] != '/') {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+
+    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
+    if (!file) {
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
+    int orc = vfs_open(path, vfs_flags, file);
+    if (orc != RDNX_OK) {
+        kfree(file);
+        return (uint64_t)orc;
+    }
     file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
 
     task_t* task = task_get_current();
@@ -1258,6 +1297,7 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
 {
     task_t* task = task_get_current();
     int fdi = (int)fd;
+    int min_fd = (int)arg;
     if (!task || fdi < 0 || fdi >= TASK_MAX_FD || !task->fd_table[fdi]) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1266,6 +1306,26 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
     static const int unix_setfl_mask = UNIX_O_NONBLOCK;
 
     switch ((int)cmd) {
+        case UNIX_F_DUPFD:
+        case UNIX_F_DUPFD_CLOEXEC: {
+            if (min_fd < 0 || min_fd >= TASK_MAX_FD) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            for (int newfd = min_fd; newfd < TASK_MAX_FD; newfd++) {
+                if (task->fd_table[newfd]) {
+                    continue;
+                }
+                int rc = unix_fd_dup_into(task, fdi, newfd);
+                if (rc != RDNX_OK) {
+                    return (uint64_t)rc;
+                }
+                if ((int)cmd == UNIX_F_DUPFD_CLOEXEC) {
+                    task->fd_flags[newfd] |= UNIX_FD_CLOEXEC;
+                }
+                return (uint64_t)newfd;
+            }
+            return (uint64_t)RDNX_E_BUSY;
+        }
         case UNIX_F_GETFD:
             return (uint64_t)(task->fd_flags[fdi] & UNIX_FD_CLOEXEC);
         case UNIX_F_SETFD:

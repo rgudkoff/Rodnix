@@ -13,6 +13,7 @@
 #include "core/task.h"
 #include "security.h"
 #include "../mm/vm_map.h"
+#include "../mm/vm_page_ref.h"
 #include "../lib/heap.h"
 #include "../trace/bootlog.h"
 #include "../include/console.h"
@@ -123,7 +124,9 @@ static int loader_map_segment(uint64_t pml4_phys,
         if (!phys) {
             return RDNX_E_NOMEM;
         }
+        (void)vm_page_ref_add_new(phys);
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
+            (void)vm_page_ref_release(phys);
             return RDNX_E_GENERIC;
         }
 
@@ -176,19 +179,20 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
             for (uint32_t j = 0; j < i; j++) {
                 paging_unmap_page_pml4(pml4_phys,
                     out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
-                pmm_free_page(out_img->stack_phys[j]);
+                (void)vm_page_ref_release(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
             return RDNX_E_NOMEM;
         }
+        (void)vm_page_ref_add_new(phys);
         uint64_t flags = PTE_PRESENT | PTE_USER | PTE_RW;
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
             /* Free the unmap-failed page, then rollback prior pages */
-            pmm_free_page(phys);
+            (void)vm_page_ref_release(phys);
             for (uint32_t j = 0; j < i; j++) {
                 paging_unmap_page_pml4(pml4_phys,
                     out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
-                pmm_free_page(out_img->stack_phys[j]);
+                (void)vm_page_ref_release(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
             return RDNX_E_GENERIC;
@@ -587,6 +591,20 @@ int loader_execve_ex(const char* path,
             (void)vm_task_set_brk_base(cur->task, img.brk_base);
         }
     }
+    /* Reset TLS state: the new image hasn't set its own FS.Base yet via
+     * arch_prctl.  Without this reset, IRQ stubs would restore the OLD
+     * process's FS.Base into the new address space, corrupting TLS. */
+    if (cur && cur->task) {
+        cur->task->tls_fs_base = 0;
+    }
+    if (cur) {
+        cur->tls_fs_base = 0;
+    }
+    {
+        extern uint64_t g_current_tls_fs_base;
+        g_current_tls_fs_base = 0;
+    }
+
     if (bootlog_is_verbose()) {
         kputs("[LOADER] entering userland\n");
     }

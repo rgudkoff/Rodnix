@@ -9,6 +9,7 @@
 #include "posix_sysnums.h"
 #include "unistd.h"
 #include "dirent.h"
+#include "sys/wait.h"
 #include "sysinfo.h"
 #include "hwinfo.h"
 #include "fabric_node.h"
@@ -30,6 +31,7 @@
 #define SH_ANSI_BOTTOM "\x1b[999;1H"
 #define SH_PATH_MAX 256
 #define SH_PS1_MAX 128
+#define SH_HISTORY_MAX 16
 #define HOSTINFO_HW_MAX 64
 #define HOSTINFO_FABRIC_MAX 128
 #define HOSTINFO_NETIF_MAX 16
@@ -78,6 +80,7 @@ int line_has_meta(const char* s);
 
 int cmd_exec_meta_line(char* line);
 int cmd_run(int argc, char** argv, int verbose);
+int cmd_exec_replace(int argc, char** argv);
 int cmd_cd(int argc, char** argv);
 int cmd_autorun(int argc, char** argv);
 

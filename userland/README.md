@@ -17,6 +17,9 @@ legacy entry `int 0x80` сохранён как fallback.
   - Аргументы передаются в userspace как `argc/argv` (MVP, без envp).
 - `/bin/echo` — внешний userspace-бинарник (не built-in shell-команда), запускается:
   - `sh> echo hello world`
+- В `make rust-utils` также собираются первые Rust-бинарники:
+  - `/bin/rust_hello` — демонстрация no_std/no_main userland-пути;
+  - `/bin/rust_echo` — минимальная утилита `echo` на Rust.
 - `/bin/ls`, `/bin/cat`, `/bin/true` — внешние userland-заготовки
   (MVP-утилиты для модели "не builtin").
 - `/bin/cpuinfo` — подробный отчёт по CPU topology, частоте и CPUID feature flags.
@@ -66,6 +69,17 @@ vendor BSD baseline (`third_party/bsd/*/sys/sys/*`) и проверяются
 - команды, меняющие состояние shell-процесса (например, `cd`) должны быть builtin;
 - файловые/системные утилиты (`ls`, `cat`, `echo`, и т.п.) развиваются как
   отдельные внешние программы.
+
+Практическая политика по языкам:
+- `C` остаётся основным языком для `crt0`, `libc-lite`, shell, `init` и
+  ABI-чувствительных частей userland.
+- Новые standalone-утилиты в `/bin` могут развиваться как на `C`, так и на `Rust`.
+- `Rust` рассматривается как желательный путь для части новых утилит, если он
+  не усложняет bootstrap/runtime path и не требует отдельного on-target runtime.
+- `Python` остаётся только host-side tooling языком и не используется для
+  on-target userland.
+- `C++` допускается точечно для smoke/tests, но не является основной целью для
+  базового набора userland-утилит.
 
 План:
 - минимальный loader и переход в ring3;

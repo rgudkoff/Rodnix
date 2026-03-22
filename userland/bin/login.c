@@ -17,10 +17,11 @@
 /* Persistent passwd on ext2 takes priority over initrd copy */
 #define PASSWD_PATH_MNT "/mnt/etc/passwd"
 #define PASSWD_PATH     "/etc/passwd"
-#define PASSWD_MAX    1024
+#define PASSWD_MAX    4096
 #define LINE_MAX      256
 #define NAME_MAX_LEN  64
-#define PASS_MAX_LEN  64
+#define PASS_HASH_MAX_LEN 72
+#define PASS_INPUT_MAX_LEN 64
 #define SHELL_MAX_LEN 64
 #define HOME_MAX_LEN  64
 #define MAX_RETRIES   3
@@ -70,6 +71,39 @@ static int read_line(int fd, char* buf, int maxlen)
     }
     buf[i] = '\0';
     return i;
+}
+
+static ssize_t read_passwd_file(char* buf, size_t bufsz)
+{
+    int fd;
+    size_t off = 0;
+
+    if (!buf || bufsz < 2) {
+        return -1;
+    }
+
+    fd = open(PASSWD_PATH_MNT, O_RDONLY);
+    if (fd < 0) {
+        fd = open(PASSWD_PATH, O_RDONLY);
+    }
+    if (fd < 0) {
+        return -1;
+    }
+
+    while (off + 1 < bufsz) {
+        ssize_t n = read(fd, buf + off, bufsz - off - 1);
+        if (n < 0) {
+            close(fd);
+            return -1;
+        }
+        if (n == 0) {
+            break;
+        }
+        off += (size_t)n;
+    }
+    close(fd);
+    buf[off] = '\0';
+    return (ssize_t)off;
 }
 
 static int next_field(const char** src, char* buf, int buflen)
@@ -139,7 +173,6 @@ static int passwd_lookup(const char* username,
                          login_user_t* out_user)
 {
     char buf[PASSWD_MAX];
-    int fd;
     ssize_t n;
     const char* line;
 
@@ -147,21 +180,10 @@ static int passwd_lookup(const char* username,
         return -1;
     }
 
-    /* Prefer persistent passwd on ext2, fall back to initrd copy */
-    fd = open(PASSWD_PATH_MNT, O_RDONLY);
-    if (fd < 0) {
-        fd = open(PASSWD_PATH, O_RDONLY);
-    }
-    if (fd < 0) {
-        return -1;
-    }
-
-    n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
+    n = read_passwd_file(buf, sizeof(buf));
     if (n <= 0) {
         return -1;
     }
-    buf[n] = '\0';
 
     line = buf;
     while (*line != '\0') {
@@ -186,7 +208,7 @@ static int passwd_lookup(const char* username,
         if (scratch[0] != '\0' && scratch[0] != '#') {
             const char* p = scratch;
             char f_user[NAME_MAX_LEN];
-            char f_pass[PASS_MAX_LEN];
+            char f_pass[PASS_HASH_MAX_LEN];
             char f_uid[16];
             char f_gid[16];
             char f_comment[64];
@@ -270,7 +292,7 @@ static long set_uid_full(uint32_t uid)
 int main(void)
 {
     char username[NAME_MAX_LEN];
-    char password[PASS_MAX_LEN];
+    char password[PASS_INPUT_MAX_LEN];
     login_user_t user;
 
     write_str("\nRodNIX login\n");

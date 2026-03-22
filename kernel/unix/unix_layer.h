@@ -58,6 +58,7 @@ typedef struct {
 } unix_stat_u_t;
 
 uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags);
+uint64_t unix_fs_open_kernel_path(const char* path, uint64_t flags);
 uint64_t unix_fs_openat(uint64_t dirfd, uint64_t user_path_ptr, uint64_t flags);
 /* CT-007/CT-008 */
 uint64_t unix_fs_close(uint64_t fd);

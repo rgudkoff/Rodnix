@@ -126,6 +126,8 @@ typedef struct task {
     uint32_t gid;              /* Реальный GID */
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
+    uint64_t session_id;       /* Linux/POSIX session id */
+    uint64_t process_group_id; /* Linux/POSIX process group id */
     uint16_t umask;            /* process umask (POSIX bits) */
     void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
     uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
@@ -308,6 +310,7 @@ uint32_t task_get_thread_count(const task_t* task);
  * @return Pointer to task or NULL
  */
 task_t* task_find_by_id(uint64_t task_id);
+task_t* task_find_child_by_parent(uint64_t parent_task_id, int require_exited, int include_waited);
 
 typedef struct {
     uint32_t cache_count;
