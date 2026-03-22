@@ -1,5 +1,88 @@
 #include "shell_internal.h"
 
+static char shell_history[SH_HISTORY_MAX][SH_LINE_MAX];
+static int shell_history_count = 0;
+
+static void shell_history_store(const char* line)
+{
+    int len = 0;
+
+    if (!line || line[0] == '\0') {
+        return;
+    }
+
+    if (shell_history_count > 0 &&
+        str_eq(shell_history[shell_history_count - 1], line)) {
+        return;
+    }
+
+    while (line[len] != '\0' && len + 1 < SH_LINE_MAX) {
+        len++;
+    }
+
+    if (shell_history_count < SH_HISTORY_MAX) {
+        for (int i = 0; i < len; i++) {
+            shell_history[shell_history_count][i] = line[i];
+        }
+        shell_history[shell_history_count][len] = '\0';
+        shell_history_count++;
+        return;
+    }
+
+    for (int i = 1; i < SH_HISTORY_MAX; i++) {
+        int j = 0;
+        while (shell_history[i][j] != '\0' && j + 1 < SH_LINE_MAX) {
+            shell_history[i - 1][j] = shell_history[i][j];
+            j++;
+        }
+        shell_history[i - 1][j] = '\0';
+    }
+    for (int i = 0; i < len; i++) {
+        shell_history[SH_HISTORY_MAX - 1][i] = line[i];
+    }
+    shell_history[SH_HISTORY_MAX - 1][len] = '\0';
+}
+
+static void shell_copy_line(char* dst, int dst_sz, const char* src)
+{
+    int i = 0;
+
+    if (!dst || dst_sz <= 0) {
+        return;
+    }
+    if (!src) {
+        dst[0] = '\0';
+        return;
+    }
+
+    while (src[i] != '\0' && i + 1 < dst_sz) {
+        dst[i] = src[i];
+        i++;
+    }
+    dst[i] = '\0';
+}
+
+static int shell_line_len(const char* s)
+{
+    int len = 0;
+    if (!s) {
+        return 0;
+    }
+    while (s[len] != '\0') {
+        len++;
+    }
+    return len;
+}
+
+static void shell_redraw_input(const char* line)
+{
+    (void)write_str("\r\x1b[2K");
+    shell_print_prompt();
+    if (line && line[0] != '\0') {
+        (void)write_str(line);
+    }
+}
+
 long write_buf(const char* s, uint64_t len)
 {
     return posix_write(FD_STDOUT, s, len);
@@ -129,7 +212,11 @@ static long shell_read_stdin_byte(unsigned char* ch)
 int read_line(char* out, int out_len)
 {
     int pos = 0;
+    int history_index = shell_history_count;
     unsigned char ch = 0;
+    char draft[SH_LINE_MAX];
+
+    draft[0] = '\0';
 
     if (!out || out_len <= 1) {
         return -1;
@@ -146,12 +233,53 @@ int read_line(char* out, int out_len)
 
         if (ch == '\r' || ch == '\n') {
             out[pos] = '\0';
+            shell_history_store(out);
             return pos;
         }
 
         if (ch == 0x7f || ch == 0x08) {
             if (pos > 0) {
                 pos--;
+                out[pos] = '\0';
+            }
+            continue;
+        }
+
+        if (ch == 0x1Bu) {
+            unsigned char seq1 = 0;
+            unsigned char seq2 = 0;
+            if (shell_read_stdin_byte(&seq1) <= 0 || shell_read_stdin_byte(&seq2) <= 0) {
+                continue;
+            }
+            if (seq1 != '[') {
+                continue;
+            }
+            if (seq2 == 'A') {
+                if (shell_history_count <= 0 || history_index <= 0) {
+                    continue;
+                }
+                if (history_index == shell_history_count) {
+                    shell_copy_line(draft, (int)sizeof(draft), out);
+                }
+                history_index--;
+                shell_copy_line(out, out_len, shell_history[history_index]);
+                pos = shell_line_len(out);
+                shell_redraw_input(out);
+                continue;
+            }
+            if (seq2 == 'B') {
+                if (history_index >= shell_history_count) {
+                    continue;
+                }
+                history_index++;
+                if (history_index == shell_history_count) {
+                    shell_copy_line(out, out_len, draft);
+                } else {
+                    shell_copy_line(out, out_len, shell_history[history_index]);
+                }
+                pos = shell_line_len(out);
+                shell_redraw_input(out);
+                continue;
             }
             continue;
         }
@@ -161,7 +289,12 @@ int read_line(char* out, int out_len)
         }
 
         if (pos + 1 < out_len) {
+            if (history_index != shell_history_count) {
+                history_index = shell_history_count;
+                draft[0] = '\0';
+            }
             out[pos++] = (char)ch;
+            out[pos] = '\0';
         }
     }
 }

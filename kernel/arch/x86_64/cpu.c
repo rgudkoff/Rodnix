@@ -456,13 +456,21 @@ uint64_t g_current_tls_fs_base = 0;
 void sched_arch_apply_thread(void* thread_ptr)
 {
     thread_t* t = (thread_t*)thread_ptr;
-    /* Always update the shadow so the ISR stub can restore the correct value. */
-    g_current_tls_fs_base = (t && t->tls_fs_base) ? t->tls_fs_base : 0;
-    if (!t || !t->tls_fs_base) {
+    uint64_t fs_base = 0;
+    if (t) {
+        fs_base = t->tls_fs_base;
+        /* Fallback: Linux tasks store the canonical FS.Base on the task when
+         * thread->tls_fs_base wasn't explicitly set (e.g. fresh fork child). */
+        if (!fs_base && t->task && task_get_abi(t->task) == TASK_ABI_LINUX) {
+            fs_base = t->task->tls_fs_base;
+        }
+    }
+    /* Always update the shadow so the ISR/IRQ stubs restore the correct value. */
+    g_current_tls_fs_base = fs_base;
+    if (!fs_base) {
         return;
     }
-    /* Write FS.Base MSR (0xC0000100) for per-thread TLS. */
-    uint32_t lo = (uint32_t)(t->tls_fs_base & 0xFFFFFFFFu);
-    uint32_t hi = (uint32_t)(t->tls_fs_base >> 32);
+    uint32_t lo = (uint32_t)(fs_base & 0xFFFFFFFFu);
+    uint32_t hi = (uint32_t)(fs_base >> 32);
     __asm__ volatile ("wrmsr" :: "c"(0xC0000100u), "a"(lo), "d"(hi) : "memory");
 }

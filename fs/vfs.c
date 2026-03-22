@@ -946,7 +946,10 @@ int vfs_read(vfs_file_t* file, void* buffer, size_t size)
     }
     vfs_inode_t* inode = file->node->inode;
     if (inode->flags & VFS_INODE_CONSOLE) {
-        return tty_console_read(buffer, size, file->writable);
+        /* TTY echo is governed by termios local flags, not by whether this
+         * particular fd was opened writable.  Interactive programs often read
+         * from a read-only stdin that still expects canonical echo. */
+        return tty_console_read(buffer, size, true);
     }
     if (inode->flags & VFS_INODE_DEV_NULL) {
         return 0;

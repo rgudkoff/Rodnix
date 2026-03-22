@@ -293,9 +293,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
                 return regs;
             }
-            if (task && task_get_abi(task) == TASK_ABI_LINUX) {
-                linux_compat_trace_dump_recent();
-            }
         }
         tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);
         /* Call registered handler if available */
@@ -388,6 +385,21 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             serial_write_str("[EXC] cr2=");
             serial_write_hex64(cr2);
             serial_write_str("\n");
+            task_t* pf_task = task_get_current();
+            if (pf_task && task_get_abi(pf_task) == TASK_ABI_LINUX) {
+                uint64_t fs_base = 0;
+                uint32_t lo = 0;
+                uint32_t hi = 0;
+                __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(0xC0000100u));
+                fs_base = ((uint64_t)hi << 32) | lo;
+                serial_write_str("[EXC] linux tls task=");
+                serial_write_hex64(pf_task->tls_fs_base);
+                serial_write_str(" hw=");
+                serial_write_hex64(fs_base);
+                serial_write_str(" rsp=");
+                serial_write_hex64(regs->rsp);
+                serial_write_str("\n");
+            }
         }
         if (vector == 13) {
             struct {

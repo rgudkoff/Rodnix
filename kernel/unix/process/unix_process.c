@@ -237,6 +237,15 @@ void unix_proc_signal_checkpoint(void)
     /* Clear this signal from the pending bitmask before potential re-entry. */
     task->sig_pending &= ~(1u << sig);
 
+    /* Linux guest tasks (BusyBox ash included) install a SIGCHLD handler, but
+     * RodNIX does not yet provide a fully Linux-compatible signal frame and
+     * rt_sigreturn path.  Delivering SIGCHLD through the partial signal ABI
+     * corrupts the return path after wait4().  For now, keep SIGCHLD
+     * wait-driven only for Linux ABI tasks and rely on wait4()/waitpid(). */
+    if (sig == UNIX_SIGCHLD && task_get_abi(task) == TASK_ABI_LINUX) {
+        return;
+    }
+
     if (handler == UNIX_SIG_IGN) {
         return;
     }
@@ -247,6 +256,18 @@ void unix_proc_signal_checkpoint(void)
     }
 
     if (handler <= UNIX_SIG_DFL || sig == UNIX_SIGKILL) {
+        /* Stop/continue signals (SIGCONT=18, SIGSTOP=19, SIGTSTP=20,
+         * SIGTTIN=21, SIGTTOU=22) with SIG_DFL disposition should stop or
+         * continue the process.  We do not implement process stopping, so
+         * silently discard them rather than terminating — ash forkchild resets
+         * these to SIG_DFL before exec and may route them through process-group
+         * kill; terminating would misreport the child's exit status. */
+        enum { SIGCONT = 18, SIGSTOP = 19, SIGTSTP = 20, SIGTTIN = 21, SIGTTOU = 22 };
+        if (handler <= UNIX_SIG_DFL && sig != UNIX_SIGKILL &&
+            (sig == SIGCONT || sig == SIGSTOP || sig == SIGTSTP ||
+             sig == SIGTTIN || sig == SIGTTOU)) {
+            return;
+        }
         unix_proc_exit(128u + sig);
         return;
     }
@@ -276,11 +297,31 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
 {
     task_t* self = task_get_current();
     int sig = (int)signum;
-    if (!self || pid == 0 || sig < 0 || sig > UNIX_SIG_MAX) {
+    int64_t spid = (int64_t)pid;
+
+    if (!self || sig < 0 || sig > UNIX_SIG_MAX) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    task_t* target = task_find_by_id(pid);
+    /* pid == 0: signal to current process group.
+     * pid < 0:  signal to process group |pid|.
+     * Neither has a full process-group model yet.  For sig==0 (existence probe)
+     * return success immediately.  For real signals, deliver to self if our
+     * process_group_id matches, otherwise accept silently (no-op stub). */
+    if (spid <= 0) {
+        if (sig == 0) {
+            return (uint64_t)RDNX_OK;
+        }
+        uint64_t target_pgid = (spid == 0) ? self->process_group_id
+                                            : (uint64_t)(-spid);
+        if (self->process_group_id == target_pgid) {
+            self->sig_pending |= (1u << (uint32_t)sig);
+            unix_proc_signal_checkpoint();
+        }
+        return (uint64_t)RDNX_OK;
+    }
+
+    task_t* target = task_find_by_id((uint64_t)spid);
     if (!target) {
         return (uint64_t)RDNX_E_NOTFOUND;
     }
@@ -352,6 +393,7 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
 {
     /* CT-004/CT-005/CT-006 contract point. */
     task_t* self = task_get_current();
+    bool wait_any_child = (pid == UINT64_MAX);
     if (!self || pid == 0) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -360,12 +402,15 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    task_t* child = task_find_by_id(pid);
-    if (!child) {
-        return (uint64_t)RDNX_E_NOTFOUND;
-    }
-    if (child->parent_task_id != self->task_id) {
-        return (uint64_t)RDNX_E_DENIED;
+    task_t* child = NULL;
+    if (!wait_any_child) {
+        child = task_find_by_id(pid);
+        if (!child) {
+            return (uint64_t)RDNX_E_NOTFOUND;
+        }
+        if (child->parent_task_id != self->task_id) {
+            return (uint64_t)RDNX_E_DENIED;
+        }
     }
 
     /* Block until child exits. Wake-up is delivered via unix_proc_notify_waiters()
@@ -374,6 +419,18 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
      * multiple children. Short timeout (100 ms) handles the TOCTOU race where
      * the child exits between the exited-check and waitq_wait enqueue. */
     for (;;) {
+        if (wait_any_child) {
+            child = task_find_child_by_parent(self->task_id, 1, 0);
+            if (child) {
+                break;
+            }
+            if (!task_find_child_by_parent(self->task_id, 0, 0)) {
+                return (uint64_t)RDNX_E_NOTFOUND;
+            }
+            (void)waitq_wait(&self->child_waitq, 100);
+            continue;
+        }
+
         bool child_exited = child->exited ||
                             (child->state == TASK_STATE_ZOMBIE) ||
                             (child->state == TASK_STATE_DEAD);
@@ -401,7 +458,7 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         child->state = TASK_STATE_DEAD;
         task_destroy(child);
     }
-    return pid;
+    return wait_any_child ? child->task_id : pid;
 }
 
 uint64_t unix_proc_fork(void)
@@ -418,7 +475,6 @@ uint64_t unix_proc_fork(void)
     if (!unix_frame_on_thread_stack(self_thread, frame)) {
         return (uint64_t)RDNX_E_GENERIC;
     }
-
     task_t* child = task_create();
     if (!child) {
         return (uint64_t)RDNX_E_NOMEM;
@@ -427,6 +483,8 @@ uint64_t unix_proc_fork(void)
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
     task_set_abi(child, task_get_abi(parent));
+    child->session_id = parent->session_id;
+    child->process_group_id = parent->process_group_id;
     child->tls_fs_base = parent->tls_fs_base;
     child->umask = parent->umask;
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
@@ -453,6 +511,9 @@ uint64_t unix_proc_fork(void)
         task_destroy(child);
         return (uint64_t)RDNX_E_NOMEM;
     }
+    /* Inherit FS.Base so the child's first context-switch sets g_current_tls_fs_base
+     * correctly; without this any IRQ before the child's first syscall clears TLS. */
+    child_thread->tls_fs_base = child->tls_fs_base;
     child_thread->priority = self_thread->priority;
     child_thread->base_priority = self_thread->base_priority;
     child_thread->dyn_priority = self_thread->dyn_priority;

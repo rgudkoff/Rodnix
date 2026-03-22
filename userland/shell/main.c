@@ -131,7 +131,7 @@ int main(int argc, char** argv, char** envp)
             if (cmd_argc < 2) {
                 (void)write_str("sh: exec: usage: exec <path> [args ...]\n");
             } else {
-                if (cmd_run(cmd_argc - 1, &cmd_argv[1], 1) < 0) {
+                if (cmd_exec_replace(cmd_argc - 1, &cmd_argv[1]) < 0) {
                     (void)write_str("sh: exec: ");
                     (void)write_str(cmd_argv[1]);
                     (void)write_str(": not found\n");
@@ -141,26 +141,9 @@ int main(int argc, char** argv, char** envp)
             if (cmd_argc < 2) {
                 (void)write_str("sh: reexec: usage: reexec <path> [args ...]\n");
             } else {
-                char* ex_argv[SH_ARG_MAX + 1];
-                char resolved[SH_PATH_MAX];
-                if (shell_find_executable(cmd_argv[1], resolved, (int)sizeof(resolved)) != 0) {
+                if (cmd_exec_replace(cmd_argc - 1, &cmd_argv[1]) < 0) {
                     (void)write_str("sh: reexec: ");
                     (void)write_str(cmd_argv[1]);
-                    (void)write_str(": not found\n");
-                    continue;
-                }
-                ex_argv[0] = resolved;
-                int ex_argc = 1;
-                for (int i = 2; i < cmd_argc && ex_argc < SH_ARG_MAX; i++) {
-                    ex_argv[ex_argc++] = cmd_argv[i];
-                }
-                ex_argv[ex_argc] = 0;
-                long ret = posix_execve(resolved,
-                                        (const char* const*)ex_argv,
-                                        (const char* const*)environ);
-                if (ret < 0) {
-                    (void)write_str("sh: reexec: ");
-                    (void)write_str(resolved);
                     (void)write_str(": not found\n");
                 }
             }

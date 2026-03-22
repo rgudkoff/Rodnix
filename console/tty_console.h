@@ -29,5 +29,7 @@ uint32_t tty_console_get_lflag(void);
 void tty_console_set_lflag(uint32_t lflag);
 uint8_t tty_console_get_cc(uint32_t idx);
 void tty_console_set_cc(uint32_t idx, uint8_t value);
+uint64_t tty_console_get_fg_pgrp(void);
+void tty_console_set_fg_pgrp(uint64_t pgrp);
 
 #endif /* _RODNIX_COMMON_TTY_CONSOLE_H */

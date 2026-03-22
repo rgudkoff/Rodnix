@@ -1,10 +1,13 @@
 /* Linker script for Rust userland utilities.
  *
- * Extends the common link.ld layout and discards Rust/LLVM metadata sections
- * that are meaningless in a bare-metal, no-unwind environment.
+ * Extends the userland link.ld layout and discards Rust/LLVM metadata
+ * sections that are meaningless in a bare-metal, no-unwind environment.
+ *
+ * Important: include the userland linker script, not the repository-root
+ * kernel linker script.
  */
 
-INCLUDE "../link.ld"
+INCLUDE "link.ld"
 
 SECTIONS
 {

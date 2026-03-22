@@ -805,6 +805,10 @@ RUST_HELLO_RS  = rust/hello/main.rs
 RUST_HELLO_LIB = $(BUILD_DIR)/rust/hello/libhello.a
 RUST_HELLO_ELF = $(BUILD_DIR)/rust_hello.elf
 RUST_HELLO_BIN = $(BIN_DIR)/rust_hello
+RUST_ECHO_RS   = rust/echo/main.rs
+RUST_ECHO_LIB  = $(BUILD_DIR)/rust/echo/librust_echo.a
+RUST_ECHO_ELF  = $(BUILD_DIR)/rust_echo.elf
+RUST_ECHO_BIN  = $(BIN_DIR)/rust_echo
 
 $(RUST_HELLO_LIB): $(RUST_HELLO_RS)
 	@mkdir -p $(dir $@)
@@ -817,17 +821,37 @@ $(RUST_HELLO_LIB): $(RUST_HELLO_RS)
 	    -o $@ \
 	    $<
 
+$(RUST_ECHO_LIB): $(RUST_ECHO_RS)
+	@mkdir -p $(dir $@)
+	$(RUSTC) --edition 2021 \
+	    --target x86_64-unknown-none \
+	    --crate-type staticlib \
+	    --crate-name rust_echo \
+	    -C opt-level=2 \
+	    -C panic=abort \
+	    -o $@ \
+	    $<
+
 $(RUST_HELLO_ELF): $(RUST_HELLO_LIB) $(CRT0_OBJ) $(LIBC_OBJS) rust/link_rust.ld link.ld
 	@mkdir -p $(dir $@)
 	$(LD) -T rust/link_rust.ld -o $@ $(CRT0_OBJ) $(LIBC_OBJS) $(RUST_HELLO_LIB)
+
+$(RUST_ECHO_ELF): $(RUST_ECHO_LIB) $(CRT0_OBJ) $(LIBC_OBJS) rust/link_rust.ld link.ld
+	@mkdir -p $(dir $@)
+	$(LD) -T rust/link_rust.ld -o $@ $(CRT0_OBJ) $(LIBC_OBJS) $(RUST_ECHO_LIB)
 
 $(RUST_HELLO_BIN): $(RUST_HELLO_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@
 
+$(RUST_ECHO_BIN): $(RUST_ECHO_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
 .PHONY: rust-utils
-rust-utils: $(RUST_HELLO_BIN)
+rust-utils: $(RUST_HELLO_BIN) $(RUST_ECHO_BIN)
 
 # ── clean ─────────────────────────────────────────────────────────────────────
 

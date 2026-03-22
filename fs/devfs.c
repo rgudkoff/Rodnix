@@ -135,6 +135,7 @@ static int devfs_mount(const char* source, vfs_node_t** out_root)
 
     static const char* aliases[] = {
         "console",
+        "tty",
         "stdin",
         "stdout",
         "stderr",

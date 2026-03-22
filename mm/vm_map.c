@@ -2,8 +2,10 @@
 #include "vm_pager.h"
 #include "vm_page_ref.h"
 #include "../kernel/arch/paging.h"
+#include "../kernel/arch/interrupt_frame.h"
 #include "../kernel/arch/config.h"
 #include "../lib/heap.h"
+#include "../include/console.h"
 #include "../include/common.h"
 #include "../include/error.h"
 
@@ -558,6 +560,8 @@ int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
         vm_map_entry_t pe = pmap->entries[i];
         vm_map_entry_t* ce = &cmap->entries[cmap->entry_count++];
         *ce = pe;
+        thread_t* cur_thr = thread_get_current();
+        (void)cur_thr;
         if (ce->object) {
             vm_object_ref(ce->object);
         }

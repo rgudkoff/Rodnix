@@ -22,7 +22,8 @@
 #define PASSWD_PATH     "/etc/passwd"
 #define PASSWD_MAX      4096
 #define NAME_MAX_LEN  64
-#define PASS_MAX_LEN  64
+#define PASS_HASH_MAX_LEN 72
+#define PASS_INPUT_MAX_LEN 64
 #define LINE_MAX_LEN  256
 
 static long write_str(const char* s)
@@ -83,6 +84,35 @@ static size_t str_len(const char* s)
     return n;
 }
 
+static ssize_t read_passwd_file(char* buf, size_t bufsz)
+{
+    int fd;
+    size_t off = 0;
+
+    if (!buf || bufsz < 2) {
+        return -1;
+    }
+
+    fd = open(PASSWD_PATH_MNT, O_RDONLY);
+    if (fd < 0) fd = open(PASSWD_PATH, O_RDONLY);
+    if (fd < 0) return -1;
+
+    while (off + 1 < bufsz) {
+        ssize_t n = read(fd, buf + off, bufsz - off - 1);
+        if (n < 0) {
+            close(fd);
+            return -1;
+        }
+        if (n == 0) {
+            break;
+        }
+        off += (size_t)n;
+    }
+    close(fd);
+    buf[off] = '\0';
+    return (ssize_t)off;
+}
+
 /*
  * Rebuild /etc/passwd replacing the password field for `target_user`.
  * new_pass is the plaintext new password.
@@ -97,23 +127,13 @@ static int rewrite_passwd(const char* target_user, const char* new_pass)
     rdnx_pw_hash(new_pass, hashed, sizeof(hashed));
 
     int fd;
-    ssize_t n;
     int found = 0;
 
     /* Read from persistent copy first, fall back to initrd */
-    fd = open(PASSWD_PATH_MNT, O_RDONLY);
-    if (fd < 0) fd = open(PASSWD_PATH, O_RDONLY);
-    if (fd < 0) {
+    if (read_passwd_file(buf, sizeof(buf)) <= 0) {
         write_str("passwd: cannot read /etc/passwd\n");
         return -1;
     }
-    n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) {
-        write_str("passwd: /etc/passwd is empty\n");
-        return -1;
-    }
-    buf[n] = '\0';
 
     /* Walk and rebuild line by line */
     size_t out_len = 0;
@@ -183,7 +203,7 @@ static int rewrite_passwd(const char* target_user, const char* new_pass)
     }
 
     /* Write to persistent ext2 copy; if unavailable, fall back to initrd */
-    fd = open(PASSWD_PATH_MNT, O_WRONLY | O_TRUNC | O_CREAT);
+    fd = open(PASSWD_PATH_MNT, O_WRONLY | O_TRUNC | O_CREAT, 0644);
     if (fd < 0) {
         fd = open(PASSWD_PATH, O_WRONLY | O_TRUNC);
     }
@@ -211,13 +231,7 @@ too_long:
 static int check_current_password(const char* username, const char* password)
 {
     char buf[PASSWD_MAX];
-    int fd = open(PASSWD_PATH_MNT, O_RDONLY);
-    if (fd < 0) fd = open(PASSWD_PATH, O_RDONLY);
-    if (fd < 0) return -1;
-    ssize_t n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) return -1;
-    buf[n] = '\0';
+    if (read_passwd_file(buf, sizeof(buf)) <= 0) return -1;
 
     const char* line = buf;
     while (*line) {
@@ -234,7 +248,7 @@ static int check_current_password(const char* username, const char* password)
         if (scratch[0] && scratch[0] != '#') {
             const char* p = scratch;
             /* username */
-            char f_user[NAME_MAX_LEN], f_pass[PASS_MAX_LEN];
+            char f_user[NAME_MAX_LEN], f_pass[PASS_HASH_MAX_LEN];
             int j = 0;
             while (*p && *p != ':' && j < (int)sizeof(f_user) - 1) f_user[j++] = *p++;
             f_user[j] = '\0';
@@ -260,13 +274,7 @@ static int check_current_password(const char* username, const char* password)
 static int uid_to_username(uint32_t uid, char* out, size_t outsz)
 {
     char buf[PASSWD_MAX];
-    int fd = open(PASSWD_PATH_MNT, O_RDONLY);
-    if (fd < 0) fd = open(PASSWD_PATH, O_RDONLY);
-    if (fd < 0) return 0;
-    ssize_t n = read(fd, buf, sizeof(buf) - 1);
-    close(fd);
-    if (n <= 0) return 0;
-    buf[n] = '\0';
+    if (read_passwd_file(buf, sizeof(buf)) <= 0) return 0;
 
     const char* line = buf;
     while (*line) {
@@ -282,7 +290,7 @@ static int uid_to_username(uint32_t uid, char* out, size_t outsz)
 
         if (scratch[0] && scratch[0] != '#') {
             const char* p = scratch;
-            char f_user[NAME_MAX_LEN], f_pass[PASS_MAX_LEN];
+            char f_user[NAME_MAX_LEN], f_pass[PASS_HASH_MAX_LEN];
             char f_uid_s[16];
             int j;
             j = 0;
@@ -341,9 +349,9 @@ int main(int argc, char* argv[])
     write_str(target);
     write_str(".\n");
 
-    char cur_pass[PASS_MAX_LEN];
-    char new_pass1[PASS_MAX_LEN];
-    char new_pass2[PASS_MAX_LEN];
+    char cur_pass[PASS_INPUT_MAX_LEN];
+    char new_pass1[PASS_INPUT_MAX_LEN];
+    char new_pass2[PASS_INPUT_MAX_LEN];
 
     /* Non-root must verify current password */
     if (!is_root) {

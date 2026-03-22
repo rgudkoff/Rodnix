@@ -239,12 +239,30 @@ static int cmd_wait_pid(long pid, int verbose)
         }
         return -2;
     }
+    if (WIFEXITED(status)) {
+        int exit_status = WEXITSTATUS(status);
+        if (verbose) {
+            (void)write_str("run: exit=");
+            write_u64((uint64_t)(uint32_t)exit_status);
+            (void)write_str("\n");
+        }
+        return exit_status;
+    }
+    if (WIFSIGNALED(status)) {
+        int sig = WTERMSIG(status);
+        if (verbose) {
+            (void)write_str("run: signal=");
+            write_u64((uint64_t)(uint32_t)sig);
+            (void)write_str("\n");
+        }
+        return 128 + sig;
+    }
     if (verbose) {
-        (void)write_str("run: exit=");
+        (void)write_str("run: status=");
         write_u64((uint64_t)(uint32_t)status);
         (void)write_str("\n");
     }
-    return (status == 0) ? 0 : 1;
+    return 127;
 }
 
 static int cmd_run_with_redir(sh_exec_spec_t* spec, int verbose)
@@ -281,7 +299,7 @@ static int cmd_run_with_redir(sh_exec_spec_t* spec, int verbose)
     }
     {
         int wr = cmd_wait_pid(pid, verbose);
-        return (wr == -2) ? -1 : 0;
+        return (wr == -2) ? -1 : wr;
     }
 }
 
@@ -357,6 +375,8 @@ out:
         int right_rc = cmd_wait_pid(right_pid, 0);
         if (right_rc == -2) {
             rc = -1;
+        } else {
+            rc = right_rc;
         }
     }
 
@@ -477,8 +497,35 @@ int cmd_run(int argc, char** argv, int verbose)
     }
     {
         int wr = cmd_wait_pid(pid, verbose);
-        return (wr == -2) ? -1 : 0;
+        return (wr == -2) ? -1 : wr;
     }
+}
+
+int cmd_exec_replace(int argc, char** argv)
+{
+    char* ex_argv[SH_ARG_MAX + 1];
+    char resolved[SH_PATH_MAX];
+    int ex_argc = 0;
+
+    if (!argv || argc < 1 || !argv[0] || argv[0][0] == '\0') {
+        return -1;
+    }
+    if (shell_find_executable(argv[0], resolved, (int)sizeof(resolved)) != 0) {
+        return -1;
+    }
+
+    ex_argv[ex_argc++] = resolved;
+    for (int i = 1; i < argc && ex_argc < SH_ARG_MAX; i++) {
+        ex_argv[ex_argc++] = argv[i];
+    }
+    ex_argv[ex_argc] = 0;
+
+    if (posix_execve(resolved,
+                     (const char* const*)ex_argv,
+                     (const char* const*)environ) < 0) {
+        return -1;
+    }
+    return 0;
 }
 
 int cmd_cd(int argc, char** argv)
@@ -513,6 +560,8 @@ int cmd_autorun(int argc, char** argv)
         return -1;
     }
     /* Spawn succeeded: do not misreport wait-path issues as "not found". */
-    (void)cmd_wait_pid(pid, 0);
-    return 0;
+    {
+        int wr = cmd_wait_pid(pid, 0);
+        return (wr == -2) ? -1 : wr;
+    }
 }

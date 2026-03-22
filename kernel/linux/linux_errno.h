@@ -4,8 +4,10 @@
 /* Minimal guest ABI errno subset for syscall return values. */
 #define LINUX_EPERM 1
 #define LINUX_ENOENT 2
+#define LINUX_ESRCH 3
 #define LINUX_EIO 5
 #define LINUX_EBADF 9
+#define LINUX_ECHILD 10
 #define LINUX_EAGAIN 11
 #define LINUX_ENOMEM 12
 #define LINUX_EACCES 13
@@ -19,6 +21,7 @@
 #define LINUX_ENOSPC 28
 #define LINUX_ESPIPE 29
 #define LINUX_EROFS 30
+#define LINUX_ENOTTY 25
 #define LINUX_ENOSYS 38
 #define LINUX_ENOTEMPTY 39
 #define LINUX_ETIMEDOUT 110
