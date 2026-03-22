@@ -83,6 +83,7 @@ KMODCTL_SRCS = bin/kmodctl.c
 SLEEP_SRCS = bin/sleep.c
 SIGTEST_SRCS = bin/sigtest.c
 STTY_SRCS = bin/stty.c
+TTYSIZE_SRCS = bin/ttysize.c
 TIMECHECK_SRCS = bin/timecheck.c
 DATE_SRCS = bin/date.c
 HWCLOCK_SRCS = bin/hwclock.c
@@ -118,6 +119,7 @@ PASSWD_SRCS = bin/passwd.c
 ID_SRCS     = bin/id.c
 GROUPS_SRCS = bin/groups.c
 WHOAMI_SRCS = bin/whoami.c
+SVSTAT_SRCS = bin/svstat.c
 PS_SRCS    = bin/ps.c
 TOP_SRCS   = bin/top.c
 VI_SRCS     = bin/vi.c
@@ -162,6 +164,7 @@ KMODCTL_OBJS = $(addprefix $(BUILD_DIR)/, $(KMODCTL_SRCS:.c=.o)) $(CRT0_OBJ) $(L
 SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+TTYSIZE_OBJS = $(addprefix $(BUILD_DIR)/, $(TTYSIZE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 DATE_OBJS = $(addprefix $(BUILD_DIR)/, $(DATE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 HWCLOCK_OBJS = $(addprefix $(BUILD_DIR)/, $(HWCLOCK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -197,6 +200,7 @@ PASSWD_OBJS = $(addprefix $(BUILD_DIR)/, $(PASSWD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIB
 ID_OBJS     = $(addprefix $(BUILD_DIR)/, $(ID_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 GROUPS_OBJS = $(addprefix $(BUILD_DIR)/, $(GROUPS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 WHOAMI_OBJS = $(addprefix $(BUILD_DIR)/, $(WHOAMI_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SVSTAT_OBJS = $(addprefix $(BUILD_DIR)/, $(SVSTAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 PS_OBJS    = $(addprefix $(BUILD_DIR)/, $(PS_SRCS:.c=.o))    $(CRT0_OBJ) $(LIBC_OBJS)
 TOP_OBJS   = $(addprefix $(BUILD_DIR)/, $(TOP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 VI_OBJS     = $(addprefix $(BUILD_DIR)/, $(VI_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -222,6 +226,7 @@ KMODCTL_ELF = $(BUILD_DIR)/kmodctl.elf
 SLEEP_ELF = $(BUILD_DIR)/sleep.elf
 SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
 STTY_ELF = $(BUILD_DIR)/stty.elf
+TTYSIZE_ELF = $(BUILD_DIR)/ttysize.elf
 TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
 DATE_ELF = $(BUILD_DIR)/date.elf
 HWCLOCK_ELF = $(BUILD_DIR)/hwclock.elf
@@ -257,6 +262,7 @@ PASSWD_ELF = $(BUILD_DIR)/passwd.elf
 ID_ELF     = $(BUILD_DIR)/id.elf
 GROUPS_ELF = $(BUILD_DIR)/groups.elf
 WHOAMI_ELF = $(BUILD_DIR)/whoami.elf
+SVSTAT_ELF = $(BUILD_DIR)/svstat.elf
 PS_ELF     = $(BUILD_DIR)/ps.elf
 TOP_ELF    = $(BUILD_DIR)/top.elf
 VI_ELF = $(BUILD_DIR)/vi.elf
@@ -267,6 +273,7 @@ PASSWD_BIN = $(BIN_DIR)/passwd
 ID_BIN     = $(BIN_DIR)/id
 GROUPS_BIN = $(BIN_DIR)/groups
 WHOAMI_BIN = $(BIN_DIR)/whoami
+SVSTAT_BIN = $(BIN_DIR)/svstat
 PS_BIN     = $(BIN_DIR)/ps
 TOP_BIN    = $(BIN_DIR)/top
 VI_BIN = $(BIN_DIR)/vi
@@ -293,6 +300,7 @@ DEMO_KO_OBJ = $(BUILD_DIR)/modules/demo_echo.o
 DEMO_KO = $(MODULES_DIR)/demo.ko
 SIGTEST_BIN = $(BIN_DIR)/sigtest
 STTY_BIN = $(BIN_DIR)/stty
+TTYSIZE_BIN = $(BIN_DIR)/ttysize
 TIMECHECK_BIN = $(BIN_DIR)/timecheck
 DATE_BIN = $(BIN_DIR)/date
 HWCLOCK_BIN = $(BIN_DIR)/hwclock
@@ -327,7 +335,7 @@ PTHREAD_TEST_BIN = $(BIN_DIR)/pthread_test
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TTYSIZE_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(SVSTAT_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -434,6 +442,10 @@ $(SIGTEST_ELF): $(SIGTEST_OBJS) link.ld
 $(STTY_ELF): $(STTY_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(STTY_OBJS)
+
+$(TTYSIZE_ELF): $(TTYSIZE_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(TTYSIZE_OBJS)
 
 $(TIMECHECK_ELF): $(TIMECHECK_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -571,6 +583,10 @@ $(WHOAMI_ELF): $(WHOAMI_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(WHOAMI_OBJS)
 
+$(SVSTAT_ELF): $(SVSTAT_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SVSTAT_OBJS)
+
 $(PS_ELF): $(PS_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(PS_OBJS)
@@ -691,6 +707,11 @@ $(SIGTEST_BIN): $(SIGTEST_ELF)
 	chmod 0755 $@
 
 $(STTY_BIN): $(STTY_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(TTYSIZE_BIN): $(TTYSIZE_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@
@@ -861,6 +882,11 @@ $(GROUPS_BIN): $(GROUPS_ELF)
 	chmod 0755 $@
 
 $(WHOAMI_BIN): $(WHOAMI_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(SVSTAT_BIN): $(SVSTAT_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@

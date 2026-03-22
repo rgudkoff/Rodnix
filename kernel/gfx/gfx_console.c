@@ -174,9 +174,14 @@ typedef enum { ANSI_NORMAL = 0, ANSI_ESC, ANSI_CSI } ansi_state_t;
 static ansi_state_t g_ansi_state  = ANSI_NORMAL;
 static uint16_t     g_ansi_params[8];
 static uint8_t      g_ansi_nparams = 0;
+static bool         g_ansi_private = false;
+static bool         g_ansi_has_space = false;
 
 /* Cursor drawn via XOR (non-destructive, self-inverse) */
 static bool         g_cursor_drawn = false;
+static bool         g_cursor_visible = true;
+static bool         g_cursor_blink_enabled = true;
+static uint64_t     g_blink_toggle_count = 0;
 
 /* Blink state: inhibit during putc/clear/set_cursor to avoid XOR glitches */
 static volatile bool g_blink_inhibit = false;
@@ -259,7 +264,9 @@ static void scroll_up(void)
 }
 
 /* =========================================================================
- * Cursor — non-destructive XOR underline (bottom 2 scanlines)
+ * Cursor — non-destructive XOR block
+ * A full-cell invert is much more visible than a 2-scanline underline and
+ * makes blinking obvious in framebuffer mode.
  * ======================================================================= */
 
 static void cursor_toggle(void)
@@ -270,7 +277,7 @@ static void cursor_toggle(void)
     uint32_t  pitch = g_disp->mode.pitch;
     uint32_t  px0   = g_cur_col * CHAR_W;
     uint32_t  py0   = g_cur_row * CHAR_H;
-    for (uint32_t r = CHAR_H - 2u; r < CHAR_H; r++) {
+    for (uint32_t r = 0u; r < CHAR_H; r++) {
         uint32_t *line = (uint32_t *)(fb + (uint64_t)(py0 + r) * pitch);
         for (uint32_t bit = 0u; bit < CHAR_W; bit++) {
             line[px0 + bit] ^= 0x00FFFFFFu;
@@ -280,7 +287,10 @@ static void cursor_toggle(void)
 
 static void cursor_show(void)
 {
-    if (!g_cursor_drawn) { cursor_toggle(); g_cursor_drawn = true; }
+    if (g_cursor_visible && !g_cursor_drawn) {
+        cursor_toggle();
+        g_cursor_drawn = true;
+    }
 }
 
 static void cursor_hide(void)
@@ -323,6 +333,41 @@ static void ansi_dispatch(char cmd)
 {
     uint16_t p0 = (g_ansi_nparams > 0u) ? g_ansi_params[0] : 0u;
     uint16_t p1 = (g_ansi_nparams > 1u) ? g_ansi_params[1] : 0u;
+    if (g_ansi_private) {
+        if (cmd == 'h' || cmd == 'l') {
+            for (uint8_t i = 0u; i < g_ansi_nparams; i++) {
+                if (g_ansi_params[i] == 12u) {
+                    g_cursor_blink_enabled = (cmd == 'h');
+                    if (cmd == 'h') {
+                        g_blink_counter = 0u;
+                    } else if (!g_cursor_drawn && g_cursor_visible) {
+                        cursor_show();
+                    }
+                } else if (g_ansi_params[i] == 25u) {
+                    g_cursor_visible = (cmd == 'h');
+                    if (!g_cursor_visible) {
+                        cursor_hide();
+                    }
+                }
+            }
+            if (cmd == 'h' && g_cursor_visible && !g_cursor_drawn) {
+                cursor_show();
+            }
+        }
+        return;
+    }
+    if (g_ansi_has_space && cmd == 'q') {
+        if (p0 == 0u || p0 == 1u || p0 == 3u || p0 == 5u) {
+            g_cursor_blink_enabled = true;
+            g_blink_counter = 0u;
+        } else if (p0 == 2u || p0 == 4u || p0 == 6u) {
+            g_cursor_blink_enabled = false;
+            if (!g_cursor_drawn && g_cursor_visible) {
+                cursor_show();
+            }
+        }
+        return;
+    }
     switch (cmd) {
     case 'A': { /* cursor up */
         uint16_t n = p0 ? p0 : 1u;
@@ -414,7 +459,11 @@ void gfx_console_attach(gfx_display_t *disp)
     g_bold         = false;
     g_ansi_state   = ANSI_NORMAL;
     g_ansi_nparams = 0u;
+    g_ansi_private = false;
+    g_ansi_has_space = false;
     g_cursor_drawn = false;
+    g_cursor_visible = true;
+    g_cursor_blink_enabled = true;
 
     /* Initialise the cell buffer to blank space with default colors. */
     for (uint32_t r = 0u; r < GFX_CELL_ROWS; r++) {
@@ -478,15 +527,52 @@ void gfx_console_set_cursor(uint32_t col, uint32_t row)
     g_blink_inhibit = false;
 }
 
+void gfx_console_get_cursor(uint32_t* row, uint32_t* col)
+{
+    if (row) {
+        *row = g_cur_row;
+    }
+    if (col) {
+        *col = g_cur_col;
+    }
+}
+
+void gfx_console_get_cursor_state(bool* active,
+                                  bool* visible,
+                                  bool* drawn,
+                                  bool* blink_enabled)
+{
+    if (active) {
+        *active = gfx_console_active();
+    }
+    if (visible) {
+        *visible = g_cursor_visible;
+    }
+    if (drawn) {
+        *drawn = g_cursor_drawn;
+    }
+    if (blink_enabled) {
+        *blink_enabled = g_cursor_blink_enabled;
+    }
+}
+
+uint64_t gfx_console_get_blink_toggle_count(void)
+{
+    return g_blink_toggle_count;
+}
+
 /* Called from console_tick() at a rate set by gfx_console_set_tick_hz(). */
 void gfx_console_blink_tick(void)
 {
     if (g_blink_inhibit) return;
     if (!gfx_console_active()) return;
+    if (!g_cursor_visible) return;
+    if (!g_cursor_blink_enabled) return;
     if (++g_blink_counter < g_blink_period) return;
     g_blink_counter = 0u;
     cursor_toggle();
     g_cursor_drawn = !g_cursor_drawn;
+    g_blink_toggle_count++;
 }
 
 /* Called by the scheduler when the console_tick() call rate is known.
@@ -513,12 +599,24 @@ void gfx_console_putc(char c)
             g_ansi_state   = ANSI_CSI;
             g_ansi_nparams = 0u;
             g_ansi_params[0] = 0u;
+            g_ansi_private = false;
+            g_ansi_has_space = false;
         }
         g_blink_inhibit = false;
         return; /* discard ESC or ESC+[ opener */
     }
 
     if (g_ansi_state == ANSI_CSI) {
+        if (c == '?' && g_ansi_nparams == 0u) {
+            g_ansi_private = true;
+            g_blink_inhibit = false;
+            return;
+        }
+        if (c == ' ') {
+            g_ansi_has_space = true;
+            g_blink_inhibit = false;
+            return;
+        }
         if (uc >= '0' && uc <= '9') {
             if (g_ansi_nparams == 0u) g_ansi_nparams = 1u;
             g_ansi_params[g_ansi_nparams - 1u] =
@@ -538,6 +636,8 @@ void gfx_console_putc(char c)
         cursor_hide();
         ansi_dispatch(c);
         g_ansi_state = ANSI_NORMAL;
+        g_ansi_private = false;
+        g_ansi_has_space = false;
         cursor_show();
         g_blink_inhibit = false;
         return;

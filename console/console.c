@@ -4,6 +4,8 @@
  */
 
 #include "../include/console.h"
+#include "../include/gfx_console.h"
+#include "tty_console.h"
 #include "../trace/startup_trace.h"
 #include "../trace/bootlog.h"
 #include <stdarg.h>
@@ -36,6 +38,12 @@ static uint8_t vga_color = 0x0F; /* White on black */
 static volatile bool kputs_in_progress = false; /* Prevent recursive calls from exception handlers */
 static void (*g_gfx_putc_fn)(char) = NULL;
 static void (*g_gfx_blink_fn)(void) = NULL;
+static bool cursor_visible = true;
+static bool cursor_blink_enabled = true;
+static uint32_t cursor_blink_counter = 0;
+static uint32_t cursor_blink_period = 50;
+static uint64_t cursor_blink_toggle_count = 0;
+static void set_cursor_visible(bool visible);
 
 void console_set_gfx_putc(void (*fn)(char c))
 {
@@ -49,9 +57,36 @@ void console_set_gfx_blink(void (*fn)(void))
 
 void console_tick(void)
 {
+    if (cursor_blink_enabled) {
+        if (++cursor_blink_counter >= cursor_blink_period) {
+            cursor_blink_counter = 0;
+            cursor_visible = !cursor_visible;
+            set_cursor_visible(cursor_visible);
+            cursor_blink_toggle_count++;
+        }
+    }
     if (g_gfx_blink_fn) {
         g_gfx_blink_fn();
     }
+}
+
+void console_get_cursor_position(uint32_t* row, uint32_t* col)
+{
+    if (gfx_console_active()) {
+        gfx_console_get_cursor(row, col);
+        return;
+    }
+    if (row) {
+        *row = vga_row;
+    }
+    if (col) {
+        *col = vga_col;
+    }
+}
+
+uint64_t console_get_vga_blink_toggle_count(void)
+{
+    return cursor_blink_toggle_count;
 }
 static bool log_prefix_enabled = true;
 static bool log_at_line_start = true;
@@ -66,6 +101,8 @@ typedef enum {
 static ansi_state_t ansi_state = ANSI_STATE_NORMAL;
 static char ansi_csi_buf[16];
 static uint8_t ansi_csi_len = 0;
+static bool ansi_csi_private = false;
+static bool ansi_csi_has_space = false;
 static const char* uptime_source_name = "unknown";
 static uint64_t uptime_last_us = 0;
 static uint64_t realtime_base_us = 0;
@@ -660,6 +697,29 @@ static void update_cursor(uint8_t row, uint8_t col)
     __asm__ volatile ("outb %%al, %1" : : "a"(pos_high), "Nd"((uint16_t)0x3D5));
 }
 
+static void set_cursor_visible(bool visible)
+{
+    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)0x0A), "Nd"((uint16_t)0x3D4));
+    uint8_t start = inb(0x3D5);
+    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)0x0B), "Nd"((uint16_t)0x3D4));
+    uint8_t end = inb(0x3D5);
+
+    start = (uint8_t)((start & 0xE0u) | 0u);
+    end = (uint8_t)((end & 0xE0u) | 15u);
+
+    if (visible) {
+        start &= (uint8_t)~0x20u;
+    } else {
+        start |= 0x20u;
+    }
+
+    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)0x0A), "Nd"((uint16_t)0x3D4));
+    __asm__ volatile ("outb %%al, %1" : : "a"(start), "Nd"((uint16_t)0x3D5));
+    __asm__ volatile ("outb %%al, %1" : : "a"((uint8_t)0x0B), "Nd"((uint16_t)0x3D4));
+    __asm__ volatile ("outb %%al, %1" : : "a"(end), "Nd"((uint16_t)0x3D5));
+    cursor_visible = visible;
+}
+
 static void console_set_cursor(uint8_t row, uint8_t col)
 {
     if (row >= VGA_HEIGHT) {
@@ -753,6 +813,36 @@ static int ansi_parse_row_col(const char* csi, int* out_row, int* out_col)
     return 0;
 }
 
+static bool ansi_private_has_param(const char* csi, int value)
+{
+    if (!csi) {
+        return false;
+    }
+
+    int cur = 0;
+    int have_digits = 0;
+    for (size_t i = 0;; i++) {
+        char ch = csi[i];
+        if (ch >= '0' && ch <= '9') {
+            have_digits = 1;
+            cur = (cur * 10) + (ch - '0');
+        } else if (ch == ';' || ch == '\0') {
+            if (have_digits && cur == value) {
+                return true;
+            }
+            if (ch == '\0') {
+                break;
+            }
+            cur = 0;
+            have_digits = 0;
+        } else {
+            return false;
+        }
+    }
+
+    return false;
+}
+
 static bool console_handle_ansi_char(char c)
 {
     if (ansi_state == ANSI_STATE_NORMAL) {
@@ -768,6 +858,8 @@ static bool console_handle_ansi_char(char c)
             ansi_state = ANSI_STATE_CSI;
             ansi_csi_len = 0;
             ansi_csi_buf[0] = '\0';
+            ansi_csi_private = false;
+            ansi_csi_has_space = false;
             return true;
         }
         ansi_state = ANSI_STATE_NORMAL;
@@ -775,6 +867,16 @@ static bool console_handle_ansi_char(char c)
     }
 
     if (ansi_state == ANSI_STATE_CSI) {
+        if (c == '?' && ansi_csi_len == 0) {
+            ansi_csi_private = true;
+            return true;
+        }
+
+        if (c == ' ') {
+            ansi_csi_has_space = true;
+            return true;
+        }
+
         if ((c >= '0' && c <= '9') || c == ';') {
             if ((size_t)(ansi_csi_len + 1) < sizeof(ansi_csi_buf)) {
                 ansi_csi_buf[ansi_csi_len++] = c;
@@ -783,7 +885,42 @@ static bool console_handle_ansi_char(char c)
             return true;
         }
 
-        if (c == 'J') {
+        if (ansi_csi_private) {
+            if (c == 'h' || c == 'l') {
+                bool want_blink = ansi_private_has_param(ansi_csi_buf, 12);
+                bool want_show  = ansi_private_has_param(ansi_csi_buf, 25);
+
+                if (want_blink) {
+                    cursor_blink_enabled = (c == 'h');
+                    cursor_blink_counter = 0;
+                }
+                if (want_show) {
+                    set_cursor_visible(c == 'h');
+                } else if (want_blink && c == 'h' && !cursor_visible) {
+                    set_cursor_visible(true);
+                }
+            }
+        } else if (ansi_csi_has_space && c == 'q') {
+            if (ansi_csi_buf[0] == '\0' ||
+                (ansi_csi_buf[0] == '0' && ansi_csi_buf[1] == '\0') ||
+                (ansi_csi_buf[0] == '1' && ansi_csi_buf[1] == '\0') ||
+                (ansi_csi_buf[0] == '3' && ansi_csi_buf[1] == '\0') ||
+                (ansi_csi_buf[0] == '5' && ansi_csi_buf[1] == '\0')) {
+                cursor_blink_enabled = true;
+                cursor_blink_counter = 0;
+                if (!cursor_visible) {
+                    set_cursor_visible(true);
+                }
+            } else if ((ansi_csi_buf[0] == '2' && ansi_csi_buf[1] == '\0') ||
+                       (ansi_csi_buf[0] == '4' && ansi_csi_buf[1] == '\0') ||
+                       (ansi_csi_buf[0] == '6' && ansi_csi_buf[1] == '\0')) {
+                cursor_blink_enabled = false;
+                cursor_blink_counter = 0;
+                if (!cursor_visible) {
+                    set_cursor_visible(true);
+                }
+            }
+        } else if (c == 'J') {
             /* ESC[2J - clear entire screen and home cursor */
             if (ansi_csi_buf[0] == '2' && ansi_csi_buf[1] == '\0') {
                 console_clear();
@@ -802,6 +939,8 @@ static bool console_handle_ansi_char(char c)
         ansi_state = ANSI_STATE_NORMAL;
         ansi_csi_len = 0;
         ansi_csi_buf[0] = '\0';
+        ansi_csi_private = false;
+        ansi_csi_has_space = false;
         return true;
     }
 
@@ -817,6 +956,9 @@ void console_init(void)
 
     serial_init();
     /* Initialize cursor position */
+    cursor_blink_enabled = true;
+    cursor_blink_counter = 0;
+    set_cursor_visible(true);
     update_cursor(vga_row, vga_col);
 }
 

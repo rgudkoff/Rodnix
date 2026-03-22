@@ -31,6 +31,12 @@ void gfx_console_clear(void);
 
 /** Move cursor to (col, row) (0-based). */
 void gfx_console_set_cursor(uint32_t col, uint32_t row);
+void gfx_console_get_cursor(uint32_t* row, uint32_t* col);
+void gfx_console_get_cursor_state(bool* active,
+                                  bool* visible,
+                                  bool* drawn,
+                                  bool* blink_enabled);
+uint64_t gfx_console_get_blink_toggle_count(void);
 
 /** Inform the console how fast blink_tick() will be called (Hz).
  *  Must be called whenever the console_tick rate changes. */

@@ -8,6 +8,7 @@
 #define RDNX_TTY_IOCTL_GETATTR 0x7402u
 #define RDNX_TTY_IOCTL_SETATTR 0x7403u
 #define RDNX_TTY_IOCTL_GETWINSZ 0x7404u
+#define RDNX_TTY_IOCTL_SETWINSZ 0x7405u
 
 struct winsize {
     unsigned short ws_row;

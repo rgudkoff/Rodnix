@@ -607,3 +607,25 @@ size_t input_read_line(char *buf, size_t n)
     buf[n - 1] = '\0';
     return pos;
 }
+
+int input_inject_char(uint8_t c)
+{
+    spinlock_lock(&input_state.lock);
+    int rc = input_buffer_put(c);
+    spinlock_unlock(&input_state.lock);
+    return rc;
+}
+
+int input_inject_bytes(const char *buf, size_t n)
+{
+    if (!buf) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        if (input_inject_char((uint8_t)buf[i]) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
