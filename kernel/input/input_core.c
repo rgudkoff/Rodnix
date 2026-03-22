@@ -93,6 +93,28 @@ static bool __attribute__((unused)) serial_has_char(void)
 #define KEY_BACKSPACE        0x0E
 #define KEY_TAB              0x0F
 #define KEY_ESC              0x01
+#define KEY_F1               0x3B
+#define KEY_F2               0x3C
+#define KEY_F3               0x3D
+#define KEY_F4               0x3E
+#define KEY_F5               0x3F
+#define KEY_F6               0x40
+#define KEY_F7               0x41
+#define KEY_F8               0x42
+#define KEY_F9               0x43
+#define KEY_F10              0x44
+#define KEY_F11              0x57
+#define KEY_F12              0x58
+#define KEY_HOME            0x47
+#define KEY_UP              0x48
+#define KEY_PAGEUP          0x49
+#define KEY_LEFT            0x4B
+#define KEY_RIGHT           0x4D
+#define KEY_END             0x4F
+#define KEY_DOWN            0x50
+#define KEY_PAGEDOWN        0x51
+#define KEY_INSERT          0x52
+#define KEY_DELETE          0x53
 
 /* ============================================================================
  * InputCore State
@@ -197,6 +219,230 @@ static int input_buffer_put(uint8_t c)
     input_state.buffer_count++;
     
     return 0;
+}
+
+static void input_emit_char_locked(uint8_t c)
+{
+    (void)input_buffer_put(c);
+}
+
+static void input_emit_bytes_locked(const char* s)
+{
+    if (!s) {
+        return;
+    }
+    for (size_t i = 0; s[i] != '\0'; i++) {
+        input_emit_char_locked((uint8_t)s[i]);
+    }
+}
+
+static int input_modifier_param(void)
+{
+    return 1 +
+           (input_state.shift_pressed ? 1 : 0) +
+           (input_state.alt_pressed ? 2 : 0) +
+           (input_state.ctrl_pressed ? 4 : 0);
+}
+
+static void input_emit_csi_final_locked(char final_ch)
+{
+    char seq[16];
+    int mod = input_modifier_param();
+
+    if (mod == 1) {
+        seq[0] = '\x1B';
+        seq[1] = '[';
+        seq[2] = final_ch;
+        seq[3] = '\0';
+    } else {
+        seq[0] = '\x1B';
+        seq[1] = '[';
+        seq[2] = '1';
+        seq[3] = ';';
+        seq[4] = (char)('0' + mod);
+        seq[5] = final_ch;
+        seq[6] = '\0';
+    }
+    input_emit_bytes_locked(seq);
+}
+
+static void input_emit_csi_tilde_locked(int code)
+{
+    char seq[20];
+    int mod = input_modifier_param();
+    int pos = 0;
+
+    seq[pos++] = '\x1B';
+    seq[pos++] = '[';
+    if (code >= 10) {
+        seq[pos++] = (char)('0' + (code / 10));
+    }
+    seq[pos++] = (char)('0' + (code % 10));
+    if (mod != 1) {
+        seq[pos++] = ';';
+        seq[pos++] = (char)('0' + mod);
+    }
+    seq[pos++] = '~';
+    seq[pos] = '\0';
+    input_emit_bytes_locked(seq);
+}
+
+static void input_emit_ss3_locked(char final_ch)
+{
+    char seq[4];
+    seq[0] = '\x1B';
+    seq[1] = 'O';
+    seq[2] = final_ch;
+    seq[3] = '\0';
+    input_emit_bytes_locked(seq);
+}
+
+static void input_emit_fn_locked(char final_ch, int tilde_code)
+{
+    int mod = input_modifier_param();
+
+    if (tilde_code > 0) {
+        input_emit_csi_tilde_locked(tilde_code);
+        return;
+    }
+
+    if (mod == 1) {
+        input_emit_ss3_locked(final_ch);
+        return;
+    }
+
+    {
+        char seq[16];
+        seq[0] = '\x1B';
+        seq[1] = '[';
+        seq[2] = '1';
+        seq[3] = ';';
+        seq[4] = (char)('0' + mod);
+        seq[5] = final_ch;
+        seq[6] = '\0';
+        input_emit_bytes_locked(seq);
+    }
+}
+
+static bool input_handle_function_key_locked(uint8_t scancode, bool pressed)
+{
+    if (!pressed) {
+        return false;
+    }
+
+    if (!input_state.extended) {
+        switch (scancode) {
+            case KEY_F1:
+                input_emit_fn_locked('P', 0);
+                return true;
+            case KEY_F2:
+                input_emit_fn_locked('Q', 0);
+                return true;
+            case KEY_F3:
+                input_emit_fn_locked('R', 0);
+                return true;
+            case KEY_F4:
+                input_emit_fn_locked('S', 0);
+                return true;
+            case KEY_F5:
+                input_emit_fn_locked('\0', 15);
+                return true;
+            case KEY_F6:
+                input_emit_fn_locked('\0', 17);
+                return true;
+            case KEY_F7:
+                input_emit_fn_locked('\0', 18);
+                return true;
+            case KEY_F8:
+                input_emit_fn_locked('\0', 19);
+                return true;
+            case KEY_F9:
+                input_emit_fn_locked('\0', 20);
+                return true;
+            case KEY_F10:
+                input_emit_fn_locked('\0', 21);
+                return true;
+            case KEY_F11:
+                input_emit_fn_locked('\0', 23);
+                return true;
+            case KEY_F12:
+                input_emit_fn_locked('\0', 24);
+                return true;
+            default:
+                break;
+        }
+        if (scancode == KEY_TAB && input_state.shift_pressed) {
+            input_emit_bytes_locked("\x1B[Z");
+            return true;
+        }
+        return false;
+    }
+
+    switch (scancode) {
+        case KEY_UP:
+            input_emit_csi_final_locked('A');
+            return true;
+        case KEY_DOWN:
+            input_emit_csi_final_locked('B');
+            return true;
+        case KEY_RIGHT:
+            input_emit_csi_final_locked('C');
+            return true;
+        case KEY_LEFT:
+            input_emit_csi_final_locked('D');
+            return true;
+        case KEY_HOME:
+            input_emit_csi_final_locked('H');
+            return true;
+        case KEY_END:
+            input_emit_csi_final_locked('F');
+            return true;
+        case KEY_INSERT:
+            input_emit_csi_tilde_locked(2);
+            return true;
+        case KEY_DELETE:
+            input_emit_csi_tilde_locked(3);
+            return true;
+        case KEY_PAGEUP:
+            input_emit_csi_tilde_locked(5);
+            return true;
+        case KEY_PAGEDOWN:
+            input_emit_csi_tilde_locked(6);
+            return true;
+        default:
+            return false;
+    }
+}
+
+static char input_apply_ctrl_combo(char c)
+{
+    if (c >= 'a' && c <= 'z') {
+        return (char)(c - 'a' + 1);
+    }
+    if (c >= 'A' && c <= 'Z') {
+        return (char)(c - 'A' + 1);
+    }
+
+    switch ((unsigned char)c) {
+        case ' ': return 0x00; /* Ctrl-Space */
+        case '2': return 0x00; /* Ctrl-2 / Ctrl-@ */
+        case '@': return 0x00;
+        case '[': return 0x1B;
+        case '3': return 0x1B; /* common alias for ESC */
+        case '\\': return 0x1C;
+        case '4': return 0x1C;
+        case ']': return 0x1D;
+        case '5': return 0x1D;
+        case '^': return 0x1E;
+        case '6': return 0x1E;
+        case '_': return 0x1F;
+        case '/': return 0x1F;
+        case '7': return 0x1F;
+        case '-': return 0x1F;
+        case '?': return 0x7F;
+        case '8': return 0x7F;
+        default:  return c;
+    }
 }
 
 /**
@@ -309,6 +555,12 @@ static char input_translate_scancode(uint8_t scancode, bool pressed)
             /* Convert to lowercase: c - 'A' + 'a' (no division) */
             c = c - 'A' + 'a';
         }
+
+        /* Unix-style control translation so TTY special chars and generic
+         * control combinations behave like a normal terminal. */
+        if (input_state.ctrl_pressed) {
+            c = input_apply_ctrl_combo(c);
+        }
         
         return c;
     }
@@ -374,13 +626,24 @@ void input_push_scancode(uint16_t scancode, bool pressed)
     
     /* Lock for thread safety (non-IRQ context) */
     spinlock_lock(&input_state.lock);
-    
+
+    if (input_handle_function_key_locked((uint8_t)scancode, pressed)) {
+        input_state.extended = false;
+        spinlock_unlock(&input_state.lock);
+        return;
+    }
+
     /* Translate scan code to character */
     char c = input_translate_scancode((uint8_t)scancode, pressed);
     
-    /* If we got a character, add it to buffer */
+    /* If we got a character, add it to buffer.
+     * Treat Alt as Meta and prefix ESC so combinations like Alt+X arrive as
+     * standard terminal escape-prefixed input. */
     if (c != 0) {
-        input_buffer_put((uint8_t)c);
+        if (input_state.alt_pressed) {
+            input_emit_char_locked(0x1B);
+        }
+        input_emit_char_locked((uint8_t)c);
     }
     
     /* Clear extended flag after processing */

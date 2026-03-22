@@ -58,7 +58,7 @@ static int enable_raw_mode(void)
         return -1;
     }
     struct termios raw = g_orig_termios;
-    raw.c_lflag &= (unsigned)~(ICANON | ECHO);
+    raw.c_lflag &= (unsigned)~(ICANON | ECHO | ISIG);
     if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) {
         return -1;
     }
@@ -303,7 +303,7 @@ int main(int argc, char* argv[])
         int rows = terminal_rows();
         render(uptime_buf, meminfo_buf, status_buf, rows);
 
-        /* Wait up to delay_s seconds; quit if 'q' or 'Q' pressed */
+        /* Wait up to delay_s seconds; quit if 'q', 'Q', or Ctrl-C pressed */
         if (is_tty) {
             struct timeval tv;
             tv.tv_sec  = delay_s;
@@ -315,7 +315,7 @@ int main(int argc, char* argv[])
             if (ret > 0) {
                 char key;
                 if (read(STDIN_FILENO, &key, 1) == 1 &&
-                    (key == 'q' || key == 'Q')) {
+                    (key == 'q' || key == 'Q' || key == 3)) {
                     break;
                 }
             }
