@@ -63,7 +63,7 @@ BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
 ROOTFS_DIR = rootfs
 BIN_DIR = $(ROOTFS_DIR)/bin
 
-INIT_SRCS = init/init.c
+INIT_SRCS = init/init.c init/common.c init/service.c
 SH_SRCS = shell/main.c shell/io.c shell/parser.c shell/exec.c shell/builtins.c
 ECHO_SRCS = bin/echo.c
 LS_SRCS = bin/ls.c
@@ -120,6 +120,7 @@ ID_SRCS     = bin/id.c
 GROUPS_SRCS = bin/groups.c
 WHOAMI_SRCS = bin/whoami.c
 SVSTAT_SRCS = bin/svstat.c
+SVCTL_SRCS = bin/svctl.c
 PS_SRCS    = bin/ps.c
 TOP_SRCS   = bin/top.c
 VI_SRCS     = bin/vi.c
@@ -201,6 +202,7 @@ ID_OBJS     = $(addprefix $(BUILD_DIR)/, $(ID_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OB
 GROUPS_OBJS = $(addprefix $(BUILD_DIR)/, $(GROUPS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 WHOAMI_OBJS = $(addprefix $(BUILD_DIR)/, $(WHOAMI_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SVSTAT_OBJS = $(addprefix $(BUILD_DIR)/, $(SVSTAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+SVCTL_OBJS = $(addprefix $(BUILD_DIR)/, $(SVCTL_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 PS_OBJS    = $(addprefix $(BUILD_DIR)/, $(PS_SRCS:.c=.o))    $(CRT0_OBJ) $(LIBC_OBJS)
 TOP_OBJS   = $(addprefix $(BUILD_DIR)/, $(TOP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 VI_OBJS     = $(addprefix $(BUILD_DIR)/, $(VI_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -263,6 +265,7 @@ ID_ELF     = $(BUILD_DIR)/id.elf
 GROUPS_ELF = $(BUILD_DIR)/groups.elf
 WHOAMI_ELF = $(BUILD_DIR)/whoami.elf
 SVSTAT_ELF = $(BUILD_DIR)/svstat.elf
+SVCTL_ELF = $(BUILD_DIR)/svctl.elf
 PS_ELF     = $(BUILD_DIR)/ps.elf
 TOP_ELF    = $(BUILD_DIR)/top.elf
 VI_ELF = $(BUILD_DIR)/vi.elf
@@ -274,6 +277,7 @@ ID_BIN     = $(BIN_DIR)/id
 GROUPS_BIN = $(BIN_DIR)/groups
 WHOAMI_BIN = $(BIN_DIR)/whoami
 SVSTAT_BIN = $(BIN_DIR)/svstat
+SVCTL_BIN = $(BIN_DIR)/svctl
 PS_BIN     = $(BIN_DIR)/ps
 TOP_BIN    = $(BIN_DIR)/top
 VI_BIN = $(BIN_DIR)/vi
@@ -335,7 +339,7 @@ PTHREAD_TEST_BIN = $(BIN_DIR)/pthread_test
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TTYSIZE_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(SVSTAT_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TTYSIZE_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(SVSTAT_BIN) $(SVCTL_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -586,6 +590,10 @@ $(WHOAMI_ELF): $(WHOAMI_OBJS) link.ld
 $(SVSTAT_ELF): $(SVSTAT_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(SVSTAT_OBJS)
+
+$(SVCTL_ELF): $(SVCTL_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(SVCTL_OBJS)
 
 $(PS_ELF): $(PS_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -887,6 +895,11 @@ $(WHOAMI_BIN): $(WHOAMI_ELF)
 	chmod 0755 $@
 
 $(SVSTAT_BIN): $(SVSTAT_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(SVCTL_BIN): $(SVCTL_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@
