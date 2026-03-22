@@ -292,6 +292,23 @@ int vsnprintf(char* str, size_t size, const char* fmt, va_list ap)
             break;
         }
 
+        /* flags */
+        int flag_left = 0, flag_zero = 0;
+        for (;;) {
+            if (fmt[i] == '-')      { flag_left = 1; i++; }
+            else if (fmt[i] == '0') { flag_zero = 1; i++; }
+            else if (fmt[i] == '+' || fmt[i] == ' ') { i++; }
+            else break;
+        }
+
+        /* width */
+        int width = 0;
+        while (fmt[i] >= '0' && fmt[i] <= '9') {
+            width = width * 10 + (fmt[i] - '0');
+            i++;
+        }
+
+        /* length modifiers */
         int long_flag = 0;
         int long_long_flag = 0;
         while (fmt[i] == 'l') {
@@ -303,53 +320,104 @@ int vsnprintf(char* str, size_t size, const char* fmt, va_list ap)
             i++;
         }
 
+        /* format numeric/char types to tmp first, then apply padding */
+        char tmp[64];
+        size_t tidx = 0;
+        int ttotal = 0;
+
         switch (fmt[i]) {
             case '%':
                 buf_putc('%', str, size, &idx, &total);
-                break;
-            case 'c':
-                buf_putc((char)va_arg(ap, int), str, size, &idx, &total);
-                break;
-            case 's':
-                buf_puts(va_arg(ap, const char*), str, size, &idx, &total);
-                break;
+                continue;
+            case 'c': {
+                char cv = (char)va_arg(ap, int);
+                if (width <= 1) {
+                    buf_putc(cv, str, size, &idx, &total);
+                } else {
+                    if (!flag_left)
+                        for (int w = 1; w < width; w++) buf_putc(' ', str, size, &idx, &total);
+                    buf_putc(cv, str, size, &idx, &total);
+                    if (flag_left)
+                        for (int w = 1; w < width; w++) buf_putc(' ', str, size, &idx, &total);
+                }
+                continue;
+            }
+            case 's': {
+                const char* sv = va_arg(ap, const char*);
+                if (!sv) sv = "(null)";
+                if (width == 0) {
+                    buf_puts(sv, str, size, &idx, &total);
+                } else {
+                    int slen = 0;
+                    const char* sp = sv;
+                    while (*sp++) slen++;
+                    if (!flag_left)
+                        for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
+                    buf_puts(sv, str, size, &idx, &total);
+                    if (flag_left)
+                        for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
+                }
+                continue;
+            }
             case 'd':
             case 'i':
                 if (long_long_flag) {
-                    buf_puti(va_arg(ap, long long), str, size, &idx, &total);
+                    buf_puti((int64_t)va_arg(ap, long long), tmp, sizeof(tmp), &tidx, &ttotal);
                 } else if (long_flag) {
-                    buf_puti(va_arg(ap, long), str, size, &idx, &total);
+                    buf_puti((int64_t)va_arg(ap, long), tmp, sizeof(tmp), &tidx, &ttotal);
                 } else {
-                    buf_puti(va_arg(ap, int), str, size, &idx, &total);
+                    buf_puti((int64_t)va_arg(ap, int), tmp, sizeof(tmp), &tidx, &ttotal);
                 }
                 break;
             case 'u':
                 if (long_long_flag) {
-                    buf_putu(va_arg(ap, unsigned long long), 10, 0, str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned long long), 10, 0, tmp, sizeof(tmp), &tidx, &ttotal);
                 } else if (long_flag) {
-                    buf_putu(va_arg(ap, unsigned long), 10, 0, str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned long), 10, 0, tmp, sizeof(tmp), &tidx, &ttotal);
                 } else {
-                    buf_putu(va_arg(ap, unsigned int), 10, 0, str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned int), 10, 0, tmp, sizeof(tmp), &tidx, &ttotal);
                 }
                 break;
             case 'x':
             case 'X':
                 if (long_long_flag) {
-                    buf_putu(va_arg(ap, unsigned long long), 16, fmt[i] == 'X', str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned long long), 16, fmt[i] == 'X', tmp, sizeof(tmp), &tidx, &ttotal);
                 } else if (long_flag) {
-                    buf_putu(va_arg(ap, unsigned long), 16, fmt[i] == 'X', str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned long), 16, fmt[i] == 'X', tmp, sizeof(tmp), &tidx, &ttotal);
                 } else {
-                    buf_putu(va_arg(ap, unsigned int), 16, fmt[i] == 'X', str, size, &idx, &total);
+                    buf_putu((uint64_t)va_arg(ap, unsigned int), 16, fmt[i] == 'X', tmp, sizeof(tmp), &tidx, &ttotal);
                 }
                 break;
             case 'p':
                 buf_puts("0x", str, size, &idx, &total);
                 buf_putu((uintptr_t)va_arg(ap, void*), 16, 0, str, size, &idx, &total);
-                break;
+                continue;
             default:
                 buf_putc('%', str, size, &idx, &total);
                 buf_putc(fmt[i], str, size, &idx, &total);
-                break;
+                continue;
+        }
+
+        /* emit tmp with padding */
+        if (width > 0 && ttotal < width) {
+            int pad = width - ttotal;
+            char pad_char = (flag_zero && !flag_left) ? '0' : ' ';
+            if (!flag_left) {
+                /* zero-pad: sign first, then zeros */
+                if (flag_zero && ttotal > 0 && tmp[0] == '-') {
+                    buf_putc('-', str, size, &idx, &total);
+                    for (int w = 0; w < pad; w++) buf_putc('0', str, size, &idx, &total);
+                    for (size_t t = 1; t < tidx; t++) buf_putc(tmp[t], str, size, &idx, &total);
+                } else {
+                    for (int w = 0; w < pad; w++) buf_putc(pad_char, str, size, &idx, &total);
+                    for (size_t t = 0; t < tidx; t++) buf_putc(tmp[t], str, size, &idx, &total);
+                }
+            } else {
+                for (size_t t = 0; t < tidx; t++) buf_putc(tmp[t], str, size, &idx, &total);
+                for (int w = 0; w < pad; w++) buf_putc(' ', str, size, &idx, &total);
+            }
+        } else {
+            for (size_t t = 0; t < tidx; t++) buf_putc(tmp[t], str, size, &idx, &total);
         }
     }
 

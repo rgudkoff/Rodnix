@@ -806,3 +806,15 @@ void thread_unblock(thread_t* thread)
         thread->state = THREAD_STATE_READY;
     }
 }
+
+void task_for_each(task_iter_fn_t fn, void* ctx)
+{
+    if (!fn) {
+        return;
+    }
+    irql_t old = task_registry_lock();
+    for (task_t* it = all_tasks_head; it; it = it->next_all) {
+        fn(it, ctx);
+    }
+    task_registry_unlock(old);
+}

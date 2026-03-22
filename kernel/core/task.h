@@ -417,4 +417,16 @@ void thread_unblock(thread_t* thread);
  */
 void thread_set_priority(thread_t* thread, uint8_t priority);
 
+/* ============================================================================
+ * Task iteration
+ * ============================================================================ */
+
+/**
+ * Iterate all tasks under the registry lock.
+ * fn is called for each task with ctx. fn must not try to acquire
+ * the task registry lock (no nested iteration).
+ */
+typedef void (*task_iter_fn_t)(const task_t* task, void* ctx);
+void task_for_each(task_iter_fn_t fn, void* ctx);
+
 #endif /* _RODNIX_CORE_TASK_H */
