@@ -1,0 +1,9 @@
+# /root/.ashrc - interactive shell config for root
+
+alias ll='ls -la'
+alias la='ls -a'
+alias ..='cd ..'
+alias ...='cd ../..'
+
+# Show OS info on interactive start
+uname -sr 2>/dev/null || true

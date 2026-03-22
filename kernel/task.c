@@ -245,6 +245,10 @@ task_t* task_create(void)
     task->gid = 0;
     task->euid = 0;
     task->egid = 0;
+    task->supp_group_count = 0;
+    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
+        task->supp_groups[i] = 0;
+    }
     task->session_id = task->task_id;
     task->process_group_id = task->task_id;
     task->umask = 0022;
@@ -372,6 +376,63 @@ void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint3
     task->gid = gid;
     task->euid = euid;
     task->egid = egid;
+}
+
+int task_set_supp_groups(task_t* task, const uint32_t* gids, uint32_t count)
+{
+    if (!task) {
+        return RDNX_E_INVALID;
+    }
+    if (count > TASK_MAX_SUPP_GROUPS) {
+        return RDNX_E_INVALID;
+    }
+    task->supp_group_count = 0;
+    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
+        task->supp_groups[i] = 0;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        task->supp_groups[i] = gids ? gids[i] : 0;
+    }
+    task->supp_group_count = count;
+    return RDNX_OK;
+}
+
+uint32_t task_get_supp_group_count(const task_t* task)
+{
+    return task ? task->supp_group_count : 0;
+}
+
+int task_copy_supp_groups(const task_t* task, uint32_t* out_gids, uint32_t max_count)
+{
+    if (!task) {
+        return RDNX_E_INVALID;
+    }
+    if (task->supp_group_count > max_count) {
+        return RDNX_E_INVALID;
+    }
+    if (task->supp_group_count > 0 && !out_gids) {
+        return RDNX_E_INVALID;
+    }
+    for (uint32_t i = 0; i < task->supp_group_count; i++) {
+        out_gids[i] = task->supp_groups[i];
+    }
+    return (int)task->supp_group_count;
+}
+
+int task_in_group(const task_t* task, uint32_t gid)
+{
+    if (!task) {
+        return 0;
+    }
+    if (task->gid == gid || task->egid == gid) {
+        return 1;
+    }
+    for (uint32_t i = 0; i < task->supp_group_count; i++) {
+        if (task->supp_groups[i] == gid) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 void task_set_abi(task_t* task, task_abi_t abi)

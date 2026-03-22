@@ -28,7 +28,7 @@
 #define RODNIX_SYSNAME   "RodNIX"
 
 /* Default hostname: uname -n */
-#define RODNIX_NODENAME  "localhost"
+#define RODNIX_NODENAME  "rodnix"
 
 /* Hardware architecture: uname -m */
 #define RODNIX_MACHINE   "x86_64"

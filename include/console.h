@@ -145,5 +145,9 @@ void console_tick(void);
 uint64_t console_get_uptime_us(void);
 const char* console_get_uptime_source(void);
 uint64_t console_get_realtime_us(void);
+void console_set_realtime_us(uint64_t us);
+bool console_get_rtc_us(uint64_t* us);
+bool console_set_rtc_us(uint64_t us);
+bool console_set_realtime_from_rtc(void);
 
 #endif /* _RODNIX_CONSOLE_H */

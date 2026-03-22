@@ -1,0 +1,5 @@
+# /home/guest/.ashrc - interactive shell config for guest
+
+alias ll='ls -la'
+alias la='ls -a'
+alias ..='cd ..'

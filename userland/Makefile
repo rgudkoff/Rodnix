@@ -84,6 +84,8 @@ SLEEP_SRCS = bin/sleep.c
 SIGTEST_SRCS = bin/sigtest.c
 STTY_SRCS = bin/stty.c
 TIMECHECK_SRCS = bin/timecheck.c
+DATE_SRCS = bin/date.c
+HWCLOCK_SRCS = bin/hwclock.c
 SYSCALLTEST_SRCS = bin/syscalltest.c
 TTYREADTEST_SRCS = bin/ttyreadtest.c
 SCSTAT_SRCS = bin/scstat.c
@@ -113,10 +115,13 @@ GREP_SRCS   = bin/grep.c
 FIND_SRCS   = bin/find.c
 LOGIN_SRCS  = bin/login.c
 PASSWD_SRCS = bin/passwd.c
+ID_SRCS     = bin/id.c
+GROUPS_SRCS = bin/groups.c
+WHOAMI_SRCS = bin/whoami.c
 PTHREAD_TEST_SRCS_CPP = bin/pthread_test.cpp
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c libc/pthread.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c libc/pwd.c libc/pthread.c
 
 ifeq ($(ARCH),x86_64)
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o $(BUILD_DIR)/libc/pthread_clone.o
@@ -155,6 +160,8 @@ SLEEP_OBJS = $(addprefix $(BUILD_DIR)/, $(SLEEP_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_
 SIGTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SIGTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 STTY_OBJS = $(addprefix $(BUILD_DIR)/, $(STTY_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TIMECHECK_OBJS = $(addprefix $(BUILD_DIR)/, $(TIMECHECK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+DATE_OBJS = $(addprefix $(BUILD_DIR)/, $(DATE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+HWCLOCK_OBJS = $(addprefix $(BUILD_DIR)/, $(HWCLOCK_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SYSCALLTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(SYSCALLTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TTYREADTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TTYREADTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 SCSTAT_OBJS = $(addprefix $(BUILD_DIR)/, $(SCSTAT_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -184,6 +191,9 @@ GREP_OBJS   = $(addprefix $(BUILD_DIR)/, $(GREP_SRCS:.c=.o))   $(CRT0_OBJ) $(LIB
 FIND_OBJS   = $(addprefix $(BUILD_DIR)/, $(FIND_SRCS:.c=.o))   $(CRT0_OBJ) $(LIBC_OBJS)
 LOGIN_OBJS  = $(addprefix $(BUILD_DIR)/, $(LOGIN_SRCS:.c=.o))  $(CRT0_OBJ) $(LIBC_OBJS)
 PASSWD_OBJS = $(addprefix $(BUILD_DIR)/, $(PASSWD_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+ID_OBJS     = $(addprefix $(BUILD_DIR)/, $(ID_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+GROUPS_OBJS = $(addprefix $(BUILD_DIR)/, $(GROUPS_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+WHOAMI_OBJS = $(addprefix $(BUILD_DIR)/, $(WHOAMI_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 PTHREAD_TEST_OBJS = $(BUILD_DIR)/bin/pthread_test.o $(CRT0_OBJ) $(LIBC_OBJS)
 
 INIT_ELF = $(BUILD_DIR)/init.elf
@@ -207,6 +217,8 @@ SLEEP_ELF = $(BUILD_DIR)/sleep.elf
 SIGTEST_ELF = $(BUILD_DIR)/sigtest.elf
 STTY_ELF = $(BUILD_DIR)/stty.elf
 TIMECHECK_ELF = $(BUILD_DIR)/timecheck.elf
+DATE_ELF = $(BUILD_DIR)/date.elf
+HWCLOCK_ELF = $(BUILD_DIR)/hwclock.elf
 SYSCALLTEST_ELF = $(BUILD_DIR)/syscalltest.elf
 TTYREADTEST_ELF = $(BUILD_DIR)/ttyreadtest.elf
 SCSTAT_ELF = $(BUILD_DIR)/scstat.elf
@@ -236,10 +248,16 @@ GREP_ELF = $(BUILD_DIR)/grep.elf
 FIND_ELF   = $(BUILD_DIR)/find.elf
 LOGIN_ELF  = $(BUILD_DIR)/login.elf
 PASSWD_ELF = $(BUILD_DIR)/passwd.elf
+ID_ELF     = $(BUILD_DIR)/id.elf
+GROUPS_ELF = $(BUILD_DIR)/groups.elf
+WHOAMI_ELF = $(BUILD_DIR)/whoami.elf
 PTHREAD_TEST_ELF = $(BUILD_DIR)/pthread_test.elf
 INIT_BIN   = $(BIN_DIR)/init
 LOGIN_BIN  = $(BIN_DIR)/login
 PASSWD_BIN = $(BIN_DIR)/passwd
+ID_BIN     = $(BIN_DIR)/id
+GROUPS_BIN = $(BIN_DIR)/groups
+WHOAMI_BIN = $(BIN_DIR)/whoami
 SH_BIN = $(BIN_DIR)/sh
 ECHO_BIN = $(BIN_DIR)/echo
 LS_BIN = $(BIN_DIR)/ls
@@ -264,6 +282,8 @@ DEMO_KO = $(MODULES_DIR)/demo.ko
 SIGTEST_BIN = $(BIN_DIR)/sigtest
 STTY_BIN = $(BIN_DIR)/stty
 TIMECHECK_BIN = $(BIN_DIR)/timecheck
+DATE_BIN = $(BIN_DIR)/date
+HWCLOCK_BIN = $(BIN_DIR)/hwclock
 SYSCALLTEST_BIN = $(BIN_DIR)/syscalltest
 TTYREADTEST_BIN = $(BIN_DIR)/ttyreadtest
 SCSTAT_BIN = $(BIN_DIR)/scstat
@@ -295,7 +315,7 @@ PTHREAD_TEST_BIN = $(BIN_DIR)/pthread_test
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(PTHREAD_TEST_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(PTHREAD_TEST_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -406,6 +426,14 @@ $(STTY_ELF): $(STTY_OBJS) link.ld
 $(TIMECHECK_ELF): $(TIMECHECK_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(TIMECHECK_OBJS)
+
+$(DATE_ELF): $(DATE_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(DATE_OBJS)
+
+$(HWCLOCK_ELF): $(HWCLOCK_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(HWCLOCK_OBJS)
 
 $(SYSCALLTEST_ELF): $(SYSCALLTEST_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -518,6 +546,18 @@ $(FIND_ELF): $(FIND_OBJS) link.ld
 $(PASSWD_ELF): $(PASSWD_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(PASSWD_OBJS)
+
+$(ID_ELF): $(ID_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(ID_OBJS)
+
+$(GROUPS_ELF): $(GROUPS_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(GROUPS_OBJS)
+
+$(WHOAMI_ELF): $(WHOAMI_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(WHOAMI_OBJS)
 
 $(INIT_BIN): $(INIT_ELF)
 	@mkdir -p $(BIN_DIR)
@@ -636,6 +676,16 @@ $(STTY_BIN): $(STTY_ELF)
 	chmod 0755 $@
 
 $(TIMECHECK_BIN): $(TIMECHECK_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(DATE_BIN): $(DATE_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(HWCLOCK_BIN): $(HWCLOCK_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@
@@ -776,6 +826,21 @@ $(FIND_BIN): $(FIND_ELF)
 	chmod 0755 $@
 
 $(PASSWD_BIN): $(PASSWD_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(ID_BIN): $(ID_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(GROUPS_BIN): $(GROUPS_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(WHOAMI_BIN): $(WHOAMI_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@

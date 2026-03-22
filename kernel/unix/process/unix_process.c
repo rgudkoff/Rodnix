@@ -482,6 +482,7 @@ uint64_t unix_proc_fork(void)
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
     task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
+    (void)task_set_supp_groups(child, parent->supp_groups, parent->supp_group_count);
     task_set_abi(child, task_get_abi(parent));
     child->session_id = parent->session_id;
     child->process_group_id = parent->process_group_id;

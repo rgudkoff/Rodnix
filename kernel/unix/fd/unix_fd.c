@@ -43,7 +43,8 @@ enum {
 enum {
     UNIX_TTY_IOCTL_ISATTY = 0x7401,
     UNIX_TTY_IOCTL_GETATTR = 0x7402,
-    UNIX_TTY_IOCTL_SETATTR = 0x7403
+    UNIX_TTY_IOCTL_SETATTR = 0x7403,
+    UNIX_TTY_IOCTL_GETWINSZ = 0x7404
 };
 
 enum {
@@ -1173,6 +1174,25 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
             tty_console_set_lflag(kterm.c_lflag);
             for (uint32_t i = 0; i < 20; i++) {
                 tty_console_set_cc(i, kterm.c_cc[i]);
+            }
+            return (uint64_t)RDNX_OK;
+        }
+        case UNIX_TTY_IOCTL_GETWINSZ: {
+            struct unix_winsize_u {
+                uint16_t ws_row;
+                uint16_t ws_col;
+                uint16_t ws_xpixel;
+                uint16_t ws_ypixel;
+            } kws;
+            if (!unix_user_range_ok((void*)(uintptr_t)user_arg_ptr, sizeof(kws))) {
+                return (uint64_t)RDNX_E_INVALID;
+            }
+            kws.ws_row = 25;
+            kws.ws_col = 80;
+            kws.ws_xpixel = 0;
+            kws.ws_ypixel = 0;
+            if (unix_copy_to_user((void*)(uintptr_t)user_arg_ptr, &kws, sizeof(kws)) != RDNX_OK) {
+                return (uint64_t)RDNX_E_INVALID;
             }
             return (uint64_t)RDNX_OK;
         }

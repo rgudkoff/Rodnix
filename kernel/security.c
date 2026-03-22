@@ -22,9 +22,10 @@ int security_vfs_access(uint16_t inode_mode,
                         uint32_t inode_uid,
                         uint32_t inode_gid,
                         int      access,
-                        uint32_t caller_euid,
-                        uint32_t caller_egid)
+                        const task_t* caller)
 {
+    uint32_t caller_euid = caller ? caller->euid : 0;
+
     /* Root bypasses DAC. */
     if (caller_euid == 0) {
         return SEC_OK;
@@ -37,7 +38,7 @@ int security_vfs_access(uint16_t inode_mode,
         if (access & SEC_ACCESS_READ)  mask |= S_IRUSR;
         if (access & SEC_ACCESS_WRITE) mask |= S_IWUSR;
         if (access & SEC_ACCESS_EXEC)  mask |= S_IXUSR;
-    } else if (caller_egid == inode_gid) {
+    } else if (task_in_group(caller, inode_gid)) {
         /* group triad */
         if (access & SEC_ACCESS_READ)  mask |= S_IRGRP;
         if (access & SEC_ACCESS_WRITE) mask |= S_IWGRP;

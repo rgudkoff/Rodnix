@@ -19,6 +19,10 @@ struct tm {
 
 time_t time(time_t* tloc);
 struct tm* localtime(const time_t* timer);
+struct tm* gmtime(const time_t* timer);
+struct tm* localtime_r(const time_t* timer, struct tm* result);
+struct tm* gmtime_r(const time_t* timer, struct tm* result);
+size_t strftime(char* s, size_t max, const char* format, const struct tm* tm);
 
 static inline int clock_gettime(clockid_t clk_id, struct timespec* tp)
 {

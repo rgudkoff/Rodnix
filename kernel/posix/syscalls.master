@@ -96,3 +96,8 @@
 78 clone           # [experimental] create thread; CLONE_VM|CLONE_THREAD|CLONE_SETTLS|CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID
 79 mprotect        # [stable]       change memory protection flags on mapped region
 80 thread_exit     # [stable]       exit current thread only (not whole process)
+81 getgroups       # [stable]       read supplementary groups of current task
+82 setgroups       # [stable]       set supplementary groups; root only
+83 settimeofday    # [experimental] set CLOCK_REALTIME; root only
+84 rtc_gettime     # [experimental] read hardware RTC time
+85 rtc_settime     # [experimental] write hardware RTC time; root only

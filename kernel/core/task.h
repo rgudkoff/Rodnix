@@ -63,6 +63,7 @@ typedef enum {
 
 #define TASK_MAX_FD 32
 #define TASK_CWD_MAX 256
+#define TASK_MAX_SUPP_GROUPS 16
 
 /* ============================================================================
  * Scheduling class
@@ -126,6 +127,8 @@ typedef struct task {
     uint32_t gid;              /* Реальный GID */
     uint32_t euid;             /* Эффективный UID */
     uint32_t egid;             /* Эффективный GID */
+    uint32_t supp_groups[TASK_MAX_SUPP_GROUPS]; /* Supplementary groups */
+    uint32_t supp_group_count; /* Number of supplementary groups */
     uint64_t session_id;       /* Linux/POSIX session id */
     uint64_t process_group_id; /* Linux/POSIX process group id */
     uint16_t umask;            /* process umask (POSIX bits) */
@@ -258,6 +261,10 @@ void task_set_current(task_t* task);
  * @param egid Эффективный GID
  */
 void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid);
+int task_set_supp_groups(task_t* task, const uint32_t* gids, uint32_t count);
+uint32_t task_get_supp_group_count(const task_t* task);
+int task_copy_supp_groups(const task_t* task, uint32_t* out_gids, uint32_t max_count);
+int task_in_group(const task_t* task, uint32_t gid);
 void task_set_abi(task_t* task, task_abi_t abi);
 task_abi_t task_get_abi(const task_t* task);
 
