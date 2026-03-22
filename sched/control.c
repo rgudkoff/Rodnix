@@ -11,6 +11,9 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
 
     thread_t* joiner = exiting->joiner;
     exiting->joiner = NULL;
+    if (joiner->state == THREAD_STATE_DEAD) {
+        return;
+    }
 
     /* Keep wake semantics deterministic for shell/run and POSIX exit paths. */
     joiner->priority = 220;
@@ -107,6 +110,9 @@ void scheduler_unblock(thread_t* thread)
 void scheduler_wake(thread_t* thread)
 {
     if (!thread) {
+        return;
+    }
+    if (thread->state == THREAD_STATE_DEAD) {
         return;
     }
     if (thread->state == THREAD_STATE_BLOCKED) {

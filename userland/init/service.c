@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
-
 #include "unistd.h"
 #include "sys/wait.h"
 
@@ -58,6 +57,20 @@ static uint64_t monotonic_us(void)
         return 0;
     }
     return ((uint64_t)ts.tv_sec * 1000000ULL) + ((uint64_t)ts.tv_nsec / 1000ULL);
+}
+
+static void supervisor_pause_briefly(void)
+{
+    uint64_t start = monotonic_us();
+    uint64_t now;
+
+    if (start == 0) {
+        return;
+    }
+
+    do {
+        now = monotonic_us();
+    } while (now != 0 && (now - start) < 10000ULL);
 }
 
 static void write_service_prefix(const char* name)
@@ -311,6 +324,7 @@ static pid_t spawn_service_argv(char* const argv[])
 static int start_service(service_t* svc)
 {
     pid_t pid;
+    uint64_t now;
     char* const shell_argv[] = { (char*)"/bin/sh", (char*)0 };
 
     if (!svc || !svc->used || svc->argc == 0) {
@@ -323,9 +337,10 @@ static int start_service(service_t* svc)
         pid = spawnv("/bin/sh", shell_argv);
     }
     if (pid < 0) {
+        now = monotonic_us();
         svc->pid = -1;
         svc->state = (svc->mode == SERVICE_MODE_RESPAWN) ? SERVICE_STATE_BACKOFF : SERVICE_STATE_FAILED;
-        svc->restart_after_us = monotonic_us() + SERVICE_RESPAWN_DELAY_US;
+        svc->restart_after_us = now ? (now + SERVICE_RESPAWN_DELAY_US) : 0;
         write_service_prefix(svc->name);
         (void)write_str("spawn failed\n");
         write_services_status();
@@ -383,6 +398,7 @@ static service_t* find_service_by_pid(pid_t pid)
 static void handle_service_exit(pid_t pid, int status)
 {
     service_t* svc = find_service_by_pid(pid);
+    uint64_t now = monotonic_us();
 
     if (!svc) {
         return;
@@ -396,10 +412,13 @@ static void handle_service_exit(pid_t pid, int status)
         (void)write_str("exited status=");
         write_u64((uint64_t)WEXITSTATUS(status));
         (void)write_str("\n");
-        if (svc->mode == SERVICE_MODE_RESPAWN) {
+        if (!svc->enabled) {
+            svc->state = SERVICE_STATE_INACTIVE;
+            svc->restart_after_us = 0;
+        } else if (svc->mode == SERVICE_MODE_RESPAWN) {
             svc->state = SERVICE_STATE_BACKOFF;
             svc->restart_count++;
-            svc->restart_after_us = monotonic_us() + SERVICE_RESPAWN_DELAY_US;
+            svc->restart_after_us = now ? (now + SERVICE_RESPAWN_DELAY_US) : 0;
         } else {
             svc->state = (WEXITSTATUS(status) == 0) ? SERVICE_STATE_EXITED : SERVICE_STATE_FAILED;
         }
@@ -411,15 +430,133 @@ static void handle_service_exit(pid_t pid, int status)
         (void)write_str("terminated signal=");
         write_u64((uint64_t)WTERMSIG(status));
         (void)write_str("\n");
-        if (svc->mode == SERVICE_MODE_RESPAWN) {
+        if (!svc->enabled) {
+            svc->state = SERVICE_STATE_INACTIVE;
+            svc->restart_after_us = 0;
+        } else if (svc->mode == SERVICE_MODE_RESPAWN) {
             svc->state = SERVICE_STATE_BACKOFF;
             svc->restart_count++;
-            svc->restart_after_us = monotonic_us() + SERVICE_RESPAWN_DELAY_US;
+            svc->restart_after_us = now ? (now + SERVICE_RESPAWN_DELAY_US) : 0;
         } else {
             svc->state = SERVICE_STATE_FAILED;
         }
     }
     write_services_status();
+}
+
+static service_t* find_service_by_name(const char* name)
+{
+    int i;
+
+    if (!name || name[0] == '\0') {
+        return NULL;
+    }
+    for (i = 0; i < g_service_count; i++) {
+        if (g_services[i].used && cstr_eq(g_services[i].name, name)) {
+            return &g_services[i];
+        }
+    }
+    return NULL;
+}
+
+static void service_stop(service_t* svc, int keep_enabled)
+{
+    if (!svc) {
+        return;
+    }
+    svc->enabled = keep_enabled ? 1 : 0;
+    svc->restart_after_us = 0;
+    if (svc->pid > 0) {
+        (void)kill(svc->pid, SIGTERM);
+        write_services_status();
+    } else {
+        svc->state = SERVICE_STATE_INACTIVE;
+        write_services_status();
+    }
+}
+
+static void service_start(service_t* svc)
+{
+    if (!svc) {
+        return;
+    }
+    svc->enabled = 1;
+    svc->restart_after_us = 0;
+    if (svc->pid <= 0) {
+        if (svc->mode == SERVICE_MODE_ONESHOT) {
+            svc->started = 0;
+        }
+        (void)start_service(svc);
+    } else {
+        write_services_status();
+    }
+}
+
+static void handle_control_command_line(char* line)
+{
+    char* cursor = line;
+    char cmd[SERVICE_ARG_MAX];
+    char name[SERVICE_ARG_MAX];
+    service_t* svc;
+
+    if (!next_token(&cursor, cmd, sizeof(cmd))) {
+        return;
+    }
+
+    if (cstr_eq(cmd, "status")) {
+        write_services_status();
+        return;
+    }
+
+    if (!next_token(&cursor, name, sizeof(name))) {
+        return;
+    }
+
+    svc = find_service_by_name(name);
+    if (!svc) {
+        return;
+    }
+
+    if (cstr_eq(cmd, "start")) {
+        service_start(svc);
+    } else if (cstr_eq(cmd, "stop")) {
+        service_stop(svc, 0);
+    } else if (cstr_eq(cmd, "restart")) {
+        service_stop(svc, 1);
+        if (svc->pid <= 0) {
+            service_start(svc);
+        }
+    }
+}
+
+static void process_control_commands(void)
+{
+    int fd;
+    char buf[256];
+    int nread;
+    int start = 0;
+    int i;
+
+    fd = open("/run/services.control", O_RDONLY);
+    if (fd < 0) {
+        return;
+    }
+
+    nread = (int)read(fd, buf, sizeof(buf) - 1);
+    (void)close(fd);
+    (void)unlink("/run/services.control");
+    if (nread <= 0) {
+        return;
+    }
+    buf[nread] = '\0';
+
+    for (i = 0; i <= nread; i++) {
+        if (buf[i] == '\n' || buf[i] == '\0') {
+            buf[i] = '\0';
+            handle_control_command_line(&buf[start]);
+            start = i + 1;
+        }
+    }
 }
 
 static void reap_service_events(void)
@@ -448,7 +585,10 @@ void run_service_supervisor(void)
     (void)write_str("[init] service supervisor ready\n");
 
     for (;;) {
+        process_control_commands();
         reap_service_events();
+        process_control_commands();
         start_pending_services();
+        supervisor_pause_briefly();
     }
 }
