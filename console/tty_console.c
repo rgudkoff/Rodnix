@@ -277,7 +277,10 @@ static void tty_process_input_char(int c, bool echo)
         return;
     }
 
-    if (c == '\t' || (c >= 32 && c <= 126)) {
+    if ((uint8_t)c == 0x7Fu ||
+        c == '\t' ||
+        (c > 0 && c < 32) ||
+        (c >= 32 && c <= 126)) {
         if (tty_line_len + 1 < TTY_LINE_MAX) {
             tty_line[tty_line_len++] = (char)c;
             tty_echo_char((uint8_t)c, do_echo);

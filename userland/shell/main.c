@@ -106,13 +106,14 @@ int main(int argc, char** argv, char** envp)
                 (void)write_str("timecheck: failed\n");
             }
         } else if (str_eq(cmd_argv[0], "ls")) {
-            if (cmd_argc >= 2 && cmd_argv[1]) {
-                char path_buf[SH_PATH_MAX];
-                resolve_path(cmd_argv[1], path_buf, (int)sizeof(path_buf));
-                (void)cmd_ls_builtin(path_buf);
-            } else {
-                (void)cmd_ls_builtin(shell_cwd);
+            char* av[SH_ARG_MAX + 1];
+            int avc = 0;
+            av[avc++] = "/bin/ls";
+            for (int i = 1; i < cmd_argc && avc < SH_ARG_MAX; i++) {
+                av[avc++] = cmd_argv[i];
             }
+            av[avc] = 0;
+            (void)cmd_run(avc, av, 0);
         } else if (str_eq(cmd_argv[0], "smoke")) {
             run_smoke();
         } else if (str_eq(cmd_argv[0], "ttytest")) {
@@ -151,7 +152,8 @@ int main(int argc, char** argv, char** envp)
             (void)write_str("shell exiting\n");
             (void)posix_exit(0);
         } else {
-            if (cmd_autorun(cmd_argc, cmd_argv) < 0) {
+            int rc = cmd_autorun(cmd_argc, cmd_argv);
+            if (rc < 0 || rc == 127) {
                 (void)write_str("sh: ");
                 (void)write_str(cmd_argv[0]);
                 (void)write_str(": not found\n");

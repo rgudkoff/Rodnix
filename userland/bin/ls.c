@@ -30,6 +30,7 @@ typedef struct ls_entry {
 } ls_entry_t;
 
 typedef struct ls_long_widths {
+    size_t nlink;
     size_t owner;
     size_t group;
     size_t size;
@@ -48,7 +49,8 @@ static size_t str_width(const char* s)
 
 static size_t entry_display_width(const char* name, uint8_t dtype)
 {
-    return str_width(name) + ((dtype == DT_DIR) ? 1u : 0u);
+    (void)dtype;
+    return str_width(name);
 }
 
 static size_t digits_u64(unsigned long long v)
@@ -59,6 +61,12 @@ static size_t digits_u64(unsigned long long v)
         n++;
     }
     return n;
+}
+
+static unsigned long long entry_nlink(const ls_entry_t* entry)
+{
+    (void)entry;
+    return 1ULL;
 }
 
 static int cmp_entries_by_name(const void* lhs, const void* rhs)
@@ -147,12 +155,12 @@ static void print_name(const char* name, uint8_t dtype)
 {
     if (use_color) {
         if (dtype == DT_DIR) {
-            printf("\033[1;34m%s\033[0m/", name);
+            printf("\033[1;34m%s\033[0m", name);
         } else {
             printf("%s", name);
         }
     } else {
-        printf("%s%s", name, dtype == DT_DIR ? "/" : "");
+        printf("%s", name);
     }
 }
 
@@ -182,6 +190,7 @@ static void compute_long_widths(const ls_entry_t* entries, size_t count, ls_long
     char group_fallback[32];
     char sbuf[16];
 
+    widths->nlink = 1;
     widths->owner = 1;
     widths->group = 1;
     widths->size = 1;
@@ -189,6 +198,7 @@ static void compute_long_widths(const ls_entry_t* entries, size_t count, ls_long
     for (size_t i = 0; i < count; i++) {
         const char* owner;
         const char* group;
+        size_t nlink_width;
         size_t size_width;
 
         if (!entries[i].stat_ok) {
@@ -196,6 +206,7 @@ static void compute_long_widths(const ls_entry_t* entries, size_t count, ls_long
         }
         owner = owner_name(entries[i].st.st_uid, owner_fallback, sizeof(owner_fallback));
         group = group_name(entries[i].st.st_gid, group_fallback, sizeof(group_fallback));
+        nlink_width = digits_u64(entry_nlink(&entries[i]));
         if (opt_human) {
             human_size((long long)entries[i].st.st_size, sbuf);
             size_width = str_width(sbuf);
@@ -203,6 +214,9 @@ static void compute_long_widths(const ls_entry_t* entries, size_t count, ls_long
             size_width = digits_u64((unsigned long long)((entries[i].st.st_size < 0) ? 0 : entries[i].st.st_size));
         }
 
+        if (nlink_width > widths->nlink) {
+            widths->nlink = nlink_width;
+        }
         if (str_width(owner) > widths->owner) {
             widths->owner = str_width(owner);
         }
@@ -243,24 +257,27 @@ static void print_long_entry(const ls_entry_t* entry, const ls_long_widths_t* wi
 
     if (use_color) {
         if (S_ISDIR(entry->st.st_mode)) {
-            printf("%s %-*s %-*s %*s %s \033[1;34m%s\033[0m/\n",
+            printf("%s %*llu %-*s %-*s %*s %s \033[1;34m%s\033[0m\n",
                    mbuf,
+                   (int)widths->nlink, entry_nlink(entry),
                    (int)widths->owner, owner,
                    (int)widths->group, group,
                    (int)widths->size, sbuf,
                    tbuf,
                    entry->name);
         } else if (entry->st.st_mode & S_IXUSR) {
-            printf("%s %-*s %-*s %*s %s \033[1;32m%s\033[0m\n",
+            printf("%s %*llu %-*s %-*s %*s %s \033[1;32m%s\033[0m\n",
                    mbuf,
+                   (int)widths->nlink, entry_nlink(entry),
                    (int)widths->owner, owner,
                    (int)widths->group, group,
                    (int)widths->size, sbuf,
                    tbuf,
                    entry->name);
         } else {
-            printf("%s %-*s %-*s %*s %s %s\n",
+            printf("%s %*llu %-*s %-*s %*s %s %s\n",
                    mbuf,
+                   (int)widths->nlink, entry_nlink(entry),
                    (int)widths->owner, owner,
                    (int)widths->group, group,
                    (int)widths->size, sbuf,
@@ -268,14 +285,14 @@ static void print_long_entry(const ls_entry_t* entry, const ls_long_widths_t* wi
                    entry->name);
         }
     } else {
-        const char *suf = (entry->dtype == DT_DIR) ? "/" : "";
-        printf("%s %-*s %-*s %*s %s %s%s\n",
+        printf("%s %*llu %-*s %-*s %*s %s %s\n",
                mbuf,
+               (int)widths->nlink, entry_nlink(entry),
                (int)widths->owner, owner,
                (int)widths->group, group,
                (int)widths->size, sbuf,
                tbuf,
-               entry->name, suf);
+               entry->name);
     }
 }
 

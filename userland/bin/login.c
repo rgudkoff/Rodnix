@@ -54,6 +54,27 @@ static void secure_bzero(void* ptr, size_t len)
     }
 }
 
+static ssize_t login_read_byte(int fd, char* c)
+{
+    if (fd == STDIN_FILENO) {
+        long n;
+
+        /* Keep login on the same TTY read path as /bin/sh.
+         * The regular fast syscall route is still unreliable for blocking
+         * interactive console reads, which can prevent the password prompt
+         * flow from advancing after "login:". */
+        __asm__ volatile (
+            "int $0x80"
+            : "=a"(n)
+            : "a"(POSIX_SYS_READ), "D"(fd), "S"((long)(uintptr_t)c), "d"(1L)
+            : "memory"
+        );
+        return (ssize_t)n;
+    }
+
+    return read(fd, c, 1);
+}
+
 static int read_line(int fd, char* buf, int maxlen)
 {
     int i = 0;
@@ -64,7 +85,7 @@ static int read_line(int fd, char* buf, int maxlen)
     }
 
     while (i < maxlen - 1) {
-        ssize_t r = read(fd, &c, 1);
+        ssize_t r = login_read_byte(fd, &c);
         if (r <= 0) {
             break;
         }
@@ -509,7 +530,16 @@ int main(void)
             char shell_env[SHELL_MAX_LEN + 6];    /* SHELL=... */
             char logname_env[NAME_MAX_LEN + 8];   /* LOGNAME=... */
             char login_argv0[SHELL_MAX_LEN + 2];
-            const char* shell_base = path_basename(user.shell);
+            const char* selected_shell = user.shell;
+            const char* shell_base;
+
+            if (access(selected_shell, X_OK) != 0) {
+                if (!str_eq(selected_shell, "/bin/sh")) {
+                    write_str("login: configured shell unavailable, falling back to /bin/sh\n");
+                }
+                selected_shell = "/bin/sh";
+            }
+            shell_base = path_basename(selected_shell);
 
             if (copy_str(home_env, sizeof(home_env), "HOME=") != 0 ||
                 copy_str(user_env, sizeof(user_env), "USER=") != 0 ||
@@ -520,7 +550,7 @@ int main(void)
             }
             if (copy_str(home_env + 5, sizeof(home_env) - 5, user.home) != 0 ||
                 copy_str(user_env + 5, sizeof(user_env) - 5, username) != 0 ||
-                copy_str(shell_env + 6, sizeof(shell_env) - 6, user.shell) != 0 ||
+                copy_str(shell_env + 6, sizeof(shell_env) - 6, selected_shell) != 0 ||
                 copy_str(logname_env + 8, sizeof(logname_env) - 8, username) != 0) {
                 write_str("login: environment setup failed\n");
                 return 1;
@@ -540,7 +570,7 @@ int main(void)
                     (char*)"TERM=vt100",
                     (char*)0
                 };
-                execve(user.shell, bb_argv, bb_envp);
+                execve(selected_shell, bb_argv, bb_envp);
             } else {
                 char* const argv[] = { login_argv0, (char*)0 };
                 char* const envp[] = {
@@ -552,7 +582,7 @@ int main(void)
                     (char*)"TERM=vt100",
                     (char*)0
                 };
-                execve(user.shell, argv, envp);
+                execve(selected_shell, argv, envp);
             }
         }
 

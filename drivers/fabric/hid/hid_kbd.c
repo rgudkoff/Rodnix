@@ -212,8 +212,10 @@ static void keyboard_irq_handler(int vector, void *arg)
     (void)scan_code;
 
     
-    /* Ignore controller responses (ACK/RESEND/SELF-TEST) */
-    if (scan_code == 0xFA || scan_code == 0xFE || scan_code == 0xAA) {
+    /* Ignore controller command responses.
+     * Do not drop 0xAA here: in translated set-1 mode it is also the normal
+     * break code for left Shift release, and filtering it makes Shift stick. */
+    if (scan_code == 0xFA || scan_code == 0xFE) {
         return;
     }
 
