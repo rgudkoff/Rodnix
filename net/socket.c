@@ -36,9 +36,14 @@ typedef struct udp_queue {
 #define TCP_ST_SYN_RCVD    1u
 #define TCP_ST_ESTABLISHED 2u
 #define TCP_ST_CLOSE_WAIT  3u
+#define TCP_ST_SYN_SENT    4u   /* client: sent SYN, awaiting SYN-ACK */
+#define TCP_ST_FIN_WAIT_1  5u   /* sent FIN, awaiting ACK */
+#define TCP_ST_FIN_WAIT_2  6u   /* got ACK of our FIN, awaiting peer FIN */
+#define TCP_ST_TIME_WAIT   7u   /* received peer FIN, sent final ACK */
 #define TCP_RX_BUF_SZ      8192u
 #define TCP_TX_BUF_SZ      1460u   /* one segment at a time */
 #define TCP_DFLT_WIN       0xFFFFu
+#define TCP_CONNECT_TIMEOUT_MS 5000u
 
 typedef struct tcp_conn {
     uint32_t remote_ip;
@@ -129,6 +134,33 @@ static int net_ensure_dispatch_path(void);
 static uint64_t ticks_to_ms(uint64_t ticks)
 {
     return ticks * (uint64_t)SCHEDULER_TIME_SLICE_MS;
+}
+
+static uint32_t tcp_gen_isn(uint32_t src_ip, uint16_t src_port,
+                             uint32_t dst_ip, uint16_t dst_port)
+{
+    uint64_t t = scheduler_get_ticks();
+    return (uint32_t)(t * 6364136223846793005ULL
+                      ^ ((uint64_t)src_ip << 16 | src_port)
+                      ^ ((uint64_t)dst_ip << 16 | dst_port));
+}
+
+static uint16_t tcp_alloc_ephemeral_port(void)
+{
+    static uint16_t g_eph_next = 49152u;
+    spinlock_lock(&g_tcp_lock);
+    for (uint32_t i = 0; i < (65535u - 49152u); i++) {
+        uint16_t p = g_eph_next++;
+        if (g_eph_next == 0) {
+            g_eph_next = 49152u;
+        }
+        if (!g_tcp_conn_list[p] && !g_tcp_listen_table[p]) {
+            spinlock_unlock(&g_tcp_lock);
+            return p;
+        }
+    }
+    spinlock_unlock(&g_tcp_lock);
+    return 0;
 }
 
 static int net_is_local_ipv4(uint32_t ip, fabric_netif_t** out_iface)
@@ -587,6 +619,24 @@ static int tcp_input(const uint8_t* frame, uint32_t frame_len,
         return 0;
     }
 
+    /* SYN_SENT: we sent SYN, received SYN-ACK — complete the handshake */
+    if (conn->state == TCP_ST_SYN_SENT &&
+        (flags & (BSD_TH_SYN | BSD_TH_ACK)) == (BSD_TH_SYN | BSD_TH_ACK)) {
+        if (ack_no != conn->snd_nxt) {
+            spinlock_unlock(&conn->lock);
+            return -1;
+        }
+        conn->rcv_nxt = seq + 1u;   /* SYN consumes one sequence number */
+        conn->state   = TCP_ST_ESTABLISHED;
+        spinlock_unlock(&conn->lock);
+
+        (void)tcp_send_segment(iface, dst_ip, dport, src_ip, sport,
+                               eh->ether_shost,
+                               conn->snd_nxt, conn->rcv_nxt,
+                               BSD_TH_ACK, NULL, 0);
+        return 0;
+    }
+
     if (conn->state == TCP_ST_ESTABLISHED) {
         /* Receive data */
         if (tcp_payload_len > 0) {
@@ -621,6 +671,36 @@ static int tcp_input(const uint8_t* frame, uint32_t frame_len,
         }
 
         spinlock_unlock(&conn->lock);
+        return 0;
+    }
+
+    /* FIN_WAIT_1: we sent FIN, waiting for ACK (and maybe simultaneous FIN) */
+    if (conn->state == TCP_ST_FIN_WAIT_1 && (flags & BSD_TH_ACK)) {
+        if (flags & BSD_TH_FIN) {
+            /* Simultaneous close or FIN+ACK piggybacked */
+            conn->rcv_nxt++;
+            conn->state = TCP_ST_TIME_WAIT;
+            spinlock_unlock(&conn->lock);
+            (void)tcp_send_segment(iface, dst_ip, dport, src_ip, sport,
+                                   eh->ether_shost,
+                                   conn->snd_nxt, conn->rcv_nxt,
+                                   BSD_TH_ACK, NULL, 0);
+        } else {
+            conn->state = TCP_ST_FIN_WAIT_2;
+            spinlock_unlock(&conn->lock);
+        }
+        return 0;
+    }
+
+    /* FIN_WAIT_2: got ACK of our FIN, waiting for peer's FIN */
+    if (conn->state == TCP_ST_FIN_WAIT_2 && (flags & BSD_TH_FIN)) {
+        conn->rcv_nxt++;
+        conn->state = TCP_ST_TIME_WAIT;
+        spinlock_unlock(&conn->lock);
+        (void)tcp_send_segment(iface, dst_ip, dport, src_ip, sport,
+                               eh->ether_shost,
+                               conn->snd_nxt, conn->rcv_nxt,
+                               BSD_TH_ACK, NULL, 0);
         return 0;
     }
 
@@ -1328,8 +1408,81 @@ int net_socket_connect(net_socket_t* sock, const sockaddr_in_t* addr)
         return 0;
     }
 
-    /* Non-local: would need to send TCP SYN over network (not yet implemented) */
-    return -1;
+    /* Remote TCP connect: SYN → SYN-ACK → ACK */
+    fabric_netif_t* iface = select_tx_iface(addr->sin_addr);
+    if (!iface) {
+        return -1;
+    }
+
+    uint16_t cli_port = tcp_alloc_ephemeral_port();
+    if (cli_port == 0) {
+        return -1;
+    }
+
+    tcp_conn_t* c = (tcp_conn_t*)kmalloc(sizeof(tcp_conn_t));
+    if (!c) {
+        return -1;
+    }
+    memset(c, 0, sizeof(*c));
+    c->remote_ip   = addr->sin_addr;
+    c->remote_port = dport;
+    c->local_port  = cli_port;
+    c->snd_nxt     = tcp_gen_isn(iface->ipv4_addr, cli_port, addr->sin_addr, dport);
+    c->rcv_nxt     = 0;
+    c->state       = TCP_ST_SYN_SENT;
+    c->is_local    = 0;
+    spinlock_init(&c->lock);
+    tcp_conn_insert(c);
+
+    /* Resolve next-hop MAC */
+    uint8_t dst_mac[BSD_ETHER_ADDR_LEN];
+    uint32_t arp_target = addr->sin_addr;
+    if (iface->ipv4_netmask && iface->ipv4_gateway) {
+        uint32_t src_net = iface->ipv4_addr & iface->ipv4_netmask;
+        uint32_t dst_net = addr->sin_addr  & iface->ipv4_netmask;
+        if (src_net != dst_net) {
+            arp_target = iface->ipv4_gateway;
+        }
+    }
+    if (net_resolve_arp(iface, arp_target, dst_mac) != 0) {
+        tcp_conn_remove(cli_port, addr->sin_addr, dport);
+        kfree(c);
+        return -1;
+    }
+
+    /* Send SYN */
+    (void)tcp_send_segment(iface, iface->ipv4_addr, cli_port,
+                           addr->sin_addr, dport, dst_mac,
+                           c->snd_nxt, 0, BSD_TH_SYN, NULL, 0);
+    c->snd_nxt++;
+
+    /* Poll until handshake completes or timeout */
+    uint64_t deadline = scheduler_get_ticks()
+                        + (TCP_CONNECT_TIMEOUT_MS + (SCHEDULER_TIME_SLICE_MS - 1u))
+                          / SCHEDULER_TIME_SLICE_MS;
+    for (;;) {
+        spinlock_lock(&c->lock);
+        uint8_t st = c->state;
+        spinlock_unlock(&c->lock);
+
+        if (st == TCP_ST_ESTABLISHED) {
+            sock->tcp_conn       = c;
+            sock->connected      = 1;
+            sock->connected_port = dport;
+            sock->bound_port     = cli_port;
+            sock->bound          = 1;
+            return 0;
+        }
+
+        if (scheduler_get_ticks() >= deadline) {
+            tcp_conn_remove(cli_port, addr->sin_addr, dport);
+            kfree(c);
+            return -1;
+        }
+
+        fabric_netif_poll_all();
+        scheduler_yield();
+    }
 }
 
 static int net_tx_params(fabric_netif_t* tx_iface,
@@ -1524,7 +1677,65 @@ void net_socket_close(net_socket_t* sock)
     }
 
     if (sock->tcp_conn) {
-        kfree(sock->tcp_conn);
+        tcp_conn_t* conn = sock->tcp_conn;
+        spinlock_lock(&conn->lock);
+        uint8_t st = conn->state;
+
+        if (!conn->is_local && (st == TCP_ST_ESTABLISHED || st == TCP_ST_CLOSE_WAIT)) {
+            fabric_netif_t* iface = select_tx_iface(conn->remote_ip);
+            if (iface) {
+                uint8_t dst_mac[BSD_ETHER_ADDR_LEN];
+                uint32_t arp_target = conn->remote_ip;
+                if (iface->ipv4_netmask && iface->ipv4_gateway) {
+                    uint32_t src_net = iface->ipv4_addr & iface->ipv4_netmask;
+                    uint32_t dst_net = conn->remote_ip  & iface->ipv4_netmask;
+                    if (src_net != dst_net) {
+                        arp_target = iface->ipv4_gateway;
+                    }
+                }
+                if (bsd_arp_lookup(arp_target, dst_mac) == 0) {
+                    uint32_t snd = conn->snd_nxt;
+                    uint32_t rcv = conn->rcv_nxt;
+                    uint16_t lp  = conn->local_port;
+                    uint32_t rip = conn->remote_ip;
+                    uint16_t rp  = conn->remote_port;
+                    conn->state  = TCP_ST_FIN_WAIT_1;
+                    spinlock_unlock(&conn->lock);
+
+                    (void)tcp_send_segment(iface, iface->ipv4_addr, lp,
+                                           rip, rp, dst_mac,
+                                           snd, rcv,
+                                           BSD_TH_FIN | BSD_TH_ACK, NULL, 0);
+                    conn->snd_nxt++;
+
+                    /* Best-effort wait for graceful teardown (2 s max) */
+                    uint64_t dl = scheduler_get_ticks()
+                                  + 2000u / SCHEDULER_TIME_SLICE_MS;
+                    for (;;) {
+                        spinlock_lock(&conn->lock);
+                        uint8_t s2 = conn->state;
+                        spinlock_unlock(&conn->lock);
+                        if (s2 == TCP_ST_TIME_WAIT) {
+                            break;
+                        }
+                        if (scheduler_get_ticks() >= dl) {
+                            break;
+                        }
+                        fabric_netif_poll_all();
+                        scheduler_yield();
+                    }
+                } else {
+                    spinlock_unlock(&conn->lock);
+                }
+            } else {
+                spinlock_unlock(&conn->lock);
+            }
+        } else {
+            spinlock_unlock(&conn->lock);
+        }
+
+        tcp_conn_remove(conn->local_port, conn->remote_ip, conn->remote_port);
+        kfree(conn);
         sock->tcp_conn = NULL;
     }
 
