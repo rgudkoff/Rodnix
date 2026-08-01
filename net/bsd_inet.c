@@ -92,22 +92,19 @@ static uint16_t cksum_finalize(uint32_t sum)
 uint16_t bsd_in_pseudo(uint32_t src_host, uint32_t dst_host, uint16_t proto_len_host)
 {
     uint8_t ph[12];
-    uint32_t src_be = bsd_htonl(src_host);
-    uint32_t dst_be = bsd_htonl(dst_host);
-    uint16_t len_be = bsd_htons(proto_len_host);
 
-    ph[0] = (uint8_t)((src_be >> 24) & 0xFFu);
-    ph[1] = (uint8_t)((src_be >> 16) & 0xFFu);
-    ph[2] = (uint8_t)((src_be >> 8) & 0xFFu);
-    ph[3] = (uint8_t)(src_be & 0xFFu);
-    ph[4] = (uint8_t)((dst_be >> 24) & 0xFFu);
-    ph[5] = (uint8_t)((dst_be >> 16) & 0xFFu);
-    ph[6] = (uint8_t)((dst_be >> 8) & 0xFFu);
-    ph[7] = (uint8_t)(dst_be & 0xFFu);
+    ph[0] = (uint8_t)((src_host >> 24) & 0xFFu);
+    ph[1] = (uint8_t)((src_host >> 16) & 0xFFu);
+    ph[2] = (uint8_t)((src_host >>  8) & 0xFFu);
+    ph[3] = (uint8_t)(src_host & 0xFFu);
+    ph[4] = (uint8_t)((dst_host >> 24) & 0xFFu);
+    ph[5] = (uint8_t)((dst_host >> 16) & 0xFFu);
+    ph[6] = (uint8_t)((dst_host >>  8) & 0xFFu);
+    ph[7] = (uint8_t)(dst_host & 0xFFu);
     ph[8] = 0;
     ph[9] = (uint8_t)BSD_IPPROTO_UDP;
-    ph[10] = (uint8_t)((len_be >> 8) & 0xFFu);
-    ph[11] = (uint8_t)(len_be & 0xFFu);
+    ph[10] = (uint8_t)((proto_len_host >> 8) & 0xFFu);
+    ph[11] = (uint8_t)(proto_len_host & 0xFFu);
 
     return (uint16_t)(~cksum_add_buf(0, ph, sizeof(ph)) & 0xFFFFu);
 }
@@ -123,24 +120,25 @@ uint16_t bsd_tcp4_checksum(uint32_t src_host,
     }
 
     uint8_t ph[12];
-    uint32_t src_be = bsd_htonl(src_host);
-    uint32_t dst_be = bsd_htonl(dst_host);
     uint16_t tcp_total = (uint16_t)(sizeof(bsd_tcphdr_t) + payload_len);
-    uint16_t tcp_total_be = bsd_htons(tcp_total);
     bsd_tcphdr_t th_local;
 
-    ph[0] = (uint8_t)((src_be >> 24) & 0xFFu);
-    ph[1] = (uint8_t)((src_be >> 16) & 0xFFu);
-    ph[2] = (uint8_t)((src_be >> 8) & 0xFFu);
-    ph[3] = (uint8_t)(src_be & 0xFFu);
-    ph[4] = (uint8_t)((dst_be >> 24) & 0xFFu);
-    ph[5] = (uint8_t)((dst_be >> 16) & 0xFFu);
-    ph[6] = (uint8_t)((dst_be >> 8) & 0xFFu);
-    ph[7] = (uint8_t)(dst_be & 0xFFu);
+    /* Pseudo-header bytes must be in network (big-endian) order.
+     * IP addresses are stored as host-order integers where the MSB is the
+     * first octet (e.g. 10.0.2.15 == 0x0A00020F), so extracting MSB-first
+     * gives the correct wire-order bytes directly — no bswap needed. */
+    ph[0] = (uint8_t)((src_host >> 24) & 0xFFu);
+    ph[1] = (uint8_t)((src_host >> 16) & 0xFFu);
+    ph[2] = (uint8_t)((src_host >>  8) & 0xFFu);
+    ph[3] = (uint8_t)(src_host & 0xFFu);
+    ph[4] = (uint8_t)((dst_host >> 24) & 0xFFu);
+    ph[5] = (uint8_t)((dst_host >> 16) & 0xFFu);
+    ph[6] = (uint8_t)((dst_host >>  8) & 0xFFu);
+    ph[7] = (uint8_t)(dst_host & 0xFFu);
     ph[8] = 0;
     ph[9] = (uint8_t)BSD_IPPROTO_TCP;
-    ph[10] = (uint8_t)((tcp_total_be >> 8) & 0xFFu);
-    ph[11] = (uint8_t)(tcp_total_be & 0xFFu);
+    ph[10] = (uint8_t)((tcp_total >> 8) & 0xFFu);
+    ph[11] = (uint8_t)(tcp_total & 0xFFu);
 
     memcpy(&th_local, th, sizeof(th_local));
     th_local.th_sum = 0;
@@ -167,24 +165,22 @@ uint16_t bsd_udp4_checksum(uint32_t src_host,
     }
 
     uint8_t ph[12];
-    uint32_t src_be = bsd_htonl(src_host);
-    uint32_t dst_be = bsd_htonl(dst_host);
-    uint16_t udp_len = bsd_ntohs(uh->uh_ulen);
-    uint16_t udp_len_be = bsd_htons(udp_len);
+    uint16_t udp_total = bsd_ntohs(uh->uh_ulen);
     bsd_udphdr_t uh_local;
 
-    ph[0] = (uint8_t)((src_be >> 24) & 0xFFu);
-    ph[1] = (uint8_t)((src_be >> 16) & 0xFFu);
-    ph[2] = (uint8_t)((src_be >> 8) & 0xFFu);
-    ph[3] = (uint8_t)(src_be & 0xFFu);
-    ph[4] = (uint8_t)((dst_be >> 24) & 0xFFu);
-    ph[5] = (uint8_t)((dst_be >> 16) & 0xFFu);
-    ph[6] = (uint8_t)((dst_be >> 8) & 0xFFu);
-    ph[7] = (uint8_t)(dst_be & 0xFFu);
+    /* Use host-order addresses directly — extract MSB-first (network byte order) */
+    ph[0] = (uint8_t)((src_host >> 24) & 0xFFu);
+    ph[1] = (uint8_t)((src_host >> 16) & 0xFFu);
+    ph[2] = (uint8_t)((src_host >>  8) & 0xFFu);
+    ph[3] = (uint8_t)(src_host         & 0xFFu);
+    ph[4] = (uint8_t)((dst_host >> 24) & 0xFFu);
+    ph[5] = (uint8_t)((dst_host >> 16) & 0xFFu);
+    ph[6] = (uint8_t)((dst_host >>  8) & 0xFFu);
+    ph[7] = (uint8_t)(dst_host         & 0xFFu);
     ph[8] = 0;
     ph[9] = (uint8_t)BSD_IPPROTO_UDP;
-    ph[10] = (uint8_t)((udp_len_be >> 8) & 0xFFu);
-    ph[11] = (uint8_t)(udp_len_be & 0xFFu);
+    ph[10] = (uint8_t)((udp_total >> 8) & 0xFFu);
+    ph[11] = (uint8_t)(udp_total        & 0xFFu);
 
     memcpy(&uh_local, uh, sizeof(uh_local));
     uh_local.uh_sum = 0;
