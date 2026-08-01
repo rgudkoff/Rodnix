@@ -34,6 +34,10 @@ KERNEL_C_SRCS += \
 	net/bsd_ifnet.c \
 	net/bsd_netisr.c \
 	net/stack.c \
+	net/proto_ip.c \
+	net/proto_tcp.c \
+	net/proto_udp.c \
+	net/proto_icmp.c \
 	net/socket.c \
 	kernel/usb/usb.c \
 	kernel/linux/linux_errno.c \
