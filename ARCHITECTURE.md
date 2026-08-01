@@ -100,28 +100,69 @@ CPU
 
 ### Network Stack
 
-The network stack lives in the kernel (`net/`), not in userland. This is the
-right architecture for RodNIX today and the foreseeable future:
+The network stack lives in the kernel (`net/`). This is a deliberate trade-off,
+not a claim that kernel residency is architecturally superior.
 
-- **Kernel-resident**: the stack runs in kernel space alongside the scheduler,
-  VM, and VFS. Sockets are kernel objects; data paths avoid costly privilege
-  crossings.
+**What this costs us.** The network stack is the only subsystem in RodNIX that
+parses bytes supplied by an unauthenticated remote party. Of everything in the
+tree it therefore has the strongest claim to fault isolation: a defect in TCP
+reassembly or option parsing is an attacker's defect, and in a kernel-resident
+stack it is a system-wide compromise or a panic rather than a restartable
+service failure. Keeping the stack in the kernel forfeits that isolation. That
+is a real cost, and it is recorded here as one.
 
-- **Modular inside the kernel**: protocol layers (Ethernet, IP, TCP, UDP, ICMP)
-  are implemented as discrete, replaceable units. The BSD `mbuf`/`ifnet`/`inet`
-  model provides proven internal interfaces without locking the design to any
-  specific userland ABI.
+**Why we accept it.**
 
-- **Not a microkernel network server**: splitting the stack into a userland
-  process would add IPC overhead on every packet and complicate the memory
-  model for zero-copy paths. That trade-off is not worth it for a
-  single-machine OS without a strong isolation requirement for the network
-  server itself.
+- **Sockets are file descriptors.** The descriptor table, `poll`/`select`
+  readiness, `fork` inheritance, `dup2`, and close-on-exec are kernel
+  abstractions. Moving socket objects into a userland server means either
+  relocating the descriptor layer along with them or retaining a kernel proxy
+  that still tracks per-connection state. This — not per-packet cost — is the
+  expensive part of the split.
 
-- **Migration path preserved**: the internal layer boundaries are kept clean so
-  that individual protocol handlers could later be replicated in userland (e.g.
-  for sandboxed protocol parsers or userland QUIC) or moved to an isolated
-  kernel module without redesigning the socket API.
+- **Complexity budget.** A process boundary is a second hard problem debugged
+  concurrently with the first. TCP is not yet complete (see Current Status
+  below); introducing an IPC boundary before the protocol engine is correct
+  trades one tractable problem for two intractable ones.
+
+- **Precedent.** Every general-purpose production kernel keeps the stack
+  in-kernel: Linux, FreeBSD, Windows NT, and XNU — the last of which has a Mach
+  microkernel underneath and still co-locates the BSD stack. Userland stacks
+  appear where the kernel is microkernel-by-construction (seL4, Genode,
+  Minix 3) or where a specific reliability mandate justified the cost (QNX
+  `io-pkt`, Fuchsia Netstack3).
+
+**What this decision does not rest on.** The claim that a userland stack costs
+an IPC round trip per packet is obsolete and is not our reasoning. Production
+userland stacks use shared-memory rings with batched notification; the cost lies
+in implementing that boundary correctly, not in crossing it. Note also that the
+dominant recent motive for moving packet processing out of the kernel
+(DPDK, netmap, AF_XDP) has been throughput, not isolation. The split is declined
+here on descriptor semantics and engineering budget.
+
+**Compensating control.** Because address-space isolation is unavailable to us
+by this choice, memory safety has to come from the language instead. That is the
+mainstream answer rather than a novel one: Linux met remotely triggerable stack
+defects (e.g. CVE-2019-11477) with Rust and verified eBPF extensions, not with a
+userland netstack. The following section on Rust is the mitigation for the
+isolation given up here, not an independent stylistic preference.
+
+**Modularity, bounded.** Protocol layers (Ethernet, IP, TCP, UDP, ICMP) are kept
+as discrete units behind explicit interfaces, following the BSD
+`mbuf`/`ifnet`/`inet` model. Those boundaries are compile-time and type-level,
+for testability and replaceability. They are deliberately *not* a per-packet
+message-passing fabric: STREAMS was that design, and both Solaris and Linux
+moved their datapaths off it for performance.
+
+**Migration path.** The seam worth maintaining runs *inside* `net/`, between the
+socket layer and the protocol engine — not along the kernel boundary. A protocol
+engine that can be driven without a socket table or a NIC is unit-testable today
+and relocatable later; that property, not the kernel/userland placement, is what
+keeps future options open. Placement is also not the only degree of freedom
+available: Plan 9 kept its stack in the kernel and changed the *interface*
+instead, exposing connections through the filesystem (`/net/tcp/...`) rather
+than through sockets. For a project premised on redesigning Unix, the interface
+is the more interesting variable of the two.
 
 ### Rust in the Network Stack
 
