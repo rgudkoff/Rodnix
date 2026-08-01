@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
+# Exercise the UDP and TCP data paths end to end under QEMU.
+#
+# Covers the socket layer (net/socket.c) together with the protocol engine
+# (net/proto_*.c): udptest drives sendto -> udp_proto_send -> netisr ->
+# udp_deliver -> udp_proto_parse, tcptest drives listen/connect/accept and
+# the TCP send/recv path.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 LOG_FILE="${LOG_FILE:-boot.log}"
-TIMEOUT_SEC="${TIMEOUT_SEC:-20}"
+TIMEOUT_SEC="${TIMEOUT_SEC:-60}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 QEMU_DISPLAY="${QEMU_DISPLAY:--display none}"
 QEMU_NET_FLAGS="${QEMU_NET_FLAGS:--netdev user,id=net0 -device e1000,netdev=net0}"
@@ -15,7 +21,7 @@ ISO_PATH="${ISO_PATH:-${BUILD_DIR}/rodnix.iso}"
 DISK_IMG="${DISK_IMG:-${BUILD_DIR}/rodnix-disk.img}"
 DISK_MB="${DISK_MB:-128}"
 DISK_FS_STAMP="${DISK_FS_STAMP:-${BUILD_DIR}/rodnix-disk.ext2.stamp}"
-FLAG_FILE="userland/rootfs/etc/smoke.ifconfig.auto"
+FLAG_FILE="userland/rootfs/etc/smoke.net.auto"
 
 cleanup() {
   rm -f "$FLAG_FILE"
@@ -24,13 +30,13 @@ trap cleanup EXIT
 
 dump_diag() {
   if [ ! -f "$LOG_FILE" ]; then
-    echo "[smoke-ifconfig] no log file: $LOG_FILE"
+    echo "[smoke-net] no log file: $LOG_FILE"
     return
   fi
-  echo "[smoke-ifconfig] recent markers:"
+  echo "[smoke-net] markers:"
   grep "^\[SMK\]" "$LOG_FILE" | tail -n 20 || true
-  echo "[smoke-ifconfig] last boot log lines:"
-  tail -n 80 "$LOG_FILE" || true
+  echo "[smoke-net] last boot log lines:"
+  tail -n 60 "$LOG_FILE" || true
 }
 
 touch "$FLAG_FILE"
@@ -47,7 +53,7 @@ if [ ! -f "$DISK_FS_STAMP" ]; then
 fi
 
 if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
-  echo "[smoke-ifconfig] qemu not found: $QEMU_BIN"
+  echo "[smoke-net] qemu not found: $QEMU_BIN"
   exit 1
 fi
 
@@ -58,39 +64,33 @@ QEMU_PID=$!
 set -e
 
 deadline=$((SECONDS + TIMEOUT_SEC))
-pass=0
-prompt=0
+result=""
 while [ $SECONDS -lt $deadline ]; do
   if [ -f "$LOG_FILE" ]; then
-    if grep -q "^\[SMK\] IFCONFIG PASS" "$LOG_FILE"; then
-      pass=1
+    if grep -q "^\[SMK\] NET PASS" "$LOG_FILE"; then
+      result="pass"
+      break
     fi
-    # The default boot flow reaches the login prompt, not a shell prompt;
-    # accept either so this check follows the login-first startup.
-    if grep -q "sh> " "$LOG_FILE" || grep -q " # " "$LOG_FILE" \
-       || grep -q "RodNIX login" "$LOG_FILE"; then
-      prompt=1
-    fi
-    if grep -q "^\[SMK\] IFCONFIG FAIL" "$LOG_FILE"; then
-      echo "[smoke-ifconfig] scenario reported FAIL"
-      dump_diag
-      kill "$QEMU_PID" >/dev/null 2>&1 || true
-      exit 1
-    fi
-    if [ $pass -eq 1 ] && [ $prompt -eq 1 ]; then
+    if grep -q "^\[SMK\] NET FAIL" "$LOG_FILE"; then
+      result="fail"
       break
     fi
   fi
   sleep 1
 done
 
-if [ $pass -eq 1 ] && [ $prompt -eq 1 ]; then
-  echo "[smoke-ifconfig] PASS: ifconfig completed and interactive prompt reached"
-  kill "$QEMU_PID" >/dev/null 2>&1 || true
+kill "$QEMU_PID" >/dev/null 2>&1 || true
+
+if [ "$result" = "pass" ]; then
+  echo "[smoke-net] PASS: udptest, tcptest and ping all completed"
+  grep "^\[SMK\] \(UDPTEST\|TCPTEST\|PING\|NET\)" "$LOG_FILE" || true
   exit 0
 fi
 
-echo "[smoke-ifconfig] timeout waiting for pass markers"
+if [ "$result" = "fail" ]; then
+  echo "[smoke-net] FAIL: a network test reported failure"
+else
+  echo "[smoke-net] timeout waiting for [SMK] NET marker"
+fi
 dump_diag
-kill "$QEMU_PID" >/dev/null 2>&1 || true
 exit 1

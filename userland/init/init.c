@@ -308,6 +308,105 @@ static void run_ifconfig_smoke_if_enabled(void)
     }
 }
 
+/*
+ * Spawn one smoke binary and wait for it, emitting [SMK] <tag> markers.
+ * Returns 1 on clean exit, 0 otherwise.
+ */
+static int smoke_run_one(const char* path, const char* arg,
+                         const char* tag, int64_t timeout_ns)
+{
+    const char* av[3];
+    av[0] = path;
+    av[1] = arg;   /* NULL when the binary takes no argument */
+    av[2] = 0;
+
+    (void)write_str("[SMK] ");
+    (void)write_str(tag);
+    (void)write_str(" START\n");
+
+    long pid = posix_spawn(path, av);
+    if (pid <= 0) {
+        (void)write_str("[SMK] ");
+        (void)write_str(tag);
+        (void)write_str(" FAIL spawn\n");
+        return 0;
+    }
+
+    struct timespec t0;
+    struct timespec t1;
+    int status = -1;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &t0) != 0) {
+        (void)write_str("[SMK] ");
+        (void)write_str(tag);
+        (void)write_str(" FAIL clock\n");
+        return 0;
+    }
+
+    for (;;) {
+        pid_t wr = waitpid((pid_t)pid, &status, WNOHANG);
+        if (wr == (pid_t)pid) {
+            if (status == 0) {
+                (void)write_str("[SMK] ");
+                (void)write_str(tag);
+                (void)write_str(" PASS\n");
+                return 1;
+            }
+            (void)write_str("[SMK] ");
+            (void)write_str(tag);
+            (void)write_str(" FAIL status\n");
+            return 0;
+        }
+        if (wr < 0) {
+            (void)write_str("[SMK] ");
+            (void)write_str(tag);
+            (void)write_str(" FAIL wait\n");
+            return 0;
+        }
+
+        if (clock_gettime(CLOCK_MONOTONIC, &t1) == 0) {
+            int64_t dt_ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL +
+                            (int64_t)(t1.tv_nsec - t0.tv_nsec);
+            if (dt_ns >= timeout_ns) {
+                (void)write_str("[SMK] ");
+                (void)write_str(tag);
+                (void)write_str(" TIMEOUT\n");
+                return 0;
+            }
+        }
+
+        (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
+    }
+}
+
+/*
+ * Exercise the UDP and TCP data paths end to end (socket layer plus the
+ * protocol engine). Both binaries are self-contained loopback tests.
+ */
+static void run_net_smoke_if_enabled(void)
+{
+    if (!file_exists("/etc/smoke.net.auto")) {
+        return;
+    }
+
+    const int64_t timeout_ns = 15LL * 1000LL * 1000LL * 1000LL;
+    int ok = 1;
+
+    if (!smoke_run_one("/bin/udptest", 0, "UDPTEST", timeout_ns)) {
+        ok = 0;
+    }
+    if (!smoke_run_one("/bin/tcptest", 0, "TCPTEST", timeout_ns)) {
+        ok = 0;
+    }
+    /* Ping our own wire address: the reply only comes back if self-addressed
+     * frames are looped into the ingress path instead of hitting the NIC. */
+    if (!smoke_run_one("/bin/ping", "10.0.2.15", "PING", timeout_ns)) {
+        ok = 0;
+    }
+
+    (void)write_str(ok ? "[SMK] NET PASS\n" : "[SMK] NET FAIL\n");
+}
+
 static void run_tcc_smoke_if_enabled(void)
 {
     static const char src_path[] = "/mnt/tcc_smoke.c";
@@ -1233,6 +1332,7 @@ int main(void)
     print_hostname();
     run_smoke();
     run_ifconfig_smoke_if_enabled();
+    run_net_smoke_if_enabled();
     run_tcc_smoke_if_enabled();
     run_contract_mode_if_enabled();
 
