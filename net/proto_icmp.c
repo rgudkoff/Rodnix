@@ -92,9 +92,13 @@ int icmp_proto_send_echo_reply(fabric_netif_t* iface,
     echo->cksum = 0;
     echo->cksum = bsd_htons(bsd_icmp_checksum(icmp, icmp_len));
 
-    int rc = fabric_netif_tx(iface, frame, (uint32_t)frame_len);
+    /* The reply goes back to the request's source, which for a self-directed
+     * ping is one of our own addresses — emit so it loops rather than
+     * disappearing onto the wire. */
+    int rc = net_frame_emit(iface, bsd_ntohl(rx_ip->ip_src),
+                            frame, (uint32_t)frame_len);
     kfree(frame);
-    return (rc == RDNX_OK) ? 0 : -1;
+    return rc;
 }
 
 void icmp_proto_note_echo_reply(uint32_t src_ip, uint16_t id, uint16_t seq)
@@ -168,10 +172,10 @@ uint16_t icmp_proto_send_echo(fabric_netif_t* iface,
     memcpy(icmp_buf + sizeof(*icmp), payload, sizeof(payload));
     icmp->cksum = bsd_htons(bsd_icmp_checksum(icmp_buf, icmp_len));
 
-    int tx_rc = fabric_netif_tx(iface, frame, (uint32_t)frame_len);
+    int tx_rc = net_frame_emit(iface, dst_host, frame, (uint32_t)frame_len);
     kfree(frame);
 
-    if (tx_rc != RDNX_OK) {
+    if (tx_rc != 0) {
         spinlock_lock(&g_ping.lock);
         g_ping.waiting = 0;
         spinlock_unlock(&g_ping.lock);

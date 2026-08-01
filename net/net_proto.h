@@ -74,6 +74,15 @@ int  net_tx_params(fabric_netif_t* tx_iface, uint32_t dst_host,
                    uint8_t src_mac_out[BSD_ETHER_ADDR_LEN],
                    uint8_t dst_mac_out[BSD_ETHER_ADDR_LEN]);
 
+/*
+ * Emit a fully built frame. Frames addressed to one of our own wire
+ * addresses are looped back into the ingress path instead of being handed
+ * to the NIC; everything else is transmitted normally.
+ * Returns 0 on success, -1 otherwise.
+ */
+int  net_frame_emit(fabric_netif_t* iface, uint32_t dst_host,
+                    const void* frame, uint32_t frame_len);
+
 /* -------------------------------------------------------------------------
  * Time helpers shared by both layers
  * ---------------------------------------------------------------------- */

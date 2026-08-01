@@ -246,6 +246,29 @@ int net_tx_params(fabric_netif_t* tx_iface,
     return 0;
 }
 
+int net_frame_emit(fabric_netif_t* iface, uint32_t dst_host,
+                   const void* frame, uint32_t frame_len)
+{
+    if (!iface || !frame || frame_len == 0) {
+        return -1;
+    }
+
+    /*
+     * A frame addressed to one of our own wire addresses never comes back:
+     * the NIC transmits it and nothing reflects it, so the input path never
+     * sees it. Feed it straight into ingress instead.
+     *
+     * Loopback interfaces are excluded — lo0 already re-injects from its own
+     * tx callback, and routing 127.0.0.1 through here would bypass that.
+     */
+    if ((iface->flags & FABRIC_NETIF_F_LOOPBACK) == 0 &&
+        net_is_local_ipv4(dst_host, NULL)) {
+        return (net_ingress_frame(frame, frame_len, iface) == 0) ? 0 : -1;
+    }
+
+    return (fabric_netif_tx(iface, frame, frame_len) == RDNX_OK) ? 0 : -1;
+}
+
 static int net_send_arp_reply(fabric_netif_t* iface,
                               const uint8_t peer_mac[BSD_ETHER_ADDR_LEN],
                               uint32_t peer_ip,

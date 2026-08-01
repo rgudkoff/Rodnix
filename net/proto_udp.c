@@ -69,9 +69,9 @@ int udp_proto_send(fabric_netif_t* iface,
     uh->uh_sum = bsd_htons(bsd_udp4_checksum(src_host, dst_host, uh,
                                              (const void*)(uh + 1), len));
 
-    int tx_rc = fabric_netif_tx(iface, frame, (uint32_t)frame_len);
+    int tx_rc = net_frame_emit(iface, dst_host, frame, (uint32_t)frame_len);
     kfree(frame);
-    return (tx_rc == RDNX_OK) ? (int)len : -1;
+    return (tx_rc == 0) ? (int)len : -1;
 }
 
 int udp_proto_parse(const void* frame, size_t frame_len,
