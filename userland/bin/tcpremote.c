@@ -15,8 +15,8 @@
 #define AF_INET     2
 #define SOCK_STREAM 1
 
-/* example.com: 93.184.216.34 = 0x5DB8D822 */
-#define REMOTE_ADDR 0x5DB8D822u
+/* Cloudflare DNS/HTTP: 1.1.1.1 = 0x01010101, port 80 (HTTP 301 redirect) */
+#define REMOTE_ADDR 0x01010101u
 #define REMOTE_PORT 80u
 
 typedef struct sockaddr_in {
@@ -47,7 +47,7 @@ static void write_uint(uint64_t n)
 
 int main(void)
 {
-    write_str("tcpremote: connecting to 93.184.216.34:80...\n");
+    write_str("tcpremote: connecting to 1.1.1.1:80 (Cloudflare)...\n");
 
     long fd = posix_socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -71,7 +71,7 @@ int main(void)
     /* Minimal HTTP/1.0 request — no persistent connection */
     const char req[] =
         "GET / HTTP/1.0\r\n"
-        "Host: example.com\r\n"
+        "Host: 1.1.1.1\r\n"
         "Connection: close\r\n"
         "\r\n";
     uint64_t req_len = sizeof(req) - 1u;

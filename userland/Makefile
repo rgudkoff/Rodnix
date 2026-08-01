@@ -98,6 +98,7 @@ PIPETEST_SRCS = bin/pipetest.c
 UDPTEST_SRCS = bin/udptest.c
 TCPTEST_SRCS = bin/tcptest.c
 TCPREMOTE_SRCS = bin/tcpremote.c
+WGET_SRCS = bin/wget.c
 FSAPITEST_SRCS = bin/fsapitest.c
 FORKTEST_SRCS = bin/forktest.c
 EXECVETEST_SRCS = bin/execvetest.c
@@ -129,7 +130,7 @@ VI_SRCS     = bin/vi.c
 PTHREAD_TEST_SRCS_CPP = bin/pthread_test.cpp
 
 CRT0_OBJ = $(BUILD_DIR)/crt0.o
-LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c libc/pwd.c libc/pthread.c
+LIBC_SRCS = libc/errno.c libc/string.c libc/ctype.c libc/stdlib.c libc/stdio.c libc/malloc.c libc/dirent.c libc/inet.c libc/dns.c libc/libgen.c libc/math.c libc/posix.c libc/getopt.c libc/sha256.c libc/grp.c libc/pwd.c libc/pthread.c
 
 ifeq ($(ARCH),x86_64)
 LIBC_OBJS = $(addprefix $(BUILD_DIR)/, $(LIBC_SRCS:.c=.o)) $(BUILD_DIR)/libc/setjmp.o $(BUILD_DIR)/libc/pthread_clone.o
@@ -182,6 +183,7 @@ PIPETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(PIPETEST_SRCS:.c=.o)) $(CRT0_OBJ) $
 UDPTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(UDPTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TCPTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(TCPTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 TCPREMOTE_OBJS = $(addprefix $(BUILD_DIR)/, $(TCPREMOTE_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
+WGET_OBJS = $(addprefix $(BUILD_DIR)/, $(WGET_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FSAPITEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FSAPITEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 FORKTEST_OBJS = $(addprefix $(BUILD_DIR)/, $(FORKTEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
 EXECVETEST_OBJS = $(addprefix $(BUILD_DIR)/, $(EXECVETEST_SRCS:.c=.o)) $(CRT0_OBJ) $(LIBC_OBJS)
@@ -247,6 +249,7 @@ PIPETEST_ELF = $(BUILD_DIR)/pipetest.elf
 UDPTEST_ELF = $(BUILD_DIR)/udptest.elf
 TCPTEST_ELF = $(BUILD_DIR)/tcptest.elf
 TCPREMOTE_ELF = $(BUILD_DIR)/tcpremote.elf
+WGET_ELF = $(BUILD_DIR)/wget.elf
 FSAPITEST_ELF = $(BUILD_DIR)/fsapitest.elf
 FORKTEST_ELF = $(BUILD_DIR)/forktest.elf
 EXECVETEST_ELF = $(BUILD_DIR)/execvetest.elf
@@ -326,6 +329,7 @@ PIPETEST_BIN = $(BIN_DIR)/pipetest
 UDPTEST_BIN = $(BIN_DIR)/udptest
 TCPTEST_BIN = $(BIN_DIR)/tcptest
 TCPREMOTE_BIN = $(BIN_DIR)/tcpremote
+WGET_BIN = $(BIN_DIR)/wget
 FSAPITEST_BIN = $(BIN_DIR)/fsapitest
 FORKTEST_BIN = $(BIN_DIR)/forktest
 EXECVETEST_BIN = $(BIN_DIR)/execvetest
@@ -347,7 +351,7 @@ PTHREAD_TEST_BIN = $(BIN_DIR)/pthread_test
 
 .PHONY: all clean check-bsd-abi sync-bsd-abi
 
-all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TTYSIZE_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(TCPREMOTE_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(SVSTAT_BIN) $(SVCTL_BIN) $(SERVICE_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
+all: check-bsd-abi $(INIT_BIN) $(LOGIN_BIN) $(SH_BIN) $(ECHO_BIN) $(LS_BIN) $(CAT_BIN) $(TRUE_BIN) $(IFCONFIG_BIN) $(PING_BIN) $(HWLIST_BIN) $(DEVREG_BIN) $(FABRICLS_BIN) $(FABRICEVENTS_BIN) $(FABRICNETCHECK_BIN) $(HOSTINFO_BIN) $(CPUINFO_BIN) $(DISKINFO_BIN) $(KMODCTL_BIN) $(SLEEP_BIN) $(SIGTEST_BIN) $(STTY_BIN) $(TTYSIZE_BIN) $(TIMECHECK_BIN) $(DATE_BIN) $(HWCLOCK_BIN) $(SYSCALLTEST_BIN) $(TTYREADTEST_BIN) $(SCSTAT_BIN) $(STDIO_SMOKE_BIN) $(POLLTEST_BIN) $(SELECTTEST_BIN) $(FUTEXTEST_BIN) $(PIPETEST_BIN) $(UDPTEST_BIN) $(TCPTEST_BIN) $(TCPREMOTE_BIN) $(WGET_BIN) $(FSAPITEST_BIN) $(FORKTEST_BIN) $(EXECVETEST_BIN) $(CONTRACT_FD_BIN) $(CONTRACT_FD_INHERIT_BIN) $(CONTRACT_SPAWN_WAIT_BIN) $(CONTRACT_EXEC_PROBE_BIN) $(CONTRACT_EXEC_AFTER_BIN) $(CONTRACT_HEAP_BIN) $(CONTRACT_DIRENT_BIN) $(CONTRACT_FSIO_BIN) $(CONTRACT_WAIT_NONCHILD_BIN) $(DEMO_KMOD) $(DEMO_KO) $(CP_BIN) $(MV_BIN) $(RM_BIN) $(GREP_BIN) $(FIND_BIN) $(PASSWD_BIN) $(ID_BIN) $(GROUPS_BIN) $(WHOAMI_BIN) $(SVSTAT_BIN) $(SVCTL_BIN) $(SERVICE_BIN) $(VI_BIN) $(PTHREAD_TEST_BIN) $(PS_BIN) $(TOP_BIN)
 
 check-bsd-abi:
 	@python3 ../scripts/check_bsd_abi_headers.py
@@ -514,6 +518,10 @@ $(TCPTEST_ELF): $(TCPTEST_OBJS) link.ld
 $(TCPREMOTE_ELF): $(TCPREMOTE_OBJS) link.ld
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -o $@ $(TCPREMOTE_OBJS)
+
+$(WGET_ELF): $(WGET_OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(WGET_OBJS)
 
 $(FSAPITEST_ELF): $(FSAPITEST_OBJS) link.ld
 	@mkdir -p $(dir $@)
@@ -806,6 +814,11 @@ $(TCPTEST_BIN): $(TCPTEST_ELF)
 	chmod 0755 $@
 
 $(TCPREMOTE_BIN): $(TCPREMOTE_ELF)
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
+	chmod 0755 $@
+
+$(WGET_BIN): $(WGET_ELF)
 	@mkdir -p $(BIN_DIR)
 	cp $< $@
 	chmod 0755 $@

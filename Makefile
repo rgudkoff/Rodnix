@@ -150,7 +150,14 @@ QEMU_ACCEL ?=
 # - For file-backed logs, set QEMU_SERIAL="file:boot.log".
 QEMU_SERIAL ?= mon:stdio
 # QEMU NIC for first real Fabric backend (e1000).
+# Set QEMU_PCAP=1 to capture all NIC traffic to /tmp/rodnix-net.pcap for analysis.
+QEMU_PCAP ?= 0
+ifeq ($(QEMU_PCAP),1)
+QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0 \
+                  -object filter-dump,id=pcap0,netdev=net0,file=/tmp/rodnix-net.pcap
+else
 QEMU_NET_FLAGS ?= -netdev user,id=net0 -device e1000,netdev=net0
+endif
 QEMU_CPU ?= qemu64,+apic,+x2apic
 QEMU_SMP ?= 1
 QEMU_DISK_IMG ?= $(BUILD_DIR)/rodnix-disk.img
