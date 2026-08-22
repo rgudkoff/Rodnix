@@ -7,12 +7,12 @@
 #include "../../core/task.h"
 #include "types.h"
 #include "gdt.h"
+#include "cpu_topology.h"
 #include "../../../include/common.h"
 #include <stddef.h>
 
 /* Use volatile to prevent compiler optimizations that might cause issues */
 static volatile cpu_info_t cpu_info_cache;
-static volatile uint32_t cpu_count = 1;
 static volatile bool cpu_initialized = false;
 static volatile uint64_t cpu_freq_hz = 0;
 static char cpu_vendor_str[16];
@@ -317,7 +317,10 @@ uint32_t cpu_get_id(void)
 
 uint32_t cpu_get_count(void)
 {
-    return cpu_count;
+    /* Reported from the MADT inventory rather than the local cache: the cache
+     * is written by cpu_init(), which runs before ACPI is parsed and can only
+     * ever see the processor it runs on. Falls back to 1 until then. */
+    return cpu_topology_count();
 }
 
 void cpu_save_context(thread_context_t* ctx)

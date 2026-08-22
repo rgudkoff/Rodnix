@@ -171,7 +171,7 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke usb-image usb-flash
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-smp-topology check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke usb-image usb-flash
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
@@ -343,6 +343,9 @@ check-contract-10:
 check-ifconfig-smoke:
 	@bash scripts/ci/smoke_ifconfig_qemu.sh
 
+check-smp-topology:
+	@bash scripts/ci/smoke_smp_topology.sh
+
 check-tcc-smoke tcc-smoke:
 	@bash scripts/ci/smoke_tcc_qemu.sh
 
@@ -438,6 +441,7 @@ help:
 	@echo "  contract-smoke - Alias for check-contract"
 	@echo "  check-contract-10 - Run contract smoke 10 times"
 	@echo "  check-ifconfig-smoke - Run ifconfig smoke scenario in QEMU"
+	@echo "  check-smp-topology - Verify MADT CPU inventory against -smp 1/2/4/8"
 	@echo "  tcc-smoke    - Boot with injected TCC and compile a smoke object in QEMU"
 	@echo "  sync-bsd-abi - Sync userland ABI headers from the vendor snapshot"
 	@echo "  tcc         - Cross-compile TCC for RodNIX (needs x86_64-elf-gcc)"

@@ -66,6 +66,7 @@ KERNEL_ARCH_X86_64_C_SRCS := \
 	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/cpu_topology.c \
 	kernel/arch/x86_64/gdt.c \
 	kernel/arch/x86_64/pmm.c \
 	kernel/arch/x86_64/paging.c \

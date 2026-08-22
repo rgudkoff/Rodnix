@@ -19,6 +19,7 @@
 #include "../kernel/posix/posix_syscall.h"
 #include "../kernel/arch/config.h"
 #include "../kernel/arch/acpi.h"
+#include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
@@ -89,6 +90,32 @@ sysinit_acpi(void)
         klog("acpi", "tables discovered\n");
     } else {
         klog("acpi", "unavailable, using legacy fallbacks\n");
+    }
+    return RDNX_OK;
+}
+
+static int
+sysinit_cpu_topology(void)
+{
+    /* Runs after apic_init: identifying which MADT entry is the boot
+     * processor requires reading the live LAPIC ID. */
+    if (cpu_topology_init() != 0) {
+        klog("cpu", "processor inventory unavailable\n");
+        return RDNX_OK;
+    }
+
+    uint32_t total = cpu_topology_count();
+    uint32_t startable = cpu_topology_startable_count();
+    const struct cpu_topology_entry* bsp =
+        cpu_topology_get(cpu_topology_bsp_index());
+
+    klog("cpu", "%u processor(s), %u startable, BSP apic_id=%u\n",
+         (unsigned)total,
+         (unsigned)startable,
+         bsp ? (unsigned)bsp->apic_id : 0u);
+
+    if (bootlog_is_verbose()) {
+        cpu_topology_report();
     }
     return RDNX_OK;
 }
@@ -297,6 +324,11 @@ kernel_run_bootstrap_sysinit(void)
 
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_THIRD, "apic_init", sysinit_apic) != 0) {
         panic("APIC init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_MIDDLE, "cpu_topology_init",
+                         sysinit_cpu_topology) != 0) {
+        panic("CPU topology init failed");
     }
 
     if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_FIRST, "timer_init", sysinit_timer) != 0) {
