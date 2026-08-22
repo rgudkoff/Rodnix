@@ -24,6 +24,7 @@ KERNEL_C_SRCS += \
 	kernel/posix/posix_sys_info.c \
 	kernel/debug.c \
 	kernel/task.c \
+	kernel/kmutex.c \
 	mm/vm_object.c \
 	mm/vm_page_ref.c \
 	mm/vm_pager.c \
