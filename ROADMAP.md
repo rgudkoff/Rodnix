@@ -39,7 +39,7 @@ system on the first concurrent syscall.
 - [x] Enumerate CPUs from MADT type 0/9 (`acpi_madt_get_cpus`)
 - [x] Per-CPU infrastructure: `struct percpu`, GS base, `cpu_id()`
 - [x] Rewrite `syscall_fast_entry.S` / `isr_stubs.S` onto GS-relative state
-- [ ] Per-CPU GDT + TSS + IST stacks (IST is unused today; introduce it here)
+- [x] Per-CPU GDT + TSS + IST stacks for #DF/NMI/#MC
 - [ ] Implement `interrupt_send_ipi()` (xAPIC ICR pair and x2APIC MSR)
 - [ ] AP trampoline (`ap_trampoline.S`) + `ap_entry()` bring-up path
 - [ ] Per-CPU run-queues and reschedule IPI

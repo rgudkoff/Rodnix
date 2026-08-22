@@ -12,4 +12,9 @@
 void gdt_init(void);
 void tss_set_rsp0(uint64_t rsp0);
 
+/* Allocate this CPU's IST stacks and point the #DF/NMI/#MC gates at them.
+ * Needs the heap, so it runs after memory_init rather than inside gdt_init.
+ * Call with interrupts masked: it rewrites live IDT gates. */
+int cpu_ist_init(void);
+
 #endif /* _RODNIX_ARCH_X86_64_GDT_H */

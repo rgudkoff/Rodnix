@@ -21,6 +21,7 @@
 #include "../kernel/arch/acpi.h"
 #include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/percpu.h"
+#include "../kernel/arch/gdt.h"
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
@@ -57,10 +58,25 @@ sysinit_cpu(void)
 static int
 sysinit_percpu(void)
 {
-    /* Runs immediately after cpu_init and before anything that can call
-     * task_get_current(): from here on, "which processor am I" is a
-     * GS-relative load rather than a hardcoded zero. */
+    /* The very first step: from here on, "which processor am I" is a
+     * GS-relative load rather than a hardcoded zero, and everything that
+     * follows -- the GDT and TSS slot, the current task and thread -- can
+     * ask honestly. */
     percpu_init_bsp();
+    return RDNX_OK;
+}
+
+static int
+sysinit_ist(void)
+{
+    /* After memory_init, because the IST stacks come from the heap, and
+     * still before interrupts are unmasked, because this rewrites live IDT
+     * gates. */
+    if (cpu_ist_init() != 0) {
+        klog("cpu", "IST stacks unavailable, fatal exceptions stay on IST 0\n");
+        return RDNX_OK;
+    }
+    klog("cpu", "IST stacks armed for #DF/NMI/#MC\n");
     return RDNX_OK;
 }
 
@@ -318,14 +334,16 @@ sysinit_net(void)
 void
 kernel_run_bootstrap_sysinit(void)
 {
-    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_FIRST, "cpu_init", sysinit_cpu) != 0) {
+    /* Per-CPU state comes first: gdt_init() inside cpu_init() picks its GDT
+     * and TSS slot by asking which processor it is running on. */
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_FIRST, "percpu_init", sysinit_percpu) != 0) {
+        panic("Per-CPU init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_SECOND, "cpu_init", sysinit_cpu) != 0) {
         panic("CPU init failed");
     }
     klog("cpu", "ready\n");
-
-    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_SECOND, "percpu_init", sysinit_percpu) != 0) {
-        panic("Per-CPU init failed");
-    }
 
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_FIRST, "interrupts_init", sysinit_interrupts) != 0) {
         panic("Interrupts init failed");
@@ -336,6 +354,10 @@ kernel_run_bootstrap_sysinit(void)
         panic("Memory init failed");
     }
     klog("memory", "PMM + VM ready\n");
+
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_THIRD, "ist_init", sysinit_ist) != 0) {
+        panic("IST init failed");
+    }
 
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_SECOND, "acpi_init", sysinit_acpi) != 0) {
         panic("ACPI init failed");
