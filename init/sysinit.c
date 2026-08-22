@@ -22,6 +22,7 @@
 #include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/core/giant.h"
+#include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
 #include "../kernel/arch/x86_64/smp.h"
 #include "../kernel/arch/syscall_fast.h"
@@ -165,6 +166,9 @@ sysinit_ipi(void)
         klog("apic", "no LAPIC, IPI unavailable\n");
         return RDNX_OK;
     }
+
+    /* The shootdown handler must exist before any processor can send one. */
+    tlb_shootdown_init();
 
     if (apic_ipi_selftest() == 0) {
         klog("apic", "IPI delivery verified (%s)\n", lapic_access_mode_name());

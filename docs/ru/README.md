@@ -50,6 +50,7 @@
 - `irq_audit.md` — разбор подсистемы прерываний и порядок исправлений.
 - `vfs_audit.md` — разбор файлового слоя на конкурентность.
 - `smp_locking_strategy.md` — разбор FreeBSD/XNU и смена подхода к блокировкам.
+- `mm_architecture.md` — разбор управления памятью у FreeBSD/XNU и граница pmap.
 - `industrial_readiness.md` — критерии готовности к выпуску.
 - `industrial_gap.md` — gap-анализ относительно критериев готовности.
 

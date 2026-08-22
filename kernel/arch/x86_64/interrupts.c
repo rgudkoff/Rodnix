@@ -146,7 +146,8 @@ int interrupts_init(void)
         interrupt_vector_reserved[i] = true;   /* legacy IRQ window */
     }
     interrupt_vector_reserved[128] = true;     /* syscall gate */
-    interrupt_vector_reserved[VECTOR_RESCHED] = true;   /* scheduler entry */
+    interrupt_vector_reserved[VECTOR_RESCHED] = true;        /* scheduler entry */
+    interrupt_vector_reserved[VECTOR_TLB_SHOOTDOWN] = true;  /* TLB shootdown */
     for (uint32_t i = VECTOR_LAPIC_TIMER; i <= 0xEFu; i++) {
         interrupt_vector_reserved[i] = true;            /* timer class */
     }

@@ -16,7 +16,8 @@
  *   0x40-0xDF  class 4-13  dynamic pool: MSI and other device interrupts
  *   0x80       class 8     syscall gate, reserved out of the pool above
  *   0xE0-0xEF  class 14    system timer
- *   0xF0-0xFE  class 15    inter-processor interrupts and the reschedule trap
+ *   0xF0-0xFE  class 15    inter-processor interrupts, the reschedule trap
+ *                          and the TLB shootdown
  *   0xFF       class 15    spurious
  *
  * Software interrupts raised with `int n` are not subject to the TPR at all,
@@ -47,6 +48,7 @@
 #define VECTOR_IPI_FIRST    0xF0
 #define VECTOR_IPI_LAST     0xFE
 #define VECTOR_RESCHED      0xF1
+#define VECTOR_TLB_SHOOTDOWN 0xF2
 #define VECTOR_SPURIOUS     0xFF
 
 /* IRQL levels as TPR values. Each masks every vector at or below its class.
