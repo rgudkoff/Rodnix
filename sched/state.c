@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/core/interrupts.h"
 #include "../include/debug.h"
 #include "../include/error.h"
 
@@ -135,7 +136,7 @@ void scheduler_start(void)
     /* Kick preemption to start the first thread on the next timer IRQ */
     resched_pending = true;
     /* Force a timer-like IRQ to start the first thread */
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
     /* If we return here, we did not switch yet */
 }
 

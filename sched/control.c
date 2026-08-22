@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/core/interrupts.h"
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../include/debug.h"
@@ -177,7 +178,7 @@ void scheduler_exit_current(void)
         }
     }
     resched_pending = true;
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
     for (;;) {
         cpu_idle();
     }

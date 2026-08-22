@@ -833,7 +833,7 @@ static int shell_cmd_run(int argc, char** argv)
     /* Block shell before switching away to avoid it staying READY */
     scheduler_block();
     scheduler_add_thread(thread);
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
     return RDNX_OK;
 }
 

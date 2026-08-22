@@ -8,6 +8,10 @@
 
 #include <stdint.h>
 
+/* Software vector reserved for entering the scheduler. Not a hardware
+ * source: nothing is in service when it fires, so it must not be EOI'd. */
+#define RESCHED_VECTOR 0xF1
+
 typedef struct interrupt_frame {
     /* Segment registers saved by stubs */
     uint64_t gs;

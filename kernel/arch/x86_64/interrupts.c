@@ -139,6 +139,7 @@ int interrupts_init(void)
         interrupt_vector_reserved[i] = true;   /* legacy IRQ window */
     }
     interrupt_vector_reserved[128] = true;     /* syscall gate */
+    interrupt_vector_reserved[RESCHED_VECTOR] = true; /* scheduler entry */
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INT-2] Set IRQL\n");
@@ -303,6 +304,15 @@ irql_t set_irql(irql_t new_level)
     }
     
     return old_level;
+}
+
+void interrupt_trigger_resched(void)
+{
+    __asm__ volatile ("int %0"
+                      :
+                      : "i"(RESCHED_VECTOR)
+                      : "rax", "rcx", "rdx", "rsi", "rdi",
+                        "r8", "r9", "r10", "r11", "cc", "memory");
 }
 
 void interrupt_wait(void)

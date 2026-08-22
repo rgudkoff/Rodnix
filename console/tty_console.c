@@ -1,4 +1,5 @@
 #include "tty_console.h"
+#include "../kernel/core/interrupts.h"
 #include "../kernel/input/input.h"
 #include "../sched/scheduler.h"
 #include "../include/console.h"
@@ -386,11 +387,7 @@ int tty_console_read(void* buffer, size_t size, bool echo)
             }
             scheduler_ast_check();
             scheduler_yield();
-            __asm__ volatile ("int $32"
-                              :
-                              :
-                              : "rax", "rcx", "rdx", "rsi", "rdi",
-                                "r8", "r9", "r10", "r11", "cc", "memory");
+            interrupt_trigger_resched();
             continue;
         }
         tty_process_input_char(in, echo);

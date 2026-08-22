@@ -251,6 +251,18 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         return handle_syscall(regs);
     }
     
+    /*
+     * Reschedule trap. Deliberately short: no handler, and above all no EOI.
+     * It is a software interrupt, so nothing is in service, and an EOI here
+     * would retire whatever genuinely was.
+     */
+    if (vector == RESCHED_VECTOR) {
+        /* The vector means "switch now", so the request is implicit in
+         * having been raised; callers need not set the flag themselves. */
+        percpu_self()->sched_resched_pending = true;
+        return scheduler_switch_from_irq(regs);
+    }
+
     /* Handle hardware interrupts (32-255), except the syscall gate on 128. */
     if (vector >= 32 && vector != SYSCALL_VECTOR) {
         /* Call registered handler if available */

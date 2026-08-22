@@ -4,6 +4,7 @@
  */
 
 #include "waitq.h"
+#include "../kernel/core/interrupts.h"
 #include "../kernel/fabric/spin.h"
 #include "scheduler.h"
 #include "../../include/error.h"
@@ -222,11 +223,7 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks)
     while (waitq_contains(q, self)) {
         scheduler_block();
         /* Trigger immediate dispatch to avoid spinning in current context. */
-        __asm__ volatile ("int $32"
-                          :
-                          :
-                          : "rax", "rcx", "rdx", "rsi", "rdi",
-                            "r8", "r9", "r10", "r11", "cc", "memory");
+        interrupt_trigger_resched();
     }
 
     int ret = self->wait_timed_out ? RDNX_E_TIMEOUT : RDNX_OK;
