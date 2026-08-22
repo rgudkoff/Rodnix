@@ -1,4 +1,6 @@
 #include "tty_console.h"
+#include "../kernel/unix/unix_layer.h"
+#include "../include/error.h"
 #include "../kernel/core/giant.h"
 #include "../kernel/core/interrupts.h"
 #include "../kernel/input/input.h"
@@ -404,6 +406,49 @@ int tty_console_write(const void* buffer, size_t size)
     if (!s) {
         return -1;
     }
+
+    /*
+     * Copy a user buffer in before touching it.
+     *
+     * This used to walk the caller's pointer byte by byte, which survives
+     * only while nothing can change the mapping underneath. On more than one
+     * processor it does not: the page can go away mid-loop and the kernel
+     * takes a fault on a user address it was trusting. That is what this
+     * traced back from -- a supervisor-mode page fault at `movsbl (%r14)`
+     * inside this loop, reproducible by running /bin/ls repeatedly under
+     * -smp 2 and never on one processor.
+     *
+     * The kernel already had the right mechanism; this path simply did not
+     * use it. unix_copy_from_user() validates the range and that it is
+     * mapped, which also closes the older hole of a caller handing the
+     * kernel a pointer of its choosing.
+     *
+     * Chunked rather than one allocation, so a large write costs a fixed
+     * amount of stack instead of a kmalloc that can fail.
+     */
+    if (unix_user_range_ok(buffer, size)) {
+        char chunk[256];
+        size_t done = 0;
+        int total = 0;
+
+        while (done < size) {
+            size_t n = size - done;
+            if (n > sizeof(chunk)) {
+                n = sizeof(chunk);
+            }
+            if (unix_copy_from_user(chunk, s + done, n) != RDNX_OK) {
+                return (total > 0) ? total : -1;
+            }
+            int rc = tty_console_write(chunk, n);
+            if (rc < 0) {
+                return (total > 0) ? total : rc;
+            }
+            total += rc;
+            done += n;
+        }
+        return total;
+    }
+
     for (size_t i = 0; i < size; i++) {
         tty_trace_char(s[i]);
         if ((tty_oflag & TTY_OFLAG_OPOST) != 0 &&
