@@ -82,7 +82,9 @@ make clean && make
 - Modify: `fs/Makefile` (добавить `fs/vfs_file.c`)
 - Modify: `kernel/unix/proc.h:81-83`
 - Modify: `kernel/unix/process/unix_proc.c:155-191`
-- Modify: `kernel/unix/fd/unix_fd.c` (`unix_fd_release`, `unix_fd_dup_into`, `unix_clone_fds_for_spawn`, `unix_bind_fd_to_console`, `unix_fs_open*`, `unix_fs_read/write/lseek`)
+- Modify: `kernel/unix/fd/unix_fd.c` (`unix_fd_release`, `unix_fd_dup_into`, `unix_clone_fds_for_spawn`, `unix_bind_fd_to_console`, `unix_fs_open*`, `unix_fs_read/write/lseek`, удаление enum `UNIX_POLL*`)
+- Modify: `kernel/linux/linux_compat.c` (7 сайтов — механический перенос на `f->kind`, компилируемость)
+- Modify: `kernel/posix/posix_sys_vm.c:76` (то же)
 - Test: `userland/init/init.c` (`run_contract_mode_if_enabled`)
 
 **Interfaces:**
@@ -619,6 +621,40 @@ static const file_ops_t socket_fileops_stub = {
 В `unix_fs_read`/`unix_fs_write` для ветки VFS вызывать `f->ops->read(f, buf, n)` / `f->ops->write(f, buf, n)` — иначе `pos` из описания не будет использован и CT-034 не пройдёт. Ветки пайпа и сокета оставить как есть (переводятся в Task 3).
 
 В `unix_fs_lseek` для VFS вызывать `f->ops->seek(f, off, whence)`.
+
+Удалить безымянный enum `UNIX_POLLIN`…`UNIX_POLLNVAL` из
+`kernel/unix/fd/unix_fd.c:51-57`: те же имена теперь объявлены в
+`include/sys/file.h`, который этот файл обязан включать ради `rdnx_file_t`,
+и без удаления получится переопределение.
+
+```bash
+grep -n "UNIX_POLLIN" kernel/unix/fd/unix_fd.c include/sys/file.h
+```
+
+Expected: определение ровно одно, в `include/sys/file.h`.
+
+**Обязательно в этой же задаче — иначе дерево не соберётся.** Поле
+`proc->fd_kind` удаляется, но его читают ещё восемь мест за пределами
+`unix_fd.c`: семь в `kernel/linux/linux_compat.c` и одно в
+`kernel/posix/posix_sys_vm.c:76`. Механически перенаправить их на временное
+поле объекта, сохранив существующую логику без изменений:
+
+```c
+    /* было: task_proc(task)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+    rdnx_file_t* f = (rdnx_file_t*)proc_fd_get(task_proc(task), fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+```
+
+Перевод этих восьми мест на сравнение указателя ops — задача Task 7; здесь
+только сохранить компилируемость.
+
+```bash
+grep -rn "fd_kind" --exclude-dir=.git --exclude-dir=docs .
+```
+
+Expected: пусто — поля `rdnx_proc.fd_kind` больше нет ни в одном обращении.
 
 - [ ] **Step 10: Собрать ядро**
 
@@ -1509,19 +1545,7 @@ void poll_end(poll_ctx_t* pc)
     waitq_init(&thread->poll_wq, "poll");
 ```
 
-- [ ] **Step 5: Убрать дубликат констант готовности**
-
-`UNIX_POLLIN`/`UNIX_POLLOUT`/`UNIX_POLLERR`/`UNIX_POLLHUP`/`UNIX_POLLNVAL`
-объявлены в `include/sys/file.h` (Task 1). Удалить безымянный enum из
-`kernel/unix/fd/unix_fd.c:51-57` и убедиться, что файл берёт их из заголовка:
-
-```bash
-grep -n "UNIX_POLLIN" kernel/unix/fd/unix_fd.c include/sys/file.h
-```
-
-Expected: определение ровно одно, в `include/sys/file.h`.
-
-- [ ] **Step 6: Реализовать `poll` в трёх ops**
+- [ ] **Step 5: Реализовать `poll` в трёх ops**
 
 В `kernel/unix/fd/pipe.c` — добавить `selinfo_t sel;` в `unix_pipe_t`, вызвать `selinfo_init(&p->sel)` при создании, вызывать `sel_wakeup(&p->sel)` в конце `pipe_fop_write` (появились данные), в `pipe_fop_read` (освободилось место) и в `pipe_fop_close` (изменилось число концов). Заменить `scheduler_yield()` в теле чтения на ожидание через `poll_ctx` с одной регистрацией.
 
@@ -1572,7 +1596,7 @@ grep -n "rx_len\|accept_tail\|state = TCP_ST" net/socket.c
 
 Вписать `.poll` во все три таблицы.
 
-- [ ] **Step 7: Переписать `unix_fs_poll`**
+- [ ] **Step 6: Переписать `unix_fs_poll`**
 
 ```c
 uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
@@ -1659,7 +1683,7 @@ uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
 
 `unix_fs_select` переписать поверх той же схемы: разобрать три `fd_set` в массив `unix_pollfd_u_t`, вызвать общий внутренний хелпер, собрать результат обратно. Удалить `unix_poll_one` целиком.
 
-- [ ] **Step 8: Зарегистрировать `selinfo.c` в сборке**
+- [ ] **Step 7: Зарегистрировать `selinfo.c` в сборке**
 
 В `kernel/Makefile`:
 
@@ -1667,12 +1691,12 @@ uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
 	kernel/unix/fd/selinfo.c \
 ```
 
-- [ ] **Step 9: Собрать и прогнать**
+- [ ] **Step 8: Собрать и прогнать**
 
 Run: `make clean && make && TIMEOUT_SEC=60 scripts/ci/contract_qemu.sh`
 Expected: PASS, включая `CT-039`. Отдельно убедиться, что `polltest` и `selecttest` из `userland/bin` не сломались.
 
-- [ ] **Step 10: Коммит**
+- [ ] **Step 9: Коммит**
 
 ```bash
 git add include/sys/selinfo.h kernel/unix/fd/selinfo.c kernel/Makefile \
@@ -1901,6 +1925,9 @@ grep -rn "UNIX_FD_KIND_\|->kind" --exclude-dir=.git --exclude-dir=docs .
         return (uint64_t)RDNX_E_INVALID;
     }
 ```
+
+Task 1 уже перенаправил эти восемь мест с `proc->fd_kind[]` на `f->kind`,
+сохранив логику. Здесь `f->kind` заменяется на сравнение ops.
 
 В `kernel/linux/linux_compat.c` каждая из семи проверок заменяется по тому же образцу: сравнение с `&vfs_fileops` или вызов `socket_file_sock(f)` там, где нужен сокет. Объявить `extern const file_ops_t vfs_fileops;` в `fs/vfs.h`.
 
