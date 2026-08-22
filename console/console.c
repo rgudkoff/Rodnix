@@ -1125,8 +1125,12 @@ void kputs(const char* str)
 
     /* Prevent recursive calls from exception handlers */
     if (kputs_in_progress) {
-        /* If already in kputs, just write directly to VGA to avoid recursion */
-        volatile uint16_t* vga = (volatile uint16_t*)VGA_MEMORY;
+        /* If already in kputs, just write directly to VGA to avoid recursion.
+         * Use the runtime buffer pointer rather than the raw VGA_MEMORY
+         * constant: once the low identity map is dropped the text buffer is
+         * only reachable through the kernel direct map, and dereferencing the
+         * physical address would fault (see console_set_vga_buffer()). */
+        volatile uint16_t* vga = (volatile uint16_t*)vga_buffer;
         static uint8_t safe_row = 0;
         static uint8_t safe_col = 0;
         
@@ -1141,7 +1145,7 @@ void kputs(const char* str)
                 safe_row++;
             } else if (*str != '\r') {
                 uint32_t idx = safe_row * VGA_WIDTH + safe_col;
-                if (idx < VGA_WIDTH * VGA_HEIGHT) {
+                if (vga && idx < VGA_WIDTH * VGA_HEIGHT) {
                     vga[idx] = (uint16_t)*str | ((uint16_t)0x0F << 8);
                 }
                 safe_col++;
