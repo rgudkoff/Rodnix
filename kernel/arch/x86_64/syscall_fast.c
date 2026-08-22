@@ -1,4 +1,5 @@
 #include "syscall_fast.h"
+#include "../../core/giant.h"
 #include "interrupt_frame.h"
 #include "../../syscall.h"
 #include "../../core/task.h"
@@ -76,6 +77,12 @@ uint64_t x86_64_syscall_dispatch_frame(interrupt_frame_t* frame, int fast_entry)
 
     syscall_account_entry(frame->rax, fast_entry);
 
+    /* From here to the return below the thread is running kernel code, so it
+     * holds the kernel-wide lock. Both entries -- SYSCALL and int 0x80 --
+     * funnel through this function, so this is the only place it has to be
+     * taken for system calls. */
+    giant_lock();
+
     cur = thread_get_current();
     prev_arch = NULL;
     if (cur) {
@@ -96,6 +103,8 @@ uint64_t x86_64_syscall_dispatch_frame(interrupt_frame_t* frame, int fast_entry)
         cur->arch_specific = prev_arch;
     }
     frame->rax = ret;
+
+    giant_unlock();
     return ret;
 }
 

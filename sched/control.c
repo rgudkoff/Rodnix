@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "../kernel/core/giant.h"
+#include "../kernel/arch/percpu.h"
 #include "../kernel/core/interrupts.h"
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
@@ -28,12 +30,40 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
 
 static void scheduler_yield_internal(bool irq_context)
 {
-    (void)irq_context;
     if (!scheduler_running) {
         return;
     }
-    /* Request preemption on next timer interrupt */
     resched_pending = true;
+
+    if (irq_context || !thread_get_current()) {
+        return;
+    }
+
+    /*
+     * Holding a spinlock means preemption is off and switching is not
+     * allowed; leave the request for the next tick, as before.
+     */
+    if (percpu_preempt_blocked()) {
+        return;
+    }
+
+    /*
+     * Otherwise, yield for real, and give up the kernel-wide lock while
+     * doing it.
+     *
+     * This kernel waits by polling: pipes, waitpid, the tty, the sockets and
+     * the reaper all spin on scheduler_yield() rather than sleeping on a
+     * wait queue. Seventeen loops, and every one of them would hold Giant
+     * across a wait for work that only another thread can do. Dropping it
+     * here covers all of them, instead of depending on seventeen call sites
+     * to remember -- and one that forgot would wedge the kernel outright.
+     *
+     * It also makes the name true. This used to set a flag and return, so a
+     * caller "yielding" kept running until the next timer tick.
+     */
+    uint32_t giant_depth = giant_drop();
+    interrupt_trigger_resched();
+    giant_pickup(giant_depth);
 }
 
 void scheduler_yield(void)
@@ -155,6 +185,14 @@ void scheduler_exit_current(void)
     if (!cur) {
         return;
     }
+
+    /*
+     * A thread that dies inside a system call still holds the kernel-wide
+     * lock it took on entry, and will never reach the release at the other
+     * end -- exit() does not return. Give it back here, where every path to
+     * a dead thread passes, rather than at each of them.
+     */
+    (void)giant_drop();
 
     scheduler_exit_wake_joiner(cur);
     scheduler_thread_set_state(cur, THREAD_STATE_DEAD, "scheduler_exit_current");

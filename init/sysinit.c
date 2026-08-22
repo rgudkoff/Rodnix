@@ -21,6 +21,7 @@
 #include "../kernel/arch/acpi.h"
 #include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/percpu.h"
+#include "../kernel/core/giant.h"
 #include "../kernel/arch/gdt.h"
 #include "../kernel/arch/x86_64/smp.h"
 #include "../kernel/arch/syscall_fast.h"
@@ -64,6 +65,7 @@ sysinit_percpu(void)
      * follows -- the GDT and TSS slot, the current task and thread -- can
      * ask honestly. */
     percpu_init_bsp();
+    giant_init();
     return RDNX_OK;
 }
 

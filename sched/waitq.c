@@ -4,6 +4,7 @@
  */
 
 #include "waitq.h"
+#include "../kernel/core/giant.h"
 #include "../kernel/core/interrupts.h"
 #include "../kernel/fabric/spin.h"
 #include "scheduler.h"
@@ -220,11 +221,21 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks)
         waitq_arm_timeout(self, deadline_ticks);
     }
 
+    /*
+     * Sleeping while holding the kernel-wide lock would stop the kernel for
+     * the duration. Every path that blocks goes through here, so this is the
+     * one place that has to get it right. Safe unconditionally: a caller
+     * that does not hold Giant drops nothing and picks nothing back up.
+     */
+    uint32_t giant_depth = giant_drop();
+
     while (waitq_contains(q, self)) {
         scheduler_block();
         /* Trigger immediate dispatch to avoid spinning in current context. */
         interrupt_trigger_resched();
     }
+
+    giant_pickup(giant_depth);
 
     int ret = self->wait_timed_out ? RDNX_E_TIMEOUT : RDNX_OK;
     self->wait_timed_out = 0;

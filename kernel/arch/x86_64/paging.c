@@ -13,6 +13,7 @@
  */
 
 #include "types.h"
+#include "percpu.h"
 #include "config.h"
 #include "pmm.h"
 #include "../../../include/debug.h"
@@ -67,7 +68,23 @@ static bool physmap_ready = false;
  * ============================================================================ */
 
 /* Current PML4 (CR3 register value) */
-static uint64_t current_pml4_phys = 0;
+/*
+ * Which page tables this processor is running on.
+ *
+ * This used to be a global mirroring CR3, written by paging_switch_pml4() on
+ * every context switch. CR3 is per-CPU hardware state, so a global mirror of
+ * it reports whatever the last processor to switch happened to be running:
+ * CPU A would take a fault for process X, ask for "the current page tables",
+ * and be handed process Y's -- mapping X's page into Y's address space. That
+ * is exactly the userspace fault this was chased down from.
+ *
+ * It lives in struct percpu now, which is where both references keep it:
+ * FreeBSD's pc_curpmap and XNU's cpu_active_cr3.
+ */
+static inline uint64_t current_pml4(void)
+{
+    return percpu_self()->current_pml4;
+}
 
 /* ============================================================================
  * Helper Functions
@@ -198,10 +215,10 @@ static uint64_t paging_alloc_page_table_identity(void)
  */
 static uint64_t* paging_get_pml4(void)
 {
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return NULL;
     }
-    return (uint64_t*)(current_pml4_phys + X86_64_KERNEL_VIRT_BASE);
+    return (uint64_t*)(current_pml4() + X86_64_KERNEL_VIRT_BASE);
 }
 
 uint64_t paging_create_user_pml4(void)
@@ -361,7 +378,7 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
 
     uint64_t entry = phys | (flags & (PTE_PRESENT | PTE_RW | PTE_USER | PTE_NX));
     pt[pt_idx] = entry;
-    if (current_pml4_phys == pml4_phys) {
+    if (current_pml4() == pml4_phys) {
         paging_flush_tlb((void*)virt);
     }
     return 0;
@@ -373,7 +390,7 @@ void paging_switch_pml4(uint64_t pml4_phys)
         return;
     }
     __asm__ volatile ("mov %0, %%cr3" : : "r"(pml4_phys));
-    current_pml4_phys = pml4_phys;
+    percpu_self()->current_pml4 = pml4_phys;
 }
 
 /**
@@ -466,9 +483,13 @@ static void paging_flush_tlb(void* virt)
 int paging_init(void)
 {
     /* Get current CR3 (PML4 physical address) */
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(current_pml4_phys));
+    {   /* Record what boot.S left in CR3 for this processor. */
+        uint64_t cr3;
+        __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+        percpu_self()->current_pml4 = cr3 & ~0xFFFULL;
+    }
     
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
     return 0;
@@ -660,7 +681,7 @@ int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t 
         return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -724,7 +745,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
         return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -734,7 +755,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     uint64_t pd_idx = paging_get_pd_index(virt);
     uint64_t pt_idx = paging_get_pt_index(virt);
 
-    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t* pml4 = (uint64_t*)current_pml4();
     uint64_t pml4_entry = pml4[pml4_idx];
     uint64_t* pdpt;
 
@@ -813,7 +834,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
         return RDNX_E_GENERIC; /* Not 2MB aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -822,7 +843,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     uint64_t pdpt_idx = paging_get_pdpt_index(virt);
     uint64_t pd_idx = paging_get_pd_index(virt);
 
-    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t* pml4 = (uint64_t*)current_pml4();
     uint64_t pml4_entry = pml4[pml4_idx];
     uint64_t* pdpt;
 
@@ -1001,7 +1022,7 @@ int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
 
     if (pd_entry & PTE_SIZE_2MB) {
         pd[pd_idx] = 0;
-        if (current_pml4_phys == pml4_phys) {
+        if (current_pml4() == pml4_phys) {
             paging_flush_tlb((void*)virt);
         }
         return 0;
@@ -1009,7 +1030,7 @@ int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
 
     uint64_t* pt = paging_get_pt(pd_entry);
     pt[pt_idx] = 0;
-    if (current_pml4_phys == pml4_phys) {
+    if (current_pml4() == pml4_phys) {
         paging_flush_tlb((void*)virt);
     }
     return 0;

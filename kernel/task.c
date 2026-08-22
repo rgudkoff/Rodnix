@@ -12,6 +12,7 @@
 #include "core/cpu.h"
 #include "arch/interrupt_frame.h"
 #include "arch/percpu.h"
+#include "core/giant.h"
 #include "core/interrupts.h"
 #include "../fs/vfs.h"
 #include "../include/console.h"
@@ -124,7 +125,22 @@ static void thread_trampoline(void)
     }
 
     self->state = THREAD_STATE_RUNNING;
+
+    /* Kernel threads run kernel code for their whole life, so they hold the
+     * kernel-wide lock for it -- dropped around every sleep, and dropped for
+     * good before a thread of this kind enters ring 3. The idle thread is
+     * excluded: it exists precisely to run when nothing else can, and taking
+     * Giant there would serialise idling. */
+    bool holds_giant = (self != (thread_t*)percpu_self()->sched_idle);
+    if (holds_giant) {
+        giant_lock();
+    }
+
     self->entry(self->arg);
+
+    if (holds_giant) {
+        giant_unlock();
+    }
 
     /* Thread finished — hand off to scheduler for proper teardown. */
     scheduler_exit_current();

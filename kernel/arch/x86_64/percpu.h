@@ -41,6 +41,9 @@ struct thread;
  * at the head, and keep the offsets below in step with isr_stubs.S and
  * syscall_fast_entry.S; the static assertions further down fail the build if
  * they drift. */
+/* Cache-line aligned so two processors' slots never share a line. XNU marks
+ * its hot per-CPU fields the same way; without it, one CPU touching its own
+ * state invalidates a neighbour's. */
 struct percpu {
     /* Offset 0 by contract: `mov %gs:0, %reg` yields the base itself, which
      * is how assembly reaches this struct without a relocation. */
@@ -80,6 +83,17 @@ struct percpu {
      *
      * Read by isr_stubs.S at PCPU_PREV_ONCPU. */
     volatile uint32_t* sched_prev_oncpu;
+
+    /* Physical address of the page tables this processor is running on.
+     *
+     * Per-CPU because CR3 is: a global mirror of it reports whatever the last
+     * processor to switch happened to be running, so a fault handler would
+     * look up "the current page tables" and be handed another process's.
+     *
+     * A field rather than a CR3 read, following both references -- FreeBSD's
+     * pc_curpmap and XNU's cpu_active_cr3. Reading a control register costs
+     * tens of cycles and this is consulted on every page mapped. */
+    uint64_t current_pml4;
 
     /* Interrupt request level of this processor. Was a single global, which
      * on SMP means every CPU reporting whatever the last one set. */
@@ -125,7 +139,7 @@ struct percpu {
     bool online;
 
     bool irq_checked;            /* percpu_irq_selftest() has run here */
-};
+} __attribute__((aligned(64)));
 
 /* Mirrored by the PCPU_* defines in isr_stubs.S and syscall_fast_entry.S. */
 _Static_assert(offsetof(struct percpu, self) == 0,

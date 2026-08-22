@@ -4,6 +4,7 @@
  */
 
 #include "usermode.h"
+#include "../../core/giant.h"
 #include "paging.h"
 #include "pmm.h"
 #include "gdt.h"
@@ -97,6 +98,12 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0,
         kputs("[USERMODE] switched CR3\n");
         kputs("[USERMODE] about to iretq\n");
     }
+
+    /* This is a one-way door: the thread leaves kernel code here and will
+     * only return through a syscall or a fault, each of which takes the
+     * kernel-wide lock for itself. Carrying it into ring 3 would hold it for
+     * as long as the program runs. */
+    (void)giant_drop();
 
     uint64_t user_cs = GDT_USER_CS | 0x3;
     uint64_t user_ds = GDT_USER_DS | 0x3;

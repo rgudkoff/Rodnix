@@ -28,6 +28,7 @@
 #include "lapic_regs.h"
 #include "vectors.h"
 #include "irqstat.h"
+#include "../../core/giant.h"
 #include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
@@ -391,7 +392,13 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             uint64_t cr2 = 0;
             __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
             task_t* task = task_get_current();
-            if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
+            /* A fault in thread context runs kernel code, so it runs under
+             * the kernel-wide lock like any other kernel entry. Recursive,
+             * so a fault taken by a thread that already holds it is fine. */
+            giant_lock();
+            int frc = vm_fault_handle(task, cr2, regs->err_code, regs->rip);
+            giant_unlock();
+            if (frc == RDNX_OK) {
                 return regs;
             }
         }

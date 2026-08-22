@@ -10,6 +10,7 @@
  */
 
 #include "types.h"
+#include "../../fabric/spin.h"
 #include "pmm.h"
 #include "config.h"
 #include "../../../include/debug.h"
@@ -802,17 +803,46 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
  * @note This would be part of a zone-based allocator in a more advanced implementation.
  *       For now, we use a simple bitmap-based approach.
  */
-uint64_t pmm_alloc_page(void)
-{
-    uint64_t phys = pmm_alloc_page_in_zone(PMM_ZONE_NORMAL);
+/*
+ * The physical page allocator, under a lock at last.
+ *
+ * It had none, across eleven hundred lines, which held only while one thread
+ * of control existed. Two processors in the bitmap at once hand the same page
+ * to two callers -- and when one of them uses it as a page table and the
+ * other as data, the processor starts reporting reserved-bit violations on
+ * user memory, which is exactly the fault this was traced back from.
+ *
+ * irqsave rather than the plain variant: this sits under kmalloc, which is
+ * reachable from an interrupt handler, so masking is required and not merely
+ * tidy. The sections are a bitmap scan, short by construction.
+ */
+static spinlock_t pmm_spin;
+
+/* Forward declarations: the convenience wrappers below call these directly
+ * rather than the public entry points, which would take the lock twice. */
+static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone);
+static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count);
+static void pmm_free_page_locked(uint64_t phys);
+
+static uint64_t pmm_alloc_page_locked(void){
+    uint64_t phys = pmm_alloc_page_in_zone_locked(PMM_ZONE_NORMAL);
     if (phys) {
         return phys;
     }
-    return pmm_alloc_page_in_zone(PMM_ZONE_LOW);
+    return pmm_alloc_page_in_zone_locked(PMM_ZONE_LOW);
 }
 
-uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
+uint64_t pmm_alloc_page(void)
 {
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    uint64_t _r = pmm_alloc_page_locked();
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+    return _r;
+}
+
+
+
+static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone){
     if (pmm_state.free_pages == 0 || zone >= PMM_ZONE_COUNT) {
         TRACE_EVENT("oom: pmm_alloc_page");
         memory_oom_inc_pmm();
@@ -863,6 +893,16 @@ uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
     return phys;
 }
 
+uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
+{
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    uint64_t _r = pmm_alloc_page_in_zone_locked(zone);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+    return _r;
+}
+
+
+
 /**
  * @function pmm_free_page
  * @brief Free a single physical page
@@ -871,8 +911,7 @@ uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
  * 
  * @note The address must be page-aligned and within managed range.
  */
-void pmm_free_page(uint64_t phys)
-{
+static void pmm_free_page_locked(uint64_t phys){
     if (phys < pmm_state.memory_start || phys >= pmm_state.memory_end) {
         return; /* Invalid address */
     }
@@ -900,6 +939,15 @@ void pmm_free_page(uint64_t phys)
     }
 }
 
+void pmm_free_page(uint64_t phys)
+{
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    pmm_free_page_locked(phys);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+}
+
+
+
 /**
  * @function pmm_alloc_pages
  * @brief Allocate multiple contiguous physical pages
@@ -914,17 +962,25 @@ void pmm_free_page(uint64_t phys)
  *       Zone-based allocation would provide better performance, but this
  *       simple approach works for initial implementation.
  */
-uint64_t pmm_alloc_pages(uint32_t count)
-{
-    uint64_t phys = pmm_alloc_pages_in_zone(PMM_ZONE_NORMAL, count);
+static uint64_t pmm_alloc_pages_locked(uint32_t count){
+    uint64_t phys = pmm_alloc_pages_in_zone_locked(PMM_ZONE_NORMAL, count);
     if (phys) {
         return phys;
     }
-    return pmm_alloc_pages_in_zone(PMM_ZONE_LOW, count);
+    return pmm_alloc_pages_in_zone_locked(PMM_ZONE_LOW, count);
 }
 
-uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
+uint64_t pmm_alloc_pages(uint32_t count)
 {
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    uint64_t _r = pmm_alloc_pages_locked(count);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+    return _r;
+}
+
+
+
+static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
     if (count == 0 || zone >= PMM_ZONE_COUNT) {
         return 0;
     }
@@ -1020,8 +1076,17 @@ uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
     return phys;
 }
 
-void pmm_reserve_range(uint64_t start, uint64_t end)
+uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
 {
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    uint64_t _r = pmm_alloc_pages_in_zone_locked(zone, count);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+    return _r;
+}
+
+
+
+static void pmm_reserve_range_locked(uint64_t start, uint64_t end){
     if (end <= start) {
         return;
     }
@@ -1032,14 +1097,31 @@ void pmm_reserve_range(uint64_t start, uint64_t end)
     pmm_rebuild_free_lists();
 }
 
-void pmm_release_range(uint64_t start, uint64_t end)
+void pmm_reserve_range(uint64_t start, uint64_t end)
 {
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    pmm_reserve_range_locked(start, end);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+}
+
+
+
+static void pmm_release_range_locked(uint64_t start, uint64_t end){
     if (end <= start) {
         return;
     }
     pmm_mark_range_free(start, end);
     pmm_rebuild_free_lists();
 }
+
+void pmm_release_range(uint64_t start, uint64_t end)
+{
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    pmm_release_range_locked(start, end);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+}
+
+
 
 /**
  * @function pmm_free_pages
@@ -1048,12 +1130,20 @@ void pmm_release_range(uint64_t start, uint64_t end)
  * @param phys Physical address of first page
  * @param count Number of pages to free
  */
-void pmm_free_pages(uint64_t phys, uint32_t count)
-{
+static void pmm_free_pages_locked(uint64_t phys, uint32_t count){
     for (uint32_t i = 0; i < count; i++) {
-        pmm_free_page(phys + i * PAGE_SIZE);
+        pmm_free_page_locked(phys + i * PAGE_SIZE);
     }
 }
+
+void pmm_free_pages(uint64_t phys, uint32_t count)
+{
+    uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
+    pmm_free_pages_locked(phys, count);
+    spinlock_unlock_irqrestore(&pmm_spin, _f);
+}
+
+
 
 /**
  * @function pmm_get_total_pages

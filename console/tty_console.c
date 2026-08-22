@@ -1,4 +1,5 @@
 #include "tty_console.h"
+#include "../kernel/core/giant.h"
 #include "../kernel/core/interrupts.h"
 #include "../kernel/input/input.h"
 #include "../sched/scheduler.h"
@@ -386,8 +387,9 @@ int tty_console_read(void* buffer, size_t size, bool echo)
                 break;
             }
             scheduler_ast_check();
+            /* scheduler_yield() switches and hands back the kernel-wide
+             * lock for the duration; see scheduler_yield_internal(). */
             scheduler_yield();
-            interrupt_trigger_resched();
             continue;
         }
         tty_process_input_char(in, echo);

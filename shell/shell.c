@@ -13,6 +13,7 @@
  */
 
 #include "shell.h"
+#include "../kernel/core/giant.h"
 #include "../kernel/input/input.h"
 #include "../kernel/core/boot.h"
 #include "../fs/vfs.h"
@@ -830,10 +831,15 @@ static int shell_cmd_run(int argc, char** argv)
     thread->joiner = thread_get_current();
     kprintf("[RUN] block shell tid=%llu\n",
             (unsigned long long)thread->joiner->thread_id);
-    /* Block shell before switching away to avoid it staying READY */
+    /* Block shell before switching away to avoid it staying READY.
+     * scheduler_block() puts this thread to sleep without going through
+     * waitq_wait_until, so the kernel-wide lock has to be handed back here
+     * explicitly -- the thread being joined needs it to run at all. */
+    uint32_t gd = giant_drop();
     scheduler_block();
     scheduler_add_thread(thread);
     interrupt_trigger_resched();
+    giant_pickup(gd);
     return RDNX_OK;
 }
 
