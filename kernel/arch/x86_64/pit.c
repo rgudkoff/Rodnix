@@ -26,6 +26,7 @@
 extern uint64_t pmm_alloc_page(void);
 extern void pmm_free_page(uint64_t phys);
 extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+extern int interrupt_unregister(uint32_t vector);
 
 /* ============================================================================
  * PIT I/O Ports
@@ -199,7 +200,11 @@ int pit_init(uint32_t frequency)
     }
     scheduler_set_tick_rate(frequency);
     
-    /* Register timer interrupt handler (IRQ 0 = vector 32) */
+    /* Register timer interrupt handler (IRQ 0 = vector 32).
+     * Vector 32 is the system timer vector and belongs to whichever timer is
+     * driving the tick; the unregister makes the handover explicit, since
+     * interrupt_register() refuses to overwrite a live handler. */
+    (void)interrupt_unregister(32);
     if (interrupt_register(32, pit_timer_handler) != 0) {
         return -1;
     }

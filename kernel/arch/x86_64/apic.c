@@ -1246,12 +1246,6 @@ int apic_timer_init(uint32_t frequency)
     apic_timer_frequency = frequency;
     scheduler_set_tick_rate(frequency);
 
-    /* Register timer interrupt handler (vector 32) */
-    extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
-    if (interrupt_register(32, apic_timer_handler) != 0) {
-        return -1;
-    }
-
     /*
      * Mode selection (XNU-style priority):
      *
@@ -1316,6 +1310,19 @@ int apic_timer_init(uint32_t frequency)
         }
         kprintf("[APIC-TIMER-INIT] mode=periodic hz=%u ticks_per_ms=%u\n",
                 frequency, apic_timer_ticks_per_ms);
+    }
+
+    /* Claim vector 32 only now that a working mode has been established.
+     * Registering earlier meant that a failure below left the vector held by
+     * a timer that never started, and the PIT fallback could not take it --
+     * which is exactly what refusing to overwrite a live handler exposed
+     * (docs/ru/irq_audit.md, F3). Calibration borrows the PIT, so the
+     * handover is explicit rather than a silent overwrite. */
+    extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+    extern int interrupt_unregister(uint32_t vector);
+    (void)interrupt_unregister(32);
+    if (interrupt_register(32, apic_timer_handler) != 0) {
+        return -1;
     }
 
     /* Calibration helpers (pit_init) may have clobbered the scheduler tick

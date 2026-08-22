@@ -179,9 +179,20 @@ int interrupt_register(uint32_t vector, interrupt_handler_t handler)
     if (vector >= 256 || !handler) {
         return -1;
     }
-    
+
+    /* Refuse rather than overwrite. Silently replacing a handler means the
+     * driver that initialised last owns the vector and nobody is told; that
+     * is what happened on vector 32, claimed by both the PIT and the LAPIC
+     * timer (docs/ru/irq_audit.md, F3). A deliberate handover calls
+     * interrupt_unregister() first, which says so at the call site. */
+    uint64_t flags = spinlock_lock_irqsave(&vector_lock);
+    if (interrupt_handlers[vector] != NULL) {
+        spinlock_unlock_irqrestore(&vector_lock, flags);
+        return -1;
+    }
     interrupt_handlers[vector] = handler;
-    
+    spinlock_unlock_irqrestore(&vector_lock, flags);
+
     return 0;
 }
 
@@ -190,8 +201,10 @@ int interrupt_unregister(uint32_t vector)
     if (vector >= 256) {
         return -1;
     }
-    
+
+    uint64_t flags = spinlock_lock_irqsave(&vector_lock);
     interrupt_handlers[vector] = NULL;
+    spinlock_unlock_irqrestore(&vector_lock, flags);
     return 0;
 }
 

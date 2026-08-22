@@ -25,6 +25,7 @@
 #include "config.h"
 #include "pic.h"
 #include "apic.h"
+#include "lapic_regs.h"
 #include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
@@ -109,6 +110,12 @@ static void irq_send_eoi(uint32_t irq)
 
 static void interrupt_send_eoi(uint32_t vector)
 {
+    /* The spurious vector sets no ISR bit, so there is nothing to retire.
+     * An EOI here would retire whatever genuinely was in service instead
+     * (docs/ru/irq_audit.md, F10). */
+    if (vector == APIC_SVR_SPURIOUS_VECTOR) {
+        return;
+    }
     if (vector >= 32 && vector < 48) {
         irq_send_eoi(vector - 32);
         return;
