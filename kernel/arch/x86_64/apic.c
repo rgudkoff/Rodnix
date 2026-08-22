@@ -16,6 +16,7 @@
 #include "paging.h"
 #include "pic.h"
 #include "lapic_regs.h"
+#include "vectors.h"
 #include "lapic_access.h"
 #include "acpi.h"
 #include "../../../include/debug.h"
@@ -1301,7 +1302,7 @@ int apic_timer_init(uint32_t frequency)
 
         /* Sanity-check registers before committing to periodic mode */
         apic_write_register(APIC_TIMER_DIV, 0b0011);
-        apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED | 32u);
+        apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED | VECTOR_LAPIC_TIMER);
         apic_write_register(APIC_TIMER_INITCNT, 0x1000u);
         if (apic_read_register(APIC_LVT_TIMER) == 0 ||
             apic_read_register(APIC_TIMER_INITCNT) == 0) {
@@ -1312,16 +1313,14 @@ int apic_timer_init(uint32_t frequency)
                 frequency, apic_timer_ticks_per_ms);
     }
 
-    /* Claim vector 32 only now that a working mode has been established.
-     * Registering earlier meant that a failure below left the vector held by
-     * a timer that never started, and the PIT fallback could not take it --
-     * which is exactly what refusing to overwrite a live handler exposed
-     * (docs/ru/irq_audit.md, F3). Calibration borrows the PIT, so the
-     * handover is explicit rather than a silent overwrite. */
+    /* Claim the vector only now that a working mode has been established.
+     * Registering earlier meant that a failure below left it held by a timer
+     * that never started (docs/ru/irq_audit.md, F3). The LAPIC timer has its
+     * own vector above the device classes, so it no longer contends with the
+     * PIT that calibration borrows -- see vectors.h. */
     extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
     extern int interrupt_unregister(uint32_t vector);
-    (void)interrupt_unregister(32);
-    if (interrupt_register(32, apic_timer_handler) != 0) {
+    if (interrupt_register(VECTOR_LAPIC_TIMER, apic_timer_handler) != 0) {
         return -1;
     }
 
@@ -1352,7 +1351,7 @@ void apic_timer_start(void)
          */
         uint32_t lvt = (apic_read_register(APIC_LVT_TIMER) & ~0x000F0000u)
                        | APIC_LVT_TIMER_TSC_DEADLINE
-                       | 32u;
+                       | VECTOR_LAPIC_TIMER;
         lvt &= ~APIC_LVT_MASKED;
         apic_write_register(APIC_LVT_TIMER, lvt);
         __asm__ volatile ("" ::: "memory");
@@ -1367,7 +1366,7 @@ void apic_timer_start(void)
         uint32_t initial_count = (apic_timer_ticks_per_ms * 1000u) / apic_timer_frequency;
         uint32_t lvt = (apic_read_register(APIC_LVT_TIMER) & ~0x000F0000u)
                        | APIC_LVT_TIMER_PERIODIC
-                       | 32u;
+                       | VECTOR_LAPIC_TIMER;
         lvt &= ~APIC_LVT_MASKED;
         apic_write_register(APIC_TIMER_DIV, 0b0011);
         apic_write_register(APIC_LVT_TIMER, lvt);

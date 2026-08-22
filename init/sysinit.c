@@ -517,6 +517,15 @@ kernel_enable_runtime_interrupts(void)
     }
     __asm__ volatile ("" ::: "memory");
 
+    {
+        extern int irql_selftest(void);
+        if (irql_selftest() == 0) {
+            klog("irq", "IRQL masking verified via LAPIC TPR\n");
+        } else {
+            klog("irq", "IRQL masking self-test FAILED\n");
+        }
+    }
+
     if (g_timer_use_apic) {
         uint64_t t0 = scheduler_get_ticks();
         uint32_t ap0 = apic_timer_get_ticks();

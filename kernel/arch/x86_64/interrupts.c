@@ -15,6 +15,9 @@
 #include "pic.h"
 #include "apic.h"
 #include "percpu.h"
+#include "vectors.h"
+#include "lapic_access.h"
+#include "lapic_regs.h"
 #include "spin.h"
 #include "interrupt_frame.h"
 #include <stddef.h>
@@ -139,7 +142,10 @@ int interrupts_init(void)
         interrupt_vector_reserved[i] = true;   /* legacy IRQ window */
     }
     interrupt_vector_reserved[128] = true;     /* syscall gate */
-    interrupt_vector_reserved[RESCHED_VECTOR] = true; /* scheduler entry */
+    interrupt_vector_reserved[VECTOR_RESCHED] = true;   /* scheduler entry */
+    for (uint32_t i = VECTOR_LAPIC_TIMER; i <= 0xEFu; i++) {
+        interrupt_vector_reserved[i] = true;            /* timer class */
+    }
     __asm__ volatile ("" ::: "memory");
     
     kputs("[INT-2] Set IRQL\n");
@@ -299,23 +305,69 @@ irql_t get_current_irql(void)
  * 
  * @note IRQL-based interrupt control
  */
+/*
+ * IRQL as a Task Priority Register value.
+ *
+ * Every level below HIGH is a real priority: the local APIC withholds any
+ * interrupt whose vector class is at or below the TPR, so raising the level
+ * masks exactly the sources vectors.h places at or beneath it and leaves the
+ * rest running. This used to be seven declared levels of which two did
+ * anything, with the five in between masking nothing at all
+ * (docs/ru/irq_audit.md, F5).
+ *
+ * IRQL_HIGH keeps its old meaning of interrupts off outright, because the TPR
+ * cannot express it: even a full TPR still admits NMI, SMI and #MC, and code
+ * at HIGH is holding a lock an interrupt handler might take.
+ *
+ * Before the LAPIC is up there is no TPR to write, so every level falls back
+ * to the previous behaviour of masking everything but PASSIVE.
+ */
+static uint32_t irql_to_tpr(irql_t level)
+{
+    switch (level) {
+    case IRQL_PASSIVE:  return TPR_PASSIVE;
+    case IRQL_APC:      return TPR_APC;
+    case IRQL_DISPATCH: return TPR_DISPATCH;
+    case IRQL_DEVICE:   return TPR_DEVICE;
+    case IRQL_CLOCK:    return TPR_CLOCK;
+    case IRQL_IPI:      return TPR_IPI;
+    default:            return TPR_IPI;
+    }
+}
+
 irql_t set_irql(irql_t new_level)
 {
     irql_t old_level = (irql_t)current_irql;
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    
+    __asm__ volatile ("" ::: "memory");
+
     current_irql = new_level;
-    __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    
-    /* Enable interrupts only at PASSIVE level */
-    if (new_level == IRQL_PASSIVE) {
-        __asm__ volatile ("sti");
-        __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    } else {
+    __asm__ volatile ("" ::: "memory");
+
+    if (new_level == IRQL_HIGH) {
         __asm__ volatile ("cli");
-        __asm__ volatile ("" ::: "memory"); /* Memory barrier */
+        __asm__ volatile ("" ::: "memory");
+        return old_level;
     }
-    
+
+    if (!lapic_access_ready()) {
+        /* No TPR yet: the pre-APIC fallback, where anything above PASSIVE can
+         * only mean "off". */
+        if (new_level == IRQL_PASSIVE) {
+            __asm__ volatile ("sti");
+        } else {
+            __asm__ volatile ("cli");
+        }
+        __asm__ volatile ("" ::: "memory");
+        return old_level;
+    }
+
+    lapic_access_write(APIC_TPR, irql_to_tpr(new_level));
+    __asm__ volatile ("" ::: "memory");
+    /* Below HIGH the processor takes interrupts; which ones is now the TPR's
+     * decision rather than a blanket cli. */
+    __asm__ volatile ("sti");
+    __asm__ volatile ("" ::: "memory");
+
     return old_level;
 }
 
@@ -323,7 +375,7 @@ void interrupt_trigger_resched(void)
 {
     __asm__ volatile ("int %0"
                       :
-                      : "i"(RESCHED_VECTOR)
+                      : "i"(VECTOR_RESCHED)
                       : "rax", "rcx", "rdx", "rsi", "rdi",
                         "r8", "r9", "r10", "r11", "cc", "memory");
 }
@@ -353,4 +405,44 @@ int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
         return -1;
     }
     return apic_send_ipi(target->apic_id, (uint8_t)vector);
+}
+
+/*
+ * Prove the levels actually mask.
+ *
+ * Raise to IRQL_CLOCK, which vectors.h places at or above the LAPIC timer,
+ * and spin: no tick may land. Drop to PASSIVE and spin the same amount: ticks
+ * must resume. Without this the TPR write is unfalsifiable -- a level that
+ * silently masks nothing looks exactly like one that works.
+ *
+ * Runs once, after the timer is live. Bounded by construction: the spins are
+ * fixed-length, so a broken TPR fails the check instead of stalling.
+ */
+int irql_selftest(void)
+{
+    extern uint32_t apic_timer_get_ticks(void);
+
+    if (!lapic_access_ready()) {
+        return -1;
+    }
+
+    irql_t entry = set_irql(IRQL_CLOCK);
+    uint32_t masked_start = apic_timer_get_ticks();
+    for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
+        __asm__ volatile ("pause");
+    }
+    uint32_t masked_end = apic_timer_get_ticks();
+
+    (void)set_irql(IRQL_PASSIVE);
+    uint32_t open_start = apic_timer_get_ticks();
+    for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
+        __asm__ volatile ("pause");
+    }
+    uint32_t open_end = apic_timer_get_ticks();
+
+    (void)set_irql(entry);
+
+    bool masked_ok = (masked_end == masked_start);
+    bool open_ok = (open_end > open_start);
+    return (masked_ok && open_ok) ? 0 : -1;
 }

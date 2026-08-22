@@ -26,6 +26,7 @@
 #include "pic.h"
 #include "apic.h"
 #include "lapic_regs.h"
+#include "vectors.h"
 #include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
@@ -108,12 +109,17 @@ static void irq_send_eoi(uint32_t irq)
     }
 }
 
+static inline bool interrupt_is_tick(uint32_t vector)
+{
+    return vector == VECTOR_LAPIC_TIMER || vector == VECTOR_PIT_TIMER;
+}
+
 static void interrupt_send_eoi(uint32_t vector)
 {
     /* The spurious vector sets no ISR bit, so there is nothing to retire.
      * An EOI here would retire whatever genuinely was in service instead
      * (docs/ru/irq_audit.md, F10). */
-    if (vector == APIC_SVR_SPURIOUS_VECTOR) {
+    if (vector == VECTOR_SPURIOUS) {
         return;
     }
     if (vector >= 32 && vector < 48) {
@@ -259,7 +265,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
      * It is a software interrupt, so nothing is in service, and an EOI here
      * would retire whatever genuinely was.
      */
-    if (vector == RESCHED_VECTOR) {
+    if (vector == VECTOR_RESCHED) {
         /* The vector means "switch now", so the request is implicit in
          * having been raised; callers need not set the flag themselves. */
         percpu_self()->sched_resched_pending = true;
@@ -295,9 +301,12 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         }
 
         interrupt_send_eoi(vector);
-        if (vector == 32) {
+        /* Preemption follows from the source being a tick, not from a
+         * particular number. There are two tick vectors -- the LAPIC timer
+         * and the PIT it falls back to -- and asking "is this 32?" quietly
+         * stopped being the same question (docs/ru/irq_audit.md, F7). */
+        if (interrupt_is_tick(vector)) {
             percpu_irq_selftest();
-            /* Timer tick drives preemption */
             scheduler_tick();
             regs = scheduler_switch_from_irq(regs);
         }
