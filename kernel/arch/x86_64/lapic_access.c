@@ -68,6 +68,23 @@ int lapic_access_init(uint64_t apic_phys, bool prefer_x2apic)
     return 0;
 }
 
+int lapic_access_init_ap(void)
+{
+    if (g_lapic_mode == LAPIC_MODE_NONE) {
+        return -1;
+    }
+
+    uint64_t apic_base = lapic_rdmsr(APIC_BASE_MSR);
+    apic_base |= APIC_BASE_ENABLE;
+    if (g_lapic_mode == LAPIC_MODE_X2APIC) {
+        apic_base |= APIC_BASE_X2APIC;
+    } else {
+        apic_base &= ~APIC_BASE_X2APIC;
+    }
+    lapic_wrmsr(APIC_BASE_MSR, apic_base);
+    return 0;
+}
+
 bool lapic_access_ready(void)
 {
     if (g_lapic_mode == LAPIC_MODE_X2APIC) {

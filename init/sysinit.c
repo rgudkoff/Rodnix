@@ -22,6 +22,7 @@
 #include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/arch/gdt.h"
+#include "../kernel/arch/x86_64/smp.h"
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
@@ -195,6 +196,34 @@ sysinit_timer(void)
     g_timer_use_apic = use_apic_timer;
     klog("timer", "source: %s @ 1000 Hz\n", use_apic_timer ? "LAPIC" : "PIT");
     bootlog_mark("timer", use_apic_timer ? "lapic" : "pit");
+    return RDNX_OK;
+}
+
+static int
+sysinit_smp(void)
+{
+    /* After the timer, because the INIT-SIPI sequence is timed, and before
+     * the scheduler, so the processor count it eventually sees is final. */
+    uint32_t expected = cpu_topology_startable_count();
+    int started = smp_start_aps();
+
+    if (expected <= 1) {
+        klog("smp", "uniprocessor\n");
+        return RDNX_OK;
+    }
+
+    klog("smp", "%u of %u processors online\n",
+         (unsigned)smp_online_count(), (unsigned)expected);
+
+    if (started > 0) {
+        int answered = smp_verify_aps();
+        if (answered == started) {
+            klog("smp", "%d application processor(s) answered an IPI\n", answered);
+        } else {
+            klog("smp", "IPI verification FAILED (%d of %d answered)\n",
+                 answered, started);
+        }
+    }
     return RDNX_OK;
 }
 
@@ -398,6 +427,10 @@ kernel_run_bootstrap_sysinit(void)
 
     if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_FIRST, "timer_init", sysinit_timer) != 0) {
         panic("Timer init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_SECOND, "smp_start_aps", sysinit_smp) != 0) {
+        panic("SMP bring-up step failed");
     }
 
     if (run_sysinit_step(SI_SUB_SCHED, SI_ORDER_FIRST, "scheduler_init", sysinit_scheduler) != 0) {

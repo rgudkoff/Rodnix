@@ -848,6 +848,33 @@ uint32_t apic_get_lapic_id_ext(void)
     return (apic_id_reg >> 24) & 0xFFu;
 }
 
+/* Bring up the calling processor's own LAPIC, in the mode the boot processor
+ * already settled on. Much smaller than apic_init(): the I/O APIC, the mode
+ * decision and the MMIO mapping are machine-wide and already done. What is
+ * genuinely per-CPU is the APIC_BASE enable bit, the spurious-vector register
+ * and the local vector table. */
+int apic_init_ap(void)
+{
+    if (lapic_access_init_ap() != 0) {
+        return -1;
+    }
+
+    apic_reset_local();
+
+    uint32_t svr = apic_read_register(APIC_SVR);
+    svr |= APIC_SVR_ENABLE;
+    svr &= ~0xFFu;
+    svr |= APIC_SVR_SPURIOUS_VECTOR;
+    apic_write_register(APIC_SVR, svr);
+
+    /* External IRQs are routed through the I/O APIC to the boot processor;
+     * an AP has no business accepting them off its local pins. */
+    apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT1, APIC_LVT_MASKED);
+
+    return 0;
+}
+
 /* Bounded so a wedged ICR fails the send instead of hanging the sender. */
 #define APIC_IPI_WAIT_SPINS 100000U
 

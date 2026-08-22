@@ -11,6 +11,11 @@ typedef enum lapic_mode {
 } lapic_mode_t;
 
 int lapic_access_init(uint64_t apic_phys, bool prefer_x2apic);
+/* Enable the calling processor's own LAPIC in the mode the BSP already chose.
+ * The MMIO mapping and the mode decision are global; the APIC_BASE enable bit
+ * is per-CPU, so each AP has to set its own. */
+int lapic_access_init_ap(void);
+
 bool lapic_access_ready(void);
 lapic_mode_t lapic_access_mode(void);
 const char* lapic_access_mode_name(void);

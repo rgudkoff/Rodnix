@@ -140,6 +140,28 @@ void gdt_init(void)
     gdt_ptr.base = (uint64_t)(uintptr_t)gdt;
 
     __asm__ volatile ("lgdt %0" : : "m"(gdt_ptr));
+
+    /* Reload CS so it names a descriptor in the table just loaded.
+     *
+     * The boot processor arrives here with CS already 0x08 from boot.S and
+     * would survive without this. An application processor does not: it
+     * arrives with the code selector from the trampoline's own GDT, which is
+     * a data descriptor in this table. Nothing notices until the first iretq
+     * reloads CS from the saved frame and takes a #GP -- an interrupt on an
+     * idle AP, long after bring-up reported success.
+     *
+     * CS cannot be assigned directly in long mode; a far return sets it. */
+    __asm__ volatile (
+        "leaq 1f(%%rip), %%rax\n\t"
+        "pushq %0\n\t"
+        "pushq %%rax\n\t"
+        "lretq\n\t"
+        "1:\n\t"
+        :
+        : "i"((uint64_t)GDT_KERNEL_CS)
+        : "memory", "rax"
+    );
+
     __asm__ volatile (
         "movw %0, %%ax\n\t"
         "mov %%ax, %%ds\n\t"

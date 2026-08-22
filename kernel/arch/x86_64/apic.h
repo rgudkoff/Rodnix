@@ -19,6 +19,8 @@
 bool apic_is_available(void);
 bool ioapic_is_available(void);
 int apic_init(void);
+/* Per-CPU half of apic_init(), for a processor brought up after boot. */
+int apic_init_ap(void);
 
 /* APIC interrupt management */
 void apic_enable(void);

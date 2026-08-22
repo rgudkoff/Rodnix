@@ -124,6 +124,12 @@ extern bool g_percpu_gs_ready;
  * and per-CPU state has to work before ACPI is read. */
 void percpu_init_bsp(void);
 
+/* Claim `slot` for the processor executing this and point its GS base at it.
+ * The AP counterpart of percpu_init_bsp(); the slot is chosen by the boot
+ * processor before the STARTUP IPI goes out. Does not mark the slot online --
+ * that is the last thing an AP does, once it is genuinely usable. */
+void percpu_init_ap(uint32_t slot, uint32_t apic_id);
+
 /* Record the APIC ID once cpu_topology has determined it. */
 void percpu_bind_bsp(uint32_t apic_id);
 

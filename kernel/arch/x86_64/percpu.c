@@ -47,6 +47,24 @@ void percpu_bind_bsp(uint32_t apic_id)
     percpu_self()->apic_id = apic_id;
 }
 
+void percpu_init_ap(uint32_t slot, uint32_t apic_id)
+{
+    if (slot >= X86_64_MAX_CPUS) {
+        return;
+    }
+
+    struct percpu* self = &g_percpu[slot];
+    memset(self, 0, sizeof(*self));
+    self->self = self;
+    self->index = slot;
+    self->apic_id = apic_id;
+
+    /* Runs before anything on this CPU may call percpu_self(): until these
+     * two writes land, %gs on this processor still has a null base. */
+    percpu_wrmsr(IA32_GS_BASE, (uint64_t)(uintptr_t)self);
+    percpu_wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)(uintptr_t)self);
+}
+
 const struct percpu* percpu_peer(uint32_t index)
 {
     if (index >= X86_64_MAX_CPUS || !g_percpu[index].online) {

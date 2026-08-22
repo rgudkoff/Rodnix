@@ -71,17 +71,32 @@ for n in $SMP_LIST; do
   reported="$(printf '%s\n' "$summary" | sed -E 's/^\[CPU-TOPO\] ([0-9]+) processor\(s\).*/\1/')"
   listed="$(grep -c "^\[CPU-TOPO\]   cpu" "$log" || true)"
 
-  if [ "$reported" = "$n" ] && [ "$listed" = "$n" ]; then
-    echo "[smp] -smp $n: PASS ($summary)"
+  # Bring-up: every processor the inventory lists must come online, and each
+  # application processor must answer an IPI. The online flag alone would pass
+  # for a processor that reached the end of its entry path and then wedged.
+  # `|| true` matters: pipefail plus set -e would abort the whole script on a
+  # grep that simply found nothing, which is the case this check exists for.
+  online="$(grep -oE "[0-9]+ of [0-9]+ processors online" "$log" | head -1 | cut -d' ' -f1 || true)"
+  answered="$(grep -oE "[0-9]+ application processor\(s\) answered" "$log" | head -1 | cut -d' ' -f1 || true)"
+  if [ "$n" = "1" ]; then
+    online=1
+    answered=0
+  fi
+  : "${online:=0}" "${answered:=0}"
+  want_answered=$((n - 1))
+
+  if [ "$reported" = "$n" ] && [ "$listed" = "$n" ] \
+     && [ "$online" = "$n" ] && [ "$answered" = "$want_answered" ]; then
+    echo "[smp] -smp $n: PASS (inventory=$n online=$online answered=$answered)"
   else
-    echo "[smp] -smp $n: FAIL (reported=$reported listed=$listed expected=$n)"
-    grep "^\[CPU-TOPO\]" "$log" || true
+    echo "[smp] -smp $n: FAIL (inventory=$reported listed=$listed online=$online answered=$answered expected=$n)"
+    grep -E "^\[CPU-TOPO\]|INFO smp" "$log" || true
     rc=1
   fi
   rm -f "$log"
 done
 
 if [ $rc -eq 0 ]; then
-  echo "[smp] processor inventory matches guest CPU count for: $SMP_LIST"
+  echo "[smp] every processor enumerated, started and answering for: $SMP_LIST"
 fi
 exit $rc

@@ -68,6 +68,7 @@ KERNEL_ARCH_X86_64_C_SRCS := \
 	kernel/arch/x86_64/cpu.c \
 	kernel/arch/x86_64/cpu_topology.c \
 	kernel/arch/x86_64/percpu.c \
+	kernel/arch/x86_64/smp.c \
 	kernel/arch/x86_64/gdt.c \
 	kernel/arch/x86_64/pmm.c \
 	kernel/arch/x86_64/paging.c \
@@ -94,6 +95,7 @@ include shell/Makefile
 
 KERNEL_ARCH_X86_64_ASM_SRCS := \
 	kernel/arch/x86_64/isr_stubs.S \
+	kernel/arch/x86_64/ap_trampoline.S \
 	kernel/arch/x86_64/syscall_fast_entry.S
 
 ifeq ($(ARCH),x86_64)
