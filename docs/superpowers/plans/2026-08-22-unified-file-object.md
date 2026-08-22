@@ -1159,7 +1159,18 @@ syscalls identify their type by ops pointer instead of a numeric tag."
 - [ ] **Step 2: Прогнать и убедиться, что проверка падает**
 
 Run: `TIMEOUT_SEC=60 scripts/ci/contract_qemu.sh`
-Expected: `CT-038` FAIL — сейчас `O_NONBLOCK` хранится в `proc->fd_flags` как `UNIX_FD_NONBLOCK` и через `dup` не разделяется.
+Expected: `CT-038` **PASS сразу**. Это ожидаемо и не повод искать поломку.
+
+Миграция `O_NONBLOCK` в `status_flags` была выполнена досрочно, в Task 1: её
+ревью показало, что Task 1 сделала описания разделяемыми, а флаг оставила
+per-fd, из-за чего `fd` и `dup(fd)` начинали расходиться во мнении о
+неблокирующем режиме — промежуточное состояние хуже исходного. Перенос
+выполнен там же (коммит `9cc5396`), `UNIX_FD_NONBLOCK` из дерева удалён.
+
+CT-038 всё равно добавляется: проверки на разделение `O_NONBLOCK` и на
+неразделение `FD_CLOEXEC` в наборе нет, и она защищает это свойство от
+регрессий в задачах 5-7. Если CT-038 падает — значит Task 1 что-то откатила,
+и это надо чинить.
 
 - [ ] **Step 3: Реализовать `ioctl` в `vfs_fileops`**
 
@@ -1210,11 +1221,13 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
 }
 ```
 
-В `unix_fs_fcntl`: `F_GETFD`/`F_SETFD` работают с `proc->fd_flags[fd]`; `F_GETFL`/`F_SETFL` — с `f->status_flags`. Заменить все чтения `proc->fd_flags[fdi] & UNIX_FD_NONBLOCK` по дереву на `f->status_flags & RDNX_F_NONBLOCK`:
+В `unix_fs_fcntl`: `F_GETFD`/`F_SETFD` работают с `proc->fd_flags[fd]`; `F_GETFL`/`F_SETFL` — с `f->status_flags`. **Это уже сделано в Task 1** — проверить, что так и есть, и не переделывать:
 
 ```bash
 grep -rn "UNIX_FD_NONBLOCK" --exclude-dir=.git .
 ```
+
+Expected: пусто. Если совпадения есть — Task 1 откатили, восстановить.
 
 - [ ] **Step 5: Собрать и прогнать**
 
