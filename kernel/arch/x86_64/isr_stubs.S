@@ -3,26 +3,21 @@
 
 default rel
 
-section .bss
-align 8
-global irq_iret_rsp
-global irq_iret_rip
-global irq_iret_cs
-global irq_iret_rflags
-global isr_iret_rsp
-global isr_iret_rip
-global isr_iret_cs
-global isr_iret_rflags
-irq_iret_rsp:    resq 1
-irq_iret_rip:    resq 1
-irq_iret_cs:     resq 1
-irq_iret_rflags: resq 1
-isr_iret_rsp:    resq 1
-isr_iret_rip:    resq 1
-isr_iret_cs:     resq 1
-isr_iret_rflags: resq 1
-
-extern g_current_tls_fs_base
+; struct percpu offsets, mirrored by _Static_assert in
+; kernel/arch/x86_64/percpu.h. GS.Base points at this CPU's slot, so these
+; reads answer for the processor executing them and never for another.
+%define PCPU_SELF             0
+%define PCPU_TSS_RSP0         8
+%define PCPU_SYSCALL_USER_RSP 16
+%define PCPU_TLS_FS_BASE      24
+%define PCPU_IRQ_IRET_RSP     32
+%define PCPU_IRQ_IRET_RIP     40
+%define PCPU_IRQ_IRET_CS      48
+%define PCPU_IRQ_IRET_RFLAGS  56
+%define PCPU_ISR_IRET_RSP     64
+%define PCPU_ISR_IRET_RIP     72
+%define PCPU_ISR_IRET_CS      80
+%define PCPU_ISR_IRET_RFLAGS  88
 
 section .text
 
@@ -189,20 +184,20 @@ isr_done:
     ; whatever sched_arch_apply_thread() set.  rax/rdx/ecx are free here —
     ; their true values are still on the stack and will be restored by pops below.
     mov    ecx, 0xC0000100
-    mov    rax, [rel g_current_tls_fs_base]
+    mov    rax, [gs:PCPU_TLS_FS_BASE]
     mov    rdx, rax
     shr    rdx, 32
     wrmsr
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
-    mov [isr_iret_rsp], rdx
+    mov [gs:PCPU_ISR_IRET_RSP], rdx
     mov rax, [rdx]
-    mov [isr_iret_rip], rax
+    mov [gs:PCPU_ISR_IRET_RIP], rax
     mov rax, [rdx + 8]
-    mov [isr_iret_cs], rax
+    mov [gs:PCPU_ISR_IRET_CS], rax
     mov rax, [rdx + 16]
-    mov [isr_iret_rflags], rax
+    mov [gs:PCPU_ISR_IRET_RFLAGS], rax
 
     ; Restore all registers
     pop r15
@@ -306,20 +301,20 @@ irq_done:
 .irq_after_segs:
     ; Re-apply FS.Base MSR (same reason as in isr_common_stub above).
     mov    ecx, 0xC0000100
-    mov    rax, [rel g_current_tls_fs_base]
+    mov    rax, [gs:PCPU_TLS_FS_BASE]
     mov    rdx, rax
     shr    rdx, 32
     wrmsr
 
     ; Diagnostic capture: compute iretq stack values before restoring regs
     lea rdx, [rsp + 136]   ; 15 regs * 8 + 16 (int_no + err_code)
-    mov [irq_iret_rsp], rdx
+    mov [gs:PCPU_IRQ_IRET_RSP], rdx
     mov rax, [rdx]
-    mov [irq_iret_rip], rax
+    mov [gs:PCPU_IRQ_IRET_RIP], rax
     mov rax, [rdx + 8]
-    mov [irq_iret_cs], rax
+    mov [gs:PCPU_IRQ_IRET_CS], rax
     mov rax, [rdx + 16]
-    mov [irq_iret_rflags], rax
+    mov [gs:PCPU_IRQ_IRET_RFLAGS], rax
 
     ; (diag disabled) avoid flooding boot.log on every IRQ
     

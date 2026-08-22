@@ -29,6 +29,7 @@
 #define _RODNIX_ARCH_X86_64_PERCPU_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "cpu_topology.h"
@@ -36,10 +37,43 @@
 struct task;
 struct thread;
 
+/* The first four fields are reached from assembly by fixed offset. Keep them
+ * at the head, and keep the offsets below in step with isr_stubs.S and
+ * syscall_fast_entry.S; the static assertions further down fail the build if
+ * they drift. */
 struct percpu {
     /* Offset 0 by contract: `mov %gs:0, %reg` yields the base itself, which
      * is how assembly reaches this struct without a relocation. */
     struct percpu* self;
+
+    /* Kernel stack pointer this CPU switches to on SYSCALL entry. Mirrors
+     * tss.rsp0, which the CPU itself only consults for ring transitions
+     * through an interrupt gate -- SYSCALL does no stack switch of its own. */
+    uint64_t tss_rsp0;
+
+    /* Where the SYSCALL entry parks the user stack pointer between the
+     * instruction that clobbers RSP and the trapframe store. Per-CPU because
+     * two processors in a syscall at once would otherwise overwrite each
+     * other's user RSP. */
+    uint64_t syscall_user_rsp;
+
+    /* FS.Base of the thread running on this CPU. Loading a segment selector
+     * in 64-bit mode zeroes the hidden base, so the entry paths re-apply it
+     * from here on the way back out. */
+    uint64_t tls_fs_base;
+
+    /* Last iretq frame the entry stubs were about to return through, captured
+     * for the exception dump in isr_handlers.c. Per-CPU because a dump is
+     * worth having precisely when several processors are faulting at once,
+     * which is exactly when a shared slot would show another CPU's frame. */
+    uint64_t irq_iret_rsp;
+    uint64_t irq_iret_rip;
+    uint64_t irq_iret_cs;
+    uint64_t irq_iret_rflags;
+    uint64_t isr_iret_rsp;
+    uint64_t isr_iret_rip;
+    uint64_t isr_iret_cs;
+    uint64_t isr_iret_rflags;
 
     uint32_t index;              /* dense slot, assigned in bring-up order */
     uint32_t apic_id;            /* filled once the topology is known */
@@ -49,6 +83,32 @@ struct percpu {
 
     bool irq_checked;            /* percpu_irq_selftest() has run here */
 };
+
+/* Mirrored by the PCPU_* defines in isr_stubs.S and syscall_fast_entry.S. */
+_Static_assert(offsetof(struct percpu, self) == 0,
+               "percpu.self offset must match PCPU_SELF in the entry stubs");
+_Static_assert(offsetof(struct percpu, tss_rsp0) == 8,
+               "percpu.tss_rsp0 offset must match PCPU_TSS_RSP0 in the entry stubs");
+_Static_assert(offsetof(struct percpu, syscall_user_rsp) == 16,
+               "percpu.syscall_user_rsp offset must match PCPU_SYSCALL_USER_RSP in the entry stubs");
+_Static_assert(offsetof(struct percpu, tls_fs_base) == 24,
+               "percpu.tls_fs_base offset must match PCPU_TLS_FS_BASE in the entry stubs");
+_Static_assert(offsetof(struct percpu, irq_iret_rsp) == 32,
+               "percpu.irq_iret_rsp offset must match PCPU_IRQ_IRET_RSP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, irq_iret_rip) == 40,
+               "percpu.irq_iret_rip offset must match PCPU_IRQ_IRET_RIP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, irq_iret_cs) == 48,
+               "percpu.irq_iret_cs offset must match PCPU_IRQ_IRET_CS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, irq_iret_rflags) == 56,
+               "percpu.irq_iret_rflags offset must match PCPU_IRQ_IRET_RFLAGS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, isr_iret_rsp) == 64,
+               "percpu.isr_iret_rsp offset must match PCPU_ISR_IRET_RSP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, isr_iret_rip) == 72,
+               "percpu.isr_iret_rip offset must match PCPU_ISR_IRET_RIP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, isr_iret_cs) == 80,
+               "percpu.isr_iret_cs offset must match PCPU_ISR_IRET_CS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, isr_iret_rflags) == 88,
+               "percpu.isr_iret_rflags offset must match PCPU_ISR_IRET_RFLAGS in isr_stubs.S");
 
 extern struct percpu g_percpu[X86_64_MAX_CPUS];
 extern bool g_percpu_gs_ready;
@@ -94,6 +154,24 @@ static inline uint32_t percpu_index(void)
 static inline uint32_t percpu_apic_id(void)
 {
     return percpu_self()->apic_id;
+}
+
+/* FS.Base the entry stubs should restore on the way back to userspace. */
+static inline void percpu_set_tls_fs_base(uint64_t base)
+{
+    percpu_self()->tls_fs_base = base;
+}
+
+static inline uint64_t percpu_get_tls_fs_base(void)
+{
+    return percpu_self()->tls_fs_base;
+}
+
+/* Kernel stack the SYSCALL entry switches to. Kept in step with tss.rsp0 by
+ * tss_set_rsp0(). */
+static inline void percpu_set_tss_rsp0(uint64_t rsp0)
+{
+    percpu_self()->tss_rsp0 = rsp0;
 }
 
 #endif /* _RODNIX_ARCH_X86_64_PERCPU_H */

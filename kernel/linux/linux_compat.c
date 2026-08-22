@@ -1,4 +1,5 @@
 #include "linux_compat.h"
+#include "../arch/percpu.h"
 #include "linux_errno.h"
 #include "../posix/posix_sys_file.h"
 #include "../posix/posix_sys_ids.h"
@@ -18,7 +19,6 @@
 
 /* Shadow of the current thread's FS.Base — kept in sync so ISR/IRQ stubs can
  * re-apply it after loading kernel segment selectors (which zero the base). */
-extern uint64_t g_current_tls_fs_base;
 
 enum {
     IA32_FS_BASE_MSR = 0xC0000100,
@@ -689,10 +689,10 @@ void linux_compat_apply_user_state(void)
         return;
     }
     linux_wrmsr(IA32_FS_BASE_MSR, task->tls_fs_base);
-    /* Keep the ISR/IRQ shadow in sync so any interrupt firing in user space
+    /* Keep this CPU's copy in sync so any interrupt firing in user space
      * restores the correct FS.Base (not the stale thread->tls_fs_base = 0
      * that sched_arch_apply_thread set at context-switch time). */
-    g_current_tls_fs_base = task->tls_fs_base;
+    percpu_set_tls_fs_base(task->tls_fs_base);
 }
 
 uint64_t linux_compat_dispatch(uint64_t num,

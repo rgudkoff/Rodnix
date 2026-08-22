@@ -602,7 +602,7 @@ uint64_t unix_proc_fork(void)
         task_destroy(child);
         return (uint64_t)RDNX_E_NOMEM;
     }
-    /* Inherit FS.Base so the child's first context-switch sets g_current_tls_fs_base
+    /* Inherit FS.Base so the child's first context-switch sets this CPU's percpu.tls_fs_base
      * correctly; without this any IRQ before the child's first syscall clears TLS. */
     child_thread->tls_fs_base = child->tls_fs_base;
     child_thread->priority = self_thread->priority;

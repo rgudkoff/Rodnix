@@ -4,7 +4,6 @@
 #include "../../core/task.h"
 
 extern void x86_64_syscall_fast_entry(void);
-uint64_t g_syscall_user_rsp_shadow = 0;
 
 enum {
     X86_MSR_EFER = 0xC0000080,

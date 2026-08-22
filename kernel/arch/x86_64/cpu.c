@@ -454,11 +454,6 @@ uint64_t cpu_get_time(void)
     return ((uint64_t)edx << 32) | eax;
 }
 
-/* Tracks the FS.Base value of the currently scheduled thread.
- * Read by isr_stubs.S to re-apply FS.Base after the ISR/IRQ segment-restore
- * path zeroes it (loading a segment selector in 64-bit mode clears the base). */
-uint64_t g_current_tls_fs_base = 0;
-
 void sched_arch_apply_thread(void* thread_ptr)
 {
     thread_t* t = (thread_t*)thread_ptr;
@@ -471,8 +466,9 @@ void sched_arch_apply_thread(void* thread_ptr)
             fs_base = t->task->tls_fs_base;
         }
     }
-    /* Always update the shadow so the ISR/IRQ stubs restore the correct value. */
-    g_current_tls_fs_base = fs_base;
+    /* Always update this CPU's copy so its entry stubs restore the correct
+     * value, including the zero case. */
+    percpu_set_tls_fs_base(fs_base);
     if (!fs_base) {
         return;
     }

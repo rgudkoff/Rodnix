@@ -76,14 +76,16 @@ static void serial_write_hex64(uint64_t value)
 
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
-extern uint64_t irq_iret_rsp;
-extern uint64_t irq_iret_rip;
-extern uint64_t irq_iret_cs;
-extern uint64_t irq_iret_rflags;
-extern uint64_t isr_iret_rsp;
-extern uint64_t isr_iret_rip;
-extern uint64_t isr_iret_cs;
-extern uint64_t isr_iret_rflags;
+/* The entry stubs capture the iretq frame they were about to return through
+ * into this CPU's percpu slot; these read it back for the exception dump. */
+#define irq_iret_rsp    (percpu_self()->irq_iret_rsp)
+#define irq_iret_rip    (percpu_self()->irq_iret_rip)
+#define irq_iret_cs     (percpu_self()->irq_iret_cs)
+#define irq_iret_rflags (percpu_self()->irq_iret_rflags)
+#define isr_iret_rsp    (percpu_self()->isr_iret_rsp)
+#define isr_iret_rip    (percpu_self()->isr_iret_rip)
+#define isr_iret_cs     (percpu_self()->isr_iret_cs)
+#define isr_iret_rflags (percpu_self()->isr_iret_rflags)
 
 static void irq_send_eoi(uint32_t irq)
 {

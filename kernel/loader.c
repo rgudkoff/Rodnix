@@ -4,6 +4,7 @@
  */
 
 #include "loader.h"
+#include "arch/percpu.h"
 #include "elf.h"
 #include "arch/usermode.h"
 #include "arch/paging.h"
@@ -602,10 +603,7 @@ int loader_execve_ex(const char* path,
     if (cur) {
         cur->tls_fs_base = 0;
     }
-    {
-        extern uint64_t g_current_tls_fs_base;
-        g_current_tls_fs_base = 0;
-    }
+    percpu_set_tls_fs_base(0);
 
     if (bootlog_is_verbose()) {
         kputs("[LOADER] entering userland\n");
