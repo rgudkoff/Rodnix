@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/core/cpu.h"
 #include "../kernel/fabric/fabric.h"
 #include "../kernel/unix/unix_layer.h"
 #include "../kernel/usb/usb.h"
@@ -24,8 +25,16 @@ void scheduler_tick(void)
         return;
     }
 
-    sched_ticks++;
-    waitq_tick(sched_ticks);
+    /* Global time is advanced by one processor only. Every CPU takes this
+     * interrupt, so incrementing here from all of them would make the clock
+     * run N times fast and fire every timeout N times early. The same goes
+     * for the periodic subsystem polls further down. */
+    const bool owns_global_time = (cpu_get_id() == 0);
+    if (owns_global_time) {
+        sched_ticks++;
+        waitq_tick(sched_ticks);
+    }
+
     thread_t* cur = thread_get_current();
     if (cur && cur->state == THREAD_STATE_RUNNING) {
         cur->sched_usage = (cur->sched_usage * 7) / 8;
@@ -51,6 +60,12 @@ void scheduler_tick(void)
     if (ticks_until_preempt == 0) {
         ticks_until_preempt = ticks_per_slice;
         resched_pending = true;
+    }
+
+    if (!owns_global_time) {
+        /* Preemption accounting above is per-CPU and has already happened.
+         * Everything below drives machine-wide subsystems. */
+        return;
     }
 
     (void)fabric_dispatcher_tick();

@@ -119,14 +119,33 @@ void ap_entry(void)
     cpu_ist_init(); /* this CPU's own #DF/NMI/#MC stacks */
     apic_init_ap();
 
+    /*
+     * This processor's LAPIC timer is deliberately left stopped.
+     *
+     * Starting it is one line -- the calibration is machine-wide and
+     * apic_timer_start() touches only per-CPU registers -- and it does put
+     * the AP into the scheduler off the shared run queue. It was tried and
+     * backed out: the switch path has no thread to fall back on when an AP's
+     * thread exits and the queue is empty, so it resumes a dead thread and
+     * takes a #GP on the next iretq. Fixing that properly means giving each
+     * processor its own idle thread, and handing a preempted thread over
+     * with an on-cpu handshake rather than the tick-deferred approximation
+     * in sched/switch.c. Both are written up in docs/ru/smp_bringup.md.
+     *
+     * Until then this processor stays reachable by IPI and runs nothing,
+     * which is honest, rather than running work on a scheduler known to
+     * fault under load.
+     */
+
     /* Published last: the boot processor treats this as "usable", so
      * everything above must already be true. */
     percpu_self()->online = true;
     __asm__ volatile ("" ::: "memory");
 
-    /* No run queue on this processor yet -- that is the next stream. Idle
-     * with interrupts enabled so the LAPIC can deliver IPIs; without them
-     * the processor would be online but unreachable. */
+    /* Idle. The processor has no current thread, so the first timer interrupt
+     * takes it into the scheduler, which either hands it work off the shared
+     * run queue or returns it here. Interrupts must be on for any of that,
+     * and for IPIs to reach it at all. */
     __asm__ volatile ("sti");
     for (;;) {
         __asm__ volatile ("hlt");

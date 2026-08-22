@@ -2,6 +2,7 @@
 #define _RODNIX_COMMON_SCHEDULER_INTERNAL_H
 
 #include "scheduler.h"
+#include "../kernel/arch/percpu.h"
 #include "waitq.h"
 #include "../kernel/arch/interrupt_frame.h"
 #include "../include/bsd/sys/queue.h"
@@ -33,10 +34,14 @@ extern bool scheduler_running;
 extern sched_policy_t current_policy;
 extern scheduler_stats_t stats;
 
-extern volatile bool in_scheduler;
-extern uint32_t ticks_until_preempt;
+/* These three describe the calling processor, not the system, and live in
+ * its percpu slot. Kept under the original names so the scheduler reads the
+ * same way; each expands to a GS-relative access. */
+#define in_scheduler        (percpu_self()->sched_in_switch)
+#define resched_pending     (percpu_self()->sched_resched_pending)
+#define ticks_until_preempt (percpu_self()->sched_ticks_until_preempt)
+
 extern uint32_t ticks_per_slice;
-extern volatile bool resched_pending;
 extern uint64_t sched_ticks;
 
 TAILQ_HEAD(ready_queue_head, thread);

@@ -79,6 +79,19 @@ struct percpu {
      * on SMP means every CPU reporting whatever the last one set. */
     uint32_t irql;
 
+    /* Scheduler state that describes *this* processor rather than the
+     * system: whether it is inside a switch, whether it owes itself a
+     * reschedule, and how much of its current thread's slice is left. All
+     * three were globals, which on SMP means one processor's decision
+     * silently becoming every processor's. */
+    /* Thread this processor switched away from and has not yet handed back
+     * to the run queue. See the deferral in sched/switch.c. */
+    struct thread* sched_prev_pending;
+
+    bool sched_in_switch;
+    bool sched_resched_pending;
+    uint32_t sched_ticks_until_preempt;
+
     uint32_t index;              /* dense slot, assigned in bring-up order */
     uint32_t apic_id;            /* filled once the topology is known */
 
@@ -88,6 +101,10 @@ struct percpu {
     /* This slot describes a processor that has actually been brought up.
      * Slots are zeroed .bss, so without this an IPI aimed at a CPU that was
      * never started would read apic_id 0 and hit the boot processor. */
+    /* Console recursion guard. Was a global, which on SMP makes one
+     * processor's ordinary print look like another's re-entry. */
+    bool console_in_progress;
+
     bool online;
 
     bool irq_checked;            /* percpu_irq_selftest() has run here */

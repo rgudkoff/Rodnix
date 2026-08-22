@@ -64,6 +64,29 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     }
     resched_pending = false;
 
+    /*
+     * Hand back the thread this processor switched away from last time.
+     *
+     * It cannot be released at the moment of the switch. Until the stub
+     * executes `mov rsp, rax`, this processor is still running on that
+     * thread's kernel stack, and a thread in the run queue may be picked up
+     * by another processor immediately -- which would have two CPUs on one
+     * stack. Deferring to the next entry proves we are off it: we got here
+     * on whatever stack we switched to.
+     *
+     * The cost is that a preempted thread becomes runnable one tick later
+     * than it otherwise would.
+     */
+    {
+        thread_t* pending = percpu_self()->sched_prev_pending;
+        if (pending) {
+            percpu_self()->sched_prev_pending = NULL;
+            if (pending->state == THREAD_STATE_READY) {
+                ready_enqueue(pending);
+            }
+        }
+    }
+
     if (!cur) {
         thread_t* first = ready_dequeue();
         PANIC_IF(!first, "scheduler: no runnable threads on first switch");
@@ -83,12 +106,14 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     }
 
     cur->context.stack_pointer = (uint64_t)(uintptr_t)frame;
-    if (cur->state == THREAD_STATE_RUNNING) {
-        scheduler_thread_set_state(cur, THREAD_STATE_READY, "switch_preempt");
-        ready_enqueue(cur);
-    }
 
     thread_t* next = ready_dequeue();
+    if (next && cur->state == THREAD_STATE_RUNNING) {
+        /* Only give the outgoing thread up once a replacement is in hand,
+         * and even then only into this CPU's pending slot -- see above. */
+        scheduler_thread_set_state(cur, THREAD_STATE_READY, "switch_preempt");
+        percpu_self()->sched_prev_pending = cur;
+    }
     if (!next || next == cur) {
         if (cur && cur->state != THREAD_STATE_DEAD) {
             scheduler_thread_set_state(cur, THREAD_STATE_RUNNING, "switch_continue_current");
@@ -117,6 +142,7 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     if (prev && prev->state == THREAD_STATE_RUNNING) {
         scheduler_thread_set_state(prev, THREAD_STATE_READY, "switch_prev_ready");
+        percpu_self()->sched_prev_pending = prev;
     }
     if (prev && prev->state == THREAD_STATE_DEAD) {
         scheduler_reap_enqueue(prev);

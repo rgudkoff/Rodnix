@@ -7,10 +7,7 @@ bool scheduler_running = false;
 sched_policy_t current_policy = SCHED_POLICY_PRIORITY;
 scheduler_stats_t stats = {0};
 
-volatile bool in_scheduler = false;
-uint32_t ticks_until_preempt = 1;
 uint32_t ticks_per_slice = 1;
-volatile bool resched_pending = false;
 uint64_t sched_ticks = 0;
 
 struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];

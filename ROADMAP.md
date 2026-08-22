@@ -42,7 +42,10 @@ system on the first concurrent syscall.
 - [x] Per-CPU GDT + TSS + IST stacks for #DF/NMI/#MC
 - [x] Implement `interrupt_send_ipi()` (xAPIC ICR pair and x2APIC MSR)
 - [x] AP trampoline (`ap_trampoline.S`) + `ap_entry()` bring-up path
-- [ ] Per-CPU run-queues and reschedule IPI
+- [x] Real spinlocks replacing the cli-as-lock idiom; scheduler, wait queues
+      and console made SMP-safe
+- [ ] Per-CPU idle threads and an on-cpu handshake, so APs can run threads
+- [ ] Per-CPU run-queues and reschedule IPI (v1; global queue is the v0 shape)
 
 ## Phase 3 - Reliability and Security (P2)
 - [ ] Structured kernel logs + tracepoints (`irq/sched/syscall/fault`)

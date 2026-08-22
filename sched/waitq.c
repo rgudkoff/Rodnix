@@ -4,6 +4,7 @@
  */
 
 #include "waitq.h"
+#include "../kernel/fabric/spin.h"
 #include "scheduler.h"
 #include "../../include/error.h"
 #include <stddef.h>
@@ -60,6 +61,20 @@ static uint64_t waitq_deadline_from_timeout_ms(uint64_t timeout_ms)
     return now + ticks;
 }
 
+/*
+ * One lock for every wait queue rather than one per queue.
+ *
+ * Coarse on purpose: the operations it guards are a few list splices, and a
+ * lock word in waitq_t would have to be threaded through every embedded
+ * queue in task.h. The v0 shape, matching the global run queue -- split it
+ * when contention is measured, not before.
+ *
+ * Lock order is waitq before the run queue: waking a thread reaches
+ * scheduler_wake() and from there ready_enqueue(). Nothing goes the other
+ * way, so the order cannot invert.
+ */
+static spinlock_t waitq_spin;
+
 void waitq_init(waitq_t* q, const char* name)
 {
     if (!q) {
@@ -90,9 +105,11 @@ int waitq_enqueue(waitq_t* q, thread_t* t)
         return RDNX_E_BUSY;
     }
 
+    uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
     TAILQ_INSERT_TAIL(&q->threads, t, wait_link);
     t->waitq_owner = q;
     q->count++;
+    spinlock_unlock_irqrestore(&waitq_spin, flags);
     return RDNX_OK;
 }
 
@@ -105,6 +122,7 @@ int waitq_remove(waitq_t* q, thread_t* t)
         return RDNX_E_NOTFOUND;
     }
 
+    uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
     TAILQ_REMOVE(&q->threads, t, wait_link);
     t->waitq_owner = NULL;
     t->wait_timed_out = 0;
@@ -112,6 +130,7 @@ int waitq_remove(waitq_t* q, thread_t* t)
     if (q->count > 0) {
         q->count--;
     }
+    spinlock_unlock_irqrestore(&waitq_spin, flags);
     return RDNX_OK;
 }
 
@@ -120,8 +139,10 @@ thread_t* waitq_dequeue(waitq_t* q)
     if (!q) {
         return NULL;
     }
+    uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
     thread_t* t = TAILQ_FIRST(&q->threads);
     if (!t) {
+        spinlock_unlock_irqrestore(&waitq_spin, flags);
         return NULL;
     }
 
@@ -132,6 +153,7 @@ thread_t* waitq_dequeue(waitq_t* q)
     if (q->count > 0) {
         q->count--;
     }
+    spinlock_unlock_irqrestore(&waitq_spin, flags);
     return t;
 }
 
@@ -220,6 +242,7 @@ int waitq_wait(waitq_t* q, uint64_t timeout_ms)
 void waitq_tick(uint64_t now_ticks)
 {
     waitq_timeouts_init_once();
+    uint64_t tflags = spinlock_lock_irqsave(&waitq_spin);
     thread_t* it = NULL;
     thread_t* next = NULL;
     TAILQ_FOREACH_SAFE(it, &waitq_timeouts, wait_timeout_link, next) {
@@ -243,4 +266,5 @@ void waitq_tick(uint64_t now_ticks)
         }
         scheduler_wake(it);
     }
+    spinlock_unlock_irqrestore(&waitq_spin, tflags);
 }
