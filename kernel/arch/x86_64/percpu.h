@@ -62,18 +62,15 @@ struct percpu {
      * from here on the way back out. */
     uint64_t tls_fs_base;
 
-    /* Last iretq frame the entry stubs were about to return through, captured
+    /* Last iretq frame the entry stub was about to return through, captured
      * for the exception dump in isr_handlers.c. Per-CPU because a dump is
      * worth having precisely when several processors are faulting at once,
-     * which is exactly when a shared slot would show another CPU's frame. */
-    uint64_t irq_iret_rsp;
-    uint64_t irq_iret_rip;
-    uint64_t irq_iret_cs;
-    uint64_t irq_iret_rflags;
-    uint64_t isr_iret_rsp;
-    uint64_t isr_iret_rip;
-    uint64_t isr_iret_cs;
-    uint64_t isr_iret_rflags;
+     * which is exactly when a shared slot would show another CPU's frame.
+     * One set, because there is one stub. */
+    uint64_t iret_rsp;
+    uint64_t iret_rip;
+    uint64_t iret_cs;
+    uint64_t iret_rflags;
 
     /* Interrupt request level of this processor. Was a single global, which
      * on SMP means every CPU reporting whatever the last one set. */
@@ -119,22 +116,14 @@ _Static_assert(offsetof(struct percpu, syscall_user_rsp) == 16,
                "percpu.syscall_user_rsp offset must match PCPU_SYSCALL_USER_RSP in the entry stubs");
 _Static_assert(offsetof(struct percpu, tls_fs_base) == 24,
                "percpu.tls_fs_base offset must match PCPU_TLS_FS_BASE in the entry stubs");
-_Static_assert(offsetof(struct percpu, irq_iret_rsp) == 32,
-               "percpu.irq_iret_rsp offset must match PCPU_IRQ_IRET_RSP in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, irq_iret_rip) == 40,
-               "percpu.irq_iret_rip offset must match PCPU_IRQ_IRET_RIP in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, irq_iret_cs) == 48,
-               "percpu.irq_iret_cs offset must match PCPU_IRQ_IRET_CS in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, irq_iret_rflags) == 56,
-               "percpu.irq_iret_rflags offset must match PCPU_IRQ_IRET_RFLAGS in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, isr_iret_rsp) == 64,
-               "percpu.isr_iret_rsp offset must match PCPU_ISR_IRET_RSP in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, isr_iret_rip) == 72,
-               "percpu.isr_iret_rip offset must match PCPU_ISR_IRET_RIP in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, isr_iret_cs) == 80,
-               "percpu.isr_iret_cs offset must match PCPU_ISR_IRET_CS in isr_stubs.S");
-_Static_assert(offsetof(struct percpu, isr_iret_rflags) == 88,
-               "percpu.isr_iret_rflags offset must match PCPU_ISR_IRET_RFLAGS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, iret_rsp) == 32,
+               "percpu.iret_rsp offset must match PCPU_IRET_RSP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, iret_rip) == 40,
+               "percpu.iret_rip offset must match PCPU_IRET_RIP in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, iret_cs) == 48,
+               "percpu.iret_cs offset must match PCPU_IRET_CS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, iret_rflags) == 56,
+               "percpu.iret_rflags offset must match PCPU_IRET_RFLAGS in isr_stubs.S");
 
 extern struct percpu g_percpu[X86_64_MAX_CPUS];
 extern bool g_percpu_gs_ready;

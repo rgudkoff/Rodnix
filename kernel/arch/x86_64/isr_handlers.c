@@ -76,16 +76,12 @@ static void serial_write_hex64(uint64_t value)
 
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
-/* The entry stubs capture the iretq frame they were about to return through
- * into this CPU's percpu slot; these read it back for the exception dump. */
-#define irq_iret_rsp    (percpu_self()->irq_iret_rsp)
-#define irq_iret_rip    (percpu_self()->irq_iret_rip)
-#define irq_iret_cs     (percpu_self()->irq_iret_cs)
-#define irq_iret_rflags (percpu_self()->irq_iret_rflags)
-#define isr_iret_rsp    (percpu_self()->isr_iret_rsp)
-#define isr_iret_rip    (percpu_self()->isr_iret_rip)
-#define isr_iret_cs     (percpu_self()->isr_iret_cs)
-#define isr_iret_rflags (percpu_self()->isr_iret_rflags)
+/* The entry stub captures the iretq frame it was about to return through into
+ * this CPU's percpu slot; these read it back for the exception dump. */
+#define iret_rsp    (percpu_self()->iret_rsp)
+#define iret_rip    (percpu_self()->iret_rip)
+#define iret_cs     (percpu_self()->iret_cs)
+#define iret_rflags (percpu_self()->iret_rflags)
 
 static void irq_send_eoi(uint32_t irq)
 {
@@ -343,17 +339,17 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         }
 
         /* Serial exception dump for boot.log */
-        serial_write_str("\n[EXC] irq_iret rsp=");
-        serial_write_hex64(irq_iret_rsp);
+        serial_write_str("\n[EXC] iret rsp=");
+        serial_write_hex64(iret_rsp);
         serial_write_str(" rip=");
-        serial_write_hex64(irq_iret_rip);
+        serial_write_hex64(iret_rip);
         serial_write_str(" cs=");
-        serial_write_hex64(irq_iret_cs);
+        serial_write_hex64(iret_cs);
         serial_write_str(" rflags=");
-        serial_write_hex64(irq_iret_rflags);
+        serial_write_hex64(iret_rflags);
         serial_write_str("\n");
-        if (irq_iret_rsp) {
-            uint64_t* p = (uint64_t*)(uintptr_t)irq_iret_rsp;
+        if (iret_rsp) {
+            uint64_t* p = (uint64_t*)(uintptr_t)iret_rsp;
             serial_write_str("[EXC] iretq stack rip/cs/rflags=");
             serial_write_hex64(p[0]);
             serial_write_str(" ");
@@ -377,16 +373,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             serial_write_hex64(p[4]);
             serial_write_str("\n");
         }
-
-        serial_write_str("[EXC] isr_iret rsp=");
-        serial_write_hex64(isr_iret_rsp);
-        serial_write_str(" rip=");
-        serial_write_hex64(isr_iret_rip);
-        serial_write_str(" cs=");
-        serial_write_hex64(isr_iret_cs);
-        serial_write_str(" rflags=");
-        serial_write_hex64(isr_iret_rflags);
-        serial_write_str("\n");
 
         serial_write_str("\n[EXC] v=");
         serial_write_hex64(vector);
@@ -492,14 +478,8 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     return regs;
 }
 
-/* ISR handler (called from assembly for exceptions 0-31) */
-interrupt_frame_t* isr_handler(interrupt_frame_t* regs)
-{
-    return interrupt_dispatch(regs);
-}
-
-/* IRQ handler (called from assembly for IRQ 32-47) */
-interrupt_frame_t* irq_handler(interrupt_frame_t* regs)
+/* The one entry point from assembly, for every vector. */
+interrupt_frame_t* interrupt_entry(interrupt_frame_t* regs)
 {
     return interrupt_dispatch(regs);
 }
