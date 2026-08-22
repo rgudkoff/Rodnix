@@ -46,6 +46,7 @@
 
 - `execution_plan_os_foundation.md` — основной исполнимый план.
 - `p0_focus_plan.md` — текущий фокус стабилизации.
+- `smp_bringup.md` — план перехода на многопроцессорность (x86_64).
 - `industrial_readiness.md` — критерии готовности к выпуску.
 - `industrial_gap.md` — gap-анализ относительно критериев готовности.
 

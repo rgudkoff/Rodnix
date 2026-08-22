@@ -1,10 +1,11 @@
 # RodNIX High-Level Roadmap
 
-Last updated: 2026-03-08
+Last updated: 2026-08-22
 
 This roadmap is intentionally high level. Detailed execution plans live in:
 - `docs/ru/execution_plan_os_foundation.md`
 - `docs/ru/industrial_gap.md`
+- `docs/ru/smp_bringup.md`
 - `docs/archive/posix-plan.md` (historical)
 
 It should be read together with `README.md`, `ARCHITECTURE.md`, and
@@ -30,6 +31,18 @@ It should be read together with `README.md`, `ARCHITECTURE.md`, and
 - [ ] Process model v1: `fork/execve/waitpid` (+ basic `SIGCHLD`)
 - [ ] VM v1: explicit user VM map/object model + page-fault path + basic COW
 - [ ] VFS semantics hardening for userland workflows
+
+## SMP bring-up (P1, gated on Phase 1-2)
+Tracked in detail in `docs/ru/smp_bringup.md`. Ordered, because starting
+APs before the syscall/interrupt entry paths are per-CPU corrupts the
+system on the first concurrent syscall.
+- [ ] Enumerate CPUs from MADT type 0/9 (`acpi_madt_get_cpus`)
+- [ ] Per-CPU infrastructure: `struct percpu`, GS base, `swapgs`, `cpu_id()`
+- [ ] Rewrite `syscall_fast_entry.S` / `isr_stubs.S` onto GS-relative state
+- [ ] Per-CPU GDT + TSS + IST stacks
+- [ ] Implement `interrupt_send_ipi()` (xAPIC ICR pair and x2APIC MSR)
+- [ ] AP trampoline (`ap_trampoline.S`) + `ap_entry()` bring-up path
+- [ ] Per-CPU run-queues and reschedule IPI
 
 ## Phase 3 - Reliability and Security (P2)
 - [ ] Structured kernel logs + tracepoints (`irq/sched/syscall/fault`)
