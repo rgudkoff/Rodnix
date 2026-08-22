@@ -430,29 +430,35 @@ int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
  */
 int irql_selftest(void)
 {
-    extern uint32_t apic_timer_get_ticks(void);
+    /* This CPU's own tick count, not the machine-wide one. The global
+     * counter is incremented by every processor, so on a multiprocessor
+     * machine it keeps climbing while this processor's timer is masked and
+     * the check reports a failure that is entirely its own confusion. */
+    const uint32_t self = percpu_index();
+#define TICKS_HERE() ((uint32_t)irqstat_get(self, VECTOR_LAPIC_TIMER))
 
     if (!lapic_access_ready()) {
         return -1;
     }
 
     irql_t entry = set_irql(IRQL_CLOCK);
-    uint32_t masked_start = apic_timer_get_ticks();
+    uint32_t masked_start = TICKS_HERE();
     for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
         __asm__ volatile ("pause");
     }
-    uint32_t masked_end = apic_timer_get_ticks();
+    uint32_t masked_end = TICKS_HERE();
 
     (void)set_irql(IRQL_PASSIVE);
-    uint32_t open_start = apic_timer_get_ticks();
+    uint32_t open_start = TICKS_HERE();
     for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
         __asm__ volatile ("pause");
     }
-    uint32_t open_end = apic_timer_get_ticks();
+    uint32_t open_end = TICKS_HERE();
 
     (void)set_irql(entry);
 
     bool masked_ok = (masked_end == masked_start);
     bool open_ok = (open_end > open_start);
     return (masked_ok && open_ok) ? 0 : -1;
+#undef TICKS_HERE
 }

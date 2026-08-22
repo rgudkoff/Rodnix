@@ -34,8 +34,7 @@ static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
     return 1;
 }
 
-int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)
-{
+static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip){
     (void)rip;
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_NOTFOUND;
@@ -135,3 +134,13 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
 
     return RDNX_E_DENIED;
 }
+
+int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)
+{
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_fault_handle_locked(task, fault_addr, err_code, rip);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+

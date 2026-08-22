@@ -4,6 +4,7 @@
  */
 
 #include "../include/kernel.h"
+#include "../kernel/arch/percpu.h"
 #include "../include/common.h"
 #include "../include/console.h"
 #include "../include/debug.h"
@@ -213,9 +214,16 @@ kernel_enter_runtime(void)
         primary = thread_create(init_task, user_init_thread, (void*)g_user_init_path);
     }
 
+    /* This processor's idle thread. Deliberately not added to the scheduler:
+     * it belongs to this CPU alone. A shared idle thread in the run queue
+     * would be handed to whichever processor asked first, leaving the others
+     * with nothing to return to -- which is precisely the hole that stopped
+     * application processors from running anything. */
     thread_t* idle = thread_create(kernel_task, idle_thread, NULL);
     if (idle) {
         idle->priority = PRIORITY_MIN;
+        scheduler_mark_runnable_unqueued(idle);
+        percpu_self()->sched_idle = idle;
     }
 
     bootstrap_start();
@@ -226,7 +234,6 @@ kernel_enter_runtime(void)
     }
 
     scheduler_add_thread(primary);
-    scheduler_add_thread(idle);
     bootlog_mark("threads", "created");
 
     klog("kernel", "boot complete — starting scheduler\n");

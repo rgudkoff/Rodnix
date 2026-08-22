@@ -72,6 +72,15 @@ struct percpu {
     uint64_t iret_cs;
     uint64_t iret_rflags;
 
+    /* Address of the on_cpu word belonging to the thread this processor has
+     * just switched away from, or zero. The interrupt stub clears it right
+     * after loading the new stack pointer -- the first instant at which the
+     * old thread's stack is provably no longer in use. An address rather than
+     * a thread pointer so the assembly needs no knowledge of thread_t.
+     *
+     * Read by isr_stubs.S at PCPU_PREV_ONCPU. */
+    volatile uint32_t* sched_prev_oncpu;
+
     /* Interrupt request level of this processor. Was a single global, which
      * on SMP means every CPU reporting whatever the last one set. */
     uint32_t irql;
@@ -81,9 +90,11 @@ struct percpu {
      * reschedule, and how much of its current thread's slice is left. All
      * three were globals, which on SMP means one processor's decision
      * silently becoming every processor's. */
-    /* Thread this processor switched away from and has not yet handed back
-     * to the run queue. See the deferral in sched/switch.c. */
-    struct thread* sched_prev_pending;
+
+    /* This processor's idle thread: always runnable, never in the shared run
+     * queue, so "nothing to run" is a thread rather than a state the switch
+     * path has to invent an answer for. */
+    struct thread* sched_idle;
 
     bool sched_in_switch;
     bool sched_resched_pending;
@@ -124,6 +135,8 @@ _Static_assert(offsetof(struct percpu, iret_cs) == 48,
                "percpu.iret_cs offset must match PCPU_IRET_CS in isr_stubs.S");
 _Static_assert(offsetof(struct percpu, iret_rflags) == 56,
                "percpu.iret_rflags offset must match PCPU_IRET_RFLAGS in isr_stubs.S");
+_Static_assert(offsetof(struct percpu, sched_prev_oncpu) == 64,
+               "percpu.sched_prev_oncpu offset must match PCPU_PREV_ONCPU in isr_stubs.S");
 
 extern struct percpu g_percpu[X86_64_MAX_CPUS];
 extern bool g_percpu_gs_ready;

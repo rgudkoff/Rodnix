@@ -206,6 +206,14 @@ int scheduler_remove_thread(thread_t* thread)
     return 0;
 }
 
+void scheduler_mark_runnable_unqueued(thread_t* thread)
+{
+    if (!thread) {
+        return;
+    }
+    scheduler_thread_set_state(thread, THREAD_STATE_READY, "idle_unqueued");
+}
+
 thread_t* scheduler_get_current_thread(void)
 {
     return thread_get_current();

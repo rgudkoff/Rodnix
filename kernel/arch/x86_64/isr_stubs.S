@@ -14,6 +14,7 @@ default rel
 %define PCPU_IRET_RIP         40
 %define PCPU_IRET_CS          48
 %define PCPU_IRET_RFLAGS      56
+%define PCPU_PREV_ONCPU       64
 
 section .text
 
@@ -154,6 +155,20 @@ interrupt_common_stub:
     test rax, rax
     jz interrupt_done
     mov rsp, rax
+
+    ; The stack switch is now complete, and this is the first instant at
+    ; which the thread we came from is provably no longer being executed on.
+    ; Release it: a processor that pulled it out of the run queue is spinning
+    ; on exactly this word, because until now its kernel stack was still in
+    ; use here. Doing it any earlier in C would leave a window in which two
+    ; processors run on one stack.
+    mov rcx, [gs:PCPU_PREV_ONCPU]
+    test rcx, rcx
+    jz interrupt_done
+    mov qword [gs:PCPU_PREV_ONCPU], 0
+    ; x86 stores are release-ordered, so no fence is needed for the waiter to
+    ; see the stack pointer written before this.
+    mov dword [rcx], 0
     
 interrupt_done:
     ; Decide return CPL by inspecting saved CS

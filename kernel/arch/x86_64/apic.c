@@ -1104,7 +1104,9 @@ void apic_disable_irq(uint8_t irq)
 void apic_timer_handler(interrupt_context_t* ctx)
 {
     (void)ctx;
-    apic_timer_ticks++;
+    /* Every processor runs this handler, so the machine-wide count has to be
+     * incremented atomically. Per-CPU counts live in irqstat. */
+    __sync_fetch_and_add(&apic_timer_ticks, 1u);
 
     /*
      * TSC-Deadline mode is one-shot: reprogram the next deadline immediately.

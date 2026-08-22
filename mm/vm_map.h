@@ -81,4 +81,9 @@ void vm_task_destroy(task_t* task);
 
 vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr);
 
+/* The VM layer's lock. Public so the fault path, which lives in its own
+ * file, can take the same one. */
+uint64_t vm_layer_lock(void);
+void vm_layer_unlock(uint64_t flags);
+
 #endif /* _RODNIX_VM_MAP_H */

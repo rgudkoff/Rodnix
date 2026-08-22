@@ -18,6 +18,9 @@
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../lib/heap.h"
+#include "../../core/task.h"
+#include "../../../sched/scheduler.h"
+#include "../../core/boot.h"
 
 /* Symbols inside the trampoline blob. Their addresses here are wherever the
  * linker put the blob; what matters is the offset of each from the start,
@@ -37,8 +40,33 @@ extern uint8_t ap_trampoline_entry[];
  * slot in the trampoline, can be plain variables. */
 static volatile uint32_t g_ap_boot_slot = 0;
 static volatile uint32_t g_ap_boot_apic_id = 0;
+/* The idle thread this processor will fall back on. Created by the boot
+ * processor before the STARTUP IPI, because an AP has no task to create one
+ * against and nothing to run while it tries. */
+static struct thread* volatile g_ap_boot_idle = NULL;
+static task_t* g_idle_task = NULL;
 static uint64_t g_kernel_pml4_phys = 0;
 static uint32_t g_online_count = 1; /* the boot processor */
+
+/*
+ * Whether application processors run threads, off unless rdnx.smp=threads is
+ * on the kernel command line.
+ *
+ * The scheduler side is finished: idle threads are per-CPU, the on_cpu
+ * handshake makes migration safe, and with it the processors share the run
+ * queue and the contract suite passes on one CPU. What is not finished is
+ * everything a thread reaches once it is running. The VM layer had no lock
+ * at all and now has one; the VFS still has none, and says so itself --
+ * fs/vfs.c: "TODO: add a vfs_lock (rwlock or spinlock) before enabling
+ * concurrent VFS callers". Under -smp 2 the contract suite reproducibly
+ * faults in userspace around the ext2 cases.
+ *
+ * So the mechanism ships enabled-on-request rather than on by default: a
+ * flag that has to be asked for is honest about what has been proven, where
+ * a default-on one would claim more than the tree can back. Turning it on
+ * is the last line of this file to change once the VFS is audited.
+ */
+static bool g_ap_run_threads = false;
 
 static uint64_t read_cr3(void)
 {
@@ -99,6 +127,16 @@ static uint64_t build_trampoline_pml4(void)
     return phys;
 }
 
+/* What an application processor runs when the run queue has nothing for it.
+ * One per CPU and never in the shared queue -- see percpu.sched_idle. */
+static void ap_idle_loop(void* arg)
+{
+    (void)arg;
+    for (;;) {
+        __asm__ volatile ("sti\n\thlt" ::: "memory");
+    }
+}
+
 /* Entered from the trampoline with a stack, the kernel's high half mapped and
  * nothing else set up. Runs once per application processor. */
 void ap_entry(void);
@@ -119,33 +157,33 @@ void ap_entry(void)
     cpu_ist_init(); /* this CPU's own #DF/NMI/#MC stacks */
     apic_init_ap();
 
-    /*
-     * This processor's LAPIC timer is deliberately left stopped.
+    /* Its idle thread, handed over by the boot processor. Assigned after
+     * percpu_init_ap, which zeroes the slot. */
+    percpu_self()->sched_idle = g_ap_boot_idle;
+
+    /* Start this processor's own LAPIC timer. The calibration constants are
+     * machine-wide and already settled by the boot processor; what is per-CPU
+     * is the local vector table entry and the count, which is all
+     * apic_timer_start() touches. From here the timer drives this CPU into
+     * the scheduler exactly as it does the boot processor.
      *
-     * Starting it is one line -- the calibration is machine-wide and
-     * apic_timer_start() touches only per-CPU registers -- and it does put
-     * the AP into the scheduler off the shared run queue. It was tried and
-     * backed out: the switch path has no thread to fall back on when an AP's
-     * thread exits and the queue is empty, so it resumes a dead thread and
-     * takes a #GP on the next iretq. Fixing that properly means giving each
-     * processor its own idle thread, and handing a preempted thread over
-     * with an on-cpu handshake rather than the tick-deferred approximation
-     * in sched/switch.c. Both are written up in docs/ru/smp_bringup.md.
-     *
-     * Until then this processor stays reachable by IPI and runs nothing,
-     * which is honest, rather than running work on a scheduler known to
-     * fault under load.
-     */
+     * Nothing happens until the boot processor sets scheduler_running: both
+     * scheduler_tick() and the switch path return early before that, so an
+     * AP brought up during sysinit idles harmlessly until there is a
+     * scheduler to join. */
+    if (g_ap_run_threads) {
+        apic_timer_start();
+    }
 
     /* Published last: the boot processor treats this as "usable", so
      * everything above must already be true. */
     percpu_self()->online = true;
     __asm__ volatile ("" ::: "memory");
 
-    /* Idle. The processor has no current thread, so the first timer interrupt
-     * takes it into the scheduler, which either hands it work off the shared
-     * run queue or returns it here. Interrupts must be on for any of that,
-     * and for IPIs to reach it at all. */
+    /* Idle until the first timer interrupt takes this processor into the
+     * scheduler, which either hands it work off the shared run queue or
+     * returns it to its own idle thread. Interrupts must be on for any of
+     * that, and for IPIs to reach it at all. */
     __asm__ volatile ("sti");
     for (;;) {
         __asm__ volatile ("hlt");
@@ -190,8 +228,37 @@ static bool ap_wait_online(uint32_t slot, uint32_t timeout_ms)
     return percpu_peer(slot) != NULL;
 }
 
+/* One idle thread per application processor, created here rather than on the
+ * AP itself: creating it needs a task and a heap allocation, and an AP that
+ * has neither yet has nowhere to fall back to while it tries. */
+static struct thread* make_ap_idle(void)
+{
+    if (!g_idle_task) {
+        g_idle_task = task_create();
+        if (!g_idle_task) {
+            return NULL;
+        }
+        g_idle_task->state = TASK_STATE_READY;
+    }
+
+    thread_t* idle = thread_create(g_idle_task, ap_idle_loop, NULL);
+    if (!idle) {
+        return NULL;
+    }
+    idle->priority = 0;
+    scheduler_mark_runnable_unqueued(idle);
+    return idle;
+}
+
 static bool start_one_ap(uint32_t slot, uint32_t apic_id)
 {
+    struct thread* idle = make_ap_idle();
+    if (!idle) {
+        kprintf("[SMP] no idle thread for apic_id=%u\n", (unsigned)apic_id);
+        return false;
+    }
+    g_ap_boot_idle = idle;
+
     void* stack = kmalloc(AP_STACK_SIZE);
     if (!stack) {
         kprintf("[SMP] no stack for apic_id=%u\n", (unsigned)apic_id);
@@ -281,6 +348,12 @@ int smp_verify_aps(void)
 
 int smp_start_aps(void)
 {
+    {
+        const boot_info_t* bi = boot_get_info();
+        g_ap_run_threads = bi && bi->cmdline[0] &&
+                           strstr(bi->cmdline, "rdnx.smp=threads") != NULL;
+    }
+
     uint32_t total = cpu_topology_count();
     if (total <= 1) {
         return 0;

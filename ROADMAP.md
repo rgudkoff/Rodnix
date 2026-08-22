@@ -44,7 +44,9 @@ system on the first concurrent syscall.
 - [x] AP trampoline (`ap_trampoline.S`) + `ap_entry()` bring-up path
 - [x] Real spinlocks replacing the cli-as-lock idiom; scheduler, wait queues
       and console made SMP-safe
-- [ ] Per-CPU idle threads and an on-cpu handshake, so APs can run threads
+- [x] Per-CPU idle threads and an on-cpu handshake, so APs can run threads
+      (enabled with `rdnx.smp=threads`; default off pending a VFS audit)
+- [ ] Audit VFS for concurrent callers, then make AP threads the default
 - [ ] Per-CPU run-queues and reschedule IPI (v1; global queue is the v0 shape)
 
 ## Phase 3 - Reliability and Security (P2)

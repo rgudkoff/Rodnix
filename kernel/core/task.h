@@ -166,6 +166,13 @@ typedef struct thread {
     TAILQ_ENTRY(thread) task_link;  /* Узел списка потоков задачи (task_t.threads) */
     TAILQ_ENTRY(thread) sched_link; /* Узел ready-очереди планировщика */
     uint8_t ready_queued;      /* Поток находится в ready queue */
+    /* Nonzero while some processor is still executing on this thread's kernel
+     * stack. Set when a CPU starts running the thread and cleared by the
+     * interrupt stub only after it has switched off the stack, so a processor
+     * that picks the thread out of the run queue knows when the stack is
+     * genuinely free. Written by assembly through a pointer, so its type must
+     * stay 32-bit. */
+    volatile uint32_t on_cpu;
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
     TAILQ_ENTRY(thread) wait_timeout_link; /* Узел глобального timeout-list ожидания */
     struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */

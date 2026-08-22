@@ -1,4 +1,5 @@
 #include "vm_map.h"
+#include "../kernel/fabric/spin.h"
 #include "vm_pager.h"
 #include "vm_page_ref.h"
 #include "../kernel/arch/paging.h"
@@ -14,6 +15,32 @@
 #define VM_DEFAULT_MMAP  0x0000000060000000ULL
 
 static void (*g_fb_release_hook)(uint32_t display_idx) = NULL;
+
+/*
+ * One lock for the whole VM layer.
+ *
+ * There was none at all, which held only while a single processor could
+ * fault. With application processors running threads, two of them walk and
+ * mutate the same vm_map at once, and the observable result was a
+ * reproducible userspace page fault a fifth of the way through the contract
+ * suite.
+ *
+ * Coarse on purpose, matching the run queue and the wait queues: one lock at
+ * the public entry points, to be split when contention is measured rather
+ * than guessed at. Lock order is VM before the heap -- the fault path
+ * allocates -- and nothing takes the VM lock from under the heap.
+ */
+static spinlock_t vm_lock;
+
+uint64_t vm_layer_lock(void)
+{
+    return spinlock_lock_irqsave(&vm_lock);
+}
+
+void vm_layer_unlock(uint64_t flags)
+{
+    spinlock_unlock_irqrestore(&vm_lock, flags);
+}
 
 void vm_set_fb_release_hook(void (*fn)(uint32_t display_idx))
 {
@@ -238,8 +265,7 @@ static uint64_t vm_find_gap(vm_map_t* map, uint64_t hint, uint64_t len)
     return 0;
 }
 
-int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys)
-{
+static int vm_task_prepare_exec_locked(task_t* task, uint64_t user_pml4_phys){
     if (!task || !user_pml4_phys) {
         return RDNX_E_INVALID;
     }
@@ -261,16 +287,34 @@ int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys)
     return RDNX_OK;
 }
 
-int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags)
+int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys)
 {
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_prepare_exec_locked(task, user_pml4_phys);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
+
+static int vm_task_map_fixed_locked(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags){
     if (!task || !task->vm_map) {
         return RDNX_E_INVALID;
     }
     return vm_map_add((vm_map_t*)task->vm_map, start, len, prot, flags | VM_MAP_F_FIXED, NULL, 0);
 }
 
-int vm_task_set_brk_base(task_t* task, uint64_t brk_base)
+int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags)
 {
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_map_fixed_locked(task, start, len, prot, flags);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
+
+static int vm_task_set_brk_base_locked(task_t* task, uint64_t brk_base){
     if (!task) {
         return RDNX_E_INVALID;
     }
@@ -279,6 +323,16 @@ int vm_task_set_brk_base(task_t* task, uint64_t brk_base)
     task->vm_brk_end = b;
     return RDNX_OK;
 }
+
+int vm_task_set_brk_base(task_t* task, uint64_t brk_base)
+{
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_set_brk_base_locked(task, brk_base);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
 
 long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags)
 {
@@ -476,13 +530,22 @@ long vm_task_mmap_file_backing(task_t* task,
     return (long)addr;
 }
 
-int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
-{
+static int vm_task_munmap_locked(task_t* task, uint64_t addr, uint64_t len){
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_INVALID;
     }
     return vm_map_remove((vm_map_t*)task->vm_map, addr, len, (uint64_t)(uintptr_t)task->address_space);
 }
+
+int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
+{
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_munmap_locked(task, addr, len);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
 
 long vm_task_brk(task_t* task, uint64_t new_break)
 {
@@ -541,8 +604,7 @@ static int vm_entry_is_cow_candidate(const vm_map_entry_t* e)
     return 1;
 }
 
-int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
-{
+static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t child_pml4_phys){
     if (!parent || !child || !parent->vm_map || !parent->address_space || !child_pml4_phys) {
         return RDNX_E_INVALID;
     }
@@ -609,8 +671,17 @@ int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
     return RDNX_OK;
 }
 
-void vm_task_destroy(task_t* task)
+int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
 {
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_fork_clone_locked(parent, child, child_pml4_phys);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
+
+static void vm_task_destroy_locked(task_t* task){
     if (!task) {
         return;
     }
@@ -636,8 +707,16 @@ void vm_task_destroy(task_t* task)
     task->vm_mmap_hint = 0;
 }
 
-int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
+void vm_task_destroy(task_t* task)
 {
+    uint64_t _f = vm_layer_lock();
+    vm_task_destroy_locked(task);
+    vm_layer_unlock(_f);
+}
+
+
+
+static int vm_task_msync_locked(task_t* task, uint64_t addr, uint64_t len, uint32_t flags){
     (void)flags;
     if (!task || !task->vm_map || len == 0) {
         return RDNX_E_INVALID;
@@ -687,8 +766,17 @@ int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
     return did ? RDNX_OK : RDNX_E_NOTFOUND;
 }
 
-int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot)
+int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
 {
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_msync_locked(task, addr, len, flags);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+
+
+static int vm_task_mprotect_locked(task_t* task, uint64_t addr, uint64_t len, uint32_t prot){
     if (!task || !task->vm_map || !task->address_space || len == 0) {
         return RDNX_E_INVALID;
     }
@@ -730,3 +818,13 @@ int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot)
 
     return changed ? RDNX_OK : RDNX_E_NOTFOUND;
 }
+
+int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot)
+{
+    uint64_t _f = vm_layer_lock();
+    int _r = vm_task_mprotect_locked(task, addr, len, prot);
+    vm_layer_unlock(_f);
+    return _r;
+}
+
+

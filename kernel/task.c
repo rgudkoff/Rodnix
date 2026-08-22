@@ -16,6 +16,7 @@
 #include "../fs/vfs.h"
 #include "../include/console.h"
 #include "../include/error.h"
+#include "../include/common.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -340,6 +341,11 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
@@ -423,6 +429,11 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
@@ -500,6 +511,11 @@ thread_t* thread_create_user_thread(task_t* task,
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
