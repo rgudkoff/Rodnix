@@ -1483,10 +1483,16 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        size_t old = f->pos;
-        f->pos = (size_t)a4;
+        /* pread(2) must not move the file position. unix_fs_read() now
+         * routes VFS reads through f->ops->read(), which re-derives
+         * vf->pos from rf->pos (the shared description) on every call
+         * (fs/vfs_file.c: vfs_fop_read) — so overriding vf->pos here, as
+         * the pre-refactor code did, gets clobbered before vfs_read() ever
+         * runs. Save/restore the description's pos instead. */
+        int64_t old = rf->pos;
+        rf->pos = (int64_t)a4;
         uint64_t rc = linux_compat_dispatch(0, a1, a2, a3, 0, 0, 0);
-        f->pos = old;
+        rf->pos = old;
         return rc;
     }
     case 18: { /* pwrite64 */
@@ -1504,10 +1510,13 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        size_t old = f->pos;
-        f->pos = (size_t)a4;
+        /* Same reasoning as pread64 above: override the description's pos,
+         * not the vfs_file_t's, or vfs_fop_write() clobbers it before the
+         * write happens. */
+        int64_t old = rf->pos;
+        rf->pos = (int64_t)a4;
         uint64_t rc = linux_compat_dispatch(1, a1, a2, a3, 0, 0, 0);
-        f->pos = old;
+        rf->pos = old;
         return rc;
     }
     case 19: { /* readv */

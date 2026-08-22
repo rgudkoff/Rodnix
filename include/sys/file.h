@@ -52,8 +52,13 @@ struct rdnx_file {
     uint8_t   kind;           /* TEMP: UNIX_FD_KIND_* на время миграции */
 };
 
-/* Статусные флаги описания. Значения совпадают с UNIX_FD_NONBLOCK,
- * чтобы перенос из fd_flags был механическим. */
+/* Статусные флаги описания (O_NONBLOCK, O_APPEND) — свойства файлового
+ * описания в терминах POSIX, поэтому живут в rdnx_file_t, а не в
+ * proc->fd_flags[fd] (per-descriptor: FD_CLOEXEC и т.п.). Раз описание
+ * теперь общее для dup()/fork(), O_NONBLOCK обязан быть общим тоже —
+ * см. RDNX_F_NONBLOCK в kernel/unix/fd/unix_fd.c (unix_fs_read/write,
+ * F_GETFL/F_SETFL, unix_fs_pipe2). RDNX_F_APPEND зарезервирован; O_APPEND
+ * нигде пока не применяется (как и до этого рефакторинга). */
 #define RDNX_F_NONBLOCK  0x01u
 #define RDNX_F_APPEND    0x02u
 

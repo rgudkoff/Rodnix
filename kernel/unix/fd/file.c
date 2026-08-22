@@ -7,8 +7,25 @@
 #include "../../../include/error.h"
 #include "../../../include/common.h"
 #include "../proc.h"
-#include "../../fabric/spin.h"
+#include "../../core/interrupts.h"
 #include "../../../lib/heap.h"
+
+/* Refcount races against the timer IRQ: the scheduler preempts unconditionally
+ * in kernel mode, and unix_clone_fds_for_spawn() now shares one rdnx_file_t
+ * across processes by design, so two runnable tasks touching f->refs is the
+ * normal case, not an edge case. Raise IRQL around the read-modify-write,
+ * matching the unix_pipe_lock()/unix_pipe_unlock() pattern this replaces
+ * (kernel/unix/fd/unix_fd.c) — this kernel is single-core, so blocking all
+ * interrupts on this CPU is sufficient to make the increment/decrement atomic. */
+static inline irql_t rdnx_file_lock(void)
+{
+    return set_irql(IRQL_HIGH);
+}
+
+static inline void rdnx_file_unlock(irql_t old)
+{
+    (void)set_irql(old);
+}
 
 rdnx_file_t* rdnx_file_alloc(const file_ops_t* ops, void* priv)
 {
@@ -28,17 +45,27 @@ rdnx_file_t* rdnx_file_alloc(const file_ops_t* ops, void* priv)
 
 void rdnx_file_ref(rdnx_file_t* f)
 {
-    if (f) {
-        f->refs++;
+    if (!f) {
+        return;
     }
+    irql_t old = rdnx_file_lock();
+    f->refs++;
+    rdnx_file_unlock(old);
 }
 
 void rdnx_file_put(rdnx_file_t* f)
 {
-    if (!f || f->refs == 0) {
+    if (!f) {
         return;
     }
-    if (--f->refs > 0) {
+    irql_t old = rdnx_file_lock();
+    if (f->refs == 0) {
+        rdnx_file_unlock(old);
+        return;
+    }
+    uint32_t remaining = --f->refs;
+    rdnx_file_unlock(old);
+    if (remaining > 0) {
         return;
     }
     if (f->ops && f->ops->close) {

@@ -19,9 +19,11 @@ enum {
     UNIX_F_GETFL = 3,
     UNIX_F_SETFL = 4,
     UNIX_F_DUPFD_CLOEXEC = 1030,
-    /* fd_flags bits (stored in proc->fd_flags[fd]) */
+    /* fd_flags bits (stored in proc->fd_flags[fd]) — per-descriptor, not
+     * inherited by dup(). O_NONBLOCK lives on rdnx_file_t.status_flags
+     * instead (RDNX_F_NONBLOCK): the description is shared by dup()/fork(),
+     * so O_NONBLOCK must be too, per POSIX. */
     UNIX_FD_CLOEXEC  = 1,
-    UNIX_FD_NONBLOCK = 2,   /* O_NONBLOCK state for non-VFS fds (pipes, sockets) */
     UNIX_PIPE_CAP = 4096,
     /* POSIX open flags (userland ABI) */
     UNIX_O_RDONLY   = 0x0000,
@@ -397,11 +399,16 @@ static int unix_bind_fd_to_console(task_t* task, int fd, int open_flags)
     }
     f->kind = UNIX_FD_KIND_VFS;
 
-    int rc = proc_fd_alloc(proc, f);
-    if (rc < 0) {
-        rdnx_file_put(f);
-        return rc;
-    }
+    /* Place directly at the requested slot rather than going through
+     * proc_fd_alloc() (which hands back the lowest free slot): the caller
+     * asks for a specific fd number (0/1/2), and slot fd is guaranteed
+     * free at this point (released above, or was never used — this only
+     * runs at process bring-up). proc_fd_alloc() would happen to agree
+     * today because it's called in ascending order on a fresh proc, but
+     * that's an accident of call order, not something this function should
+     * depend on. */
+    proc->fd_table[fd] = f;
+    proc->fd_flags[fd] = 0;
     return RDNX_OK;
 }
 
@@ -467,9 +474,10 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
     }
 
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    rdnx_file_t* f = vfs_file_open(path_buf, vfs_flags);
+    int open_err = RDNX_OK;
+    rdnx_file_t* f = vfs_file_open_ex(path_buf, vfs_flags, &open_err);
     if (!f) {
-        return (uint64_t)RDNX_E_INVALID;
+        return (uint64_t)open_err;
     }
     /* Store only access mode + status flags; strip one-shot flags (O_CREAT, O_TRUNC). */
     ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
@@ -487,7 +495,7 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
         return (uint64_t)RDNX_E_BUSY;
     }
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
-    if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
+    if (posix_flags & UNIX_O_NONBLOCK) f->status_flags |= RDNX_F_NONBLOCK;
     return (uint64_t)fd;
 }
 
@@ -499,9 +507,10 @@ uint64_t unix_fs_open_kernel_path(const char* path, uint64_t flags)
     }
 
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    rdnx_file_t* f = vfs_file_open(path, vfs_flags);
+    int open_err = RDNX_OK;
+    rdnx_file_t* f = vfs_file_open_ex(path, vfs_flags, &open_err);
     if (!f) {
-        return (uint64_t)RDNX_E_INVALID;
+        return (uint64_t)open_err;
     }
     ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
     f->kind = UNIX_FD_KIND_VFS;
@@ -518,7 +527,7 @@ uint64_t unix_fs_open_kernel_path(const char* path, uint64_t flags)
         return (uint64_t)RDNX_E_BUSY;
     }
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
-    if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
+    if (posix_flags & UNIX_O_NONBLOCK) f->status_flags |= RDNX_F_NONBLOCK;
     return (uint64_t)fd;
 }
 
@@ -579,9 +588,10 @@ uint64_t unix_fs_openat(uint64_t dirfd_u, uint64_t user_path_ptr, uint64_t flags
     }
 
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    rdnx_file_t* f = vfs_file_open(path_buf, vfs_flags);
+    int open_err = RDNX_OK;
+    rdnx_file_t* f = vfs_file_open_ex(path_buf, vfs_flags, &open_err);
     if (!f) {
-        return (uint64_t)RDNX_E_INVALID;
+        return (uint64_t)open_err;
     }
     ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
     f->kind = UNIX_FD_KIND_VFS;
@@ -592,7 +602,7 @@ uint64_t unix_fs_openat(uint64_t dirfd_u, uint64_t user_path_ptr, uint64_t flags
         return (uint64_t)RDNX_E_BUSY;
     }
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
-    if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
+    if (posix_flags & UNIX_O_NONBLOCK) f->status_flags |= RDNX_F_NONBLOCK;
     return (uint64_t)fd;
 }
 
@@ -753,7 +763,7 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             if (done > 0) {
                 break;
             }
-            if (proc->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+            if (h->status_flags & RDNX_F_NONBLOCK) {
                 return (done > 0) ? (uint64_t)done : (uint64_t)RDNX_E_AGAIN;
             }
             scheduler_yield();
@@ -831,7 +841,7 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             if (done > 0) {
                 break;
             }
-            if (proc->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+            if (h->status_flags & RDNX_F_NONBLOCK) {
                 return (done > 0) ? (uint64_t)done : (uint64_t)RDNX_E_AGAIN;
             }
             scheduler_yield();
@@ -1302,7 +1312,7 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
             } else if (kind == UNIX_FD_KIND_PIPE_W) {
                 fl = UNIX_O_WRONLY;
             }
-            if (proc->fd_flags[fdi] & UNIX_FD_NONBLOCK) {
+            if (h->status_flags & RDNX_F_NONBLOCK) {
                 fl |= UNIX_O_NONBLOCK;
             }
             return (uint64_t)fl;
@@ -1315,11 +1325,13 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
                 f->open_flags = (f->open_flags & ~unix_setfl_mask) |
                                 ((int)arg & unix_setfl_mask);
             }
-            /* For any fd kind, track O_NONBLOCK in fd_flags. */
+            /* For any fd kind, track O_NONBLOCK on the shared description —
+             * not fd_flags[], which is per-descriptor and would let a dup()'d
+             * fd silently disagree with the original about O_NONBLOCK. */
             if ((int)arg & UNIX_O_NONBLOCK) {
-                proc->fd_flags[fdi] |= UNIX_FD_NONBLOCK;
+                h->status_flags |= RDNX_F_NONBLOCK;
             } else {
-                proc->fd_flags[fdi] &= (uint8_t)~UNIX_FD_NONBLOCK;
+                h->status_flags &= ~RDNX_F_NONBLOCK;
             }
             return (uint64_t)RDNX_OK;
         }
@@ -1612,6 +1624,13 @@ static int unix_pipe_alloc_fds(task_t* task, int* fd_r_out, int* fd_w_out)
 
     rdnx_file_t* fw = rdnx_file_alloc(&pipe_fileops_stub, p);
     if (!fw) {
+        /* No write-end wrapper was ever created, so nothing will ever
+         * decrement p->writers. Force it to 0 here so releasing fd_r drops
+         * p->readers to 0 too and unix_pipe_release() actually frees p —
+         * otherwise p leaks forever (readers==0 but writers stuck at 1). */
+        irql_t old = unix_pipe_lock();
+        p->writers = 0;
+        unix_pipe_unlock(old);
         unix_fd_release(task, fd_r);
         return RDNX_E_NOMEM;
     }
@@ -1677,8 +1696,11 @@ uint64_t unix_fs_pipe2(uint64_t user_pipefd_ptr, uint64_t flags)
         proc->fd_flags[fd_w] |= UNIX_FD_CLOEXEC;
     }
     if (uflags & UNIX_O_NONBLOCK) {
-        proc->fd_flags[fd_r] |= UNIX_FD_NONBLOCK;
-        proc->fd_flags[fd_w] |= UNIX_FD_NONBLOCK;
+        /* O_NONBLOCK lives on the shared description, not fd_flags[]. */
+        rdnx_file_t* fr = (rdnx_file_t*)proc->fd_table[fd_r];
+        rdnx_file_t* fw = (rdnx_file_t*)proc->fd_table[fd_w];
+        if (fr) fr->status_flags |= RDNX_F_NONBLOCK;
+        if (fw) fw->status_flags |= RDNX_F_NONBLOCK;
     }
 
     int fds[2] = { fd_r, fd_w };

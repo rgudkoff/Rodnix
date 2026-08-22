@@ -174,3 +174,9 @@ int vfs_fchown(vfs_file_t* file, uint32_t uid, uint32_t gid);
 
 struct rdnx_file;
 struct rdnx_file* vfs_file_open(const char* path, int vfs_flags);
+/* Same as vfs_file_open(), but writes the real vfs_open()/kmalloc() failure
+ * code to *out_err on failure (RDNX_OK on success). vfs_file_open() cannot
+ * report this itself — a bare NULL return can't distinguish ENOENT from
+ * EEXIST from EACCES from ENOMEM, and callers translating into guest errno
+ * (see kernel/linux/linux_errno.c) need the real code. out_err may be NULL. */
+struct rdnx_file* vfs_file_open_ex(const char* path, int vfs_flags, int* out_err);
