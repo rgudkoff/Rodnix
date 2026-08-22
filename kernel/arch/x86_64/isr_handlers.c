@@ -27,6 +27,7 @@
 #include "apic.h"
 #include "lapic_regs.h"
 #include "vectors.h"
+#include "irqstat.h"
 #include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
@@ -266,6 +267,10 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
      * would retire whatever genuinely was.
      */
     if (vector == VECTOR_RESCHED) {
+        /* Counted like any other entry: its rate is how often the kernel
+         * switches voluntarily, which is worth being able to see next to the
+         * tick rate rather than inferring. */
+        irqstat_count(percpu_index(), vector, true);
         /* The vector means "switch now", so the request is implicit in
          * having been raised; callers need not set the flag themselves. */
         percpu_self()->sched_resched_pending = true;
@@ -274,6 +279,8 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
 
     /* Handle hardware interrupts (32-255), except the syscall gate on 128. */
     if (vector >= 32 && vector != SYSCALL_VECTOR) {
+        irqstat_count(percpu_index(), vector, interrupt_handlers[vector] != NULL);
+
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;

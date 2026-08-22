@@ -7,6 +7,9 @@
  */
 
 #include "procfs.h"
+#include "../kernel/arch/x86_64/irqstat.h"
+#include "../kernel/arch/x86_64/vectors.h"
+#include "../kernel/arch/cpu_topology.h"
 #include "vfs.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
@@ -55,6 +58,14 @@ static void pb_u64(pbuf_t* p, uint64_t v)
         v /= 10;
     }
     pb_str(p, tmp + i);
+}
+
+/* Two hex digits, so vectors read the way they are written elsewhere. */
+static void pb_hex2(pbuf_t* p, uint32_t v)
+{
+    const char* hex = "0123456789ABCDEF";
+    pb_char(p, hex[(v >> 4) & 0xF]);
+    pb_char(p, hex[v & 0xF]);
 }
 
 static void pb_kv_str(pbuf_t* p, const char* key, const char* val)
@@ -130,6 +141,103 @@ static int procfs_read_meminfo(vfs_file_t* file, void* buf, size_t size)
     pb_kv_kb(&p, "MemUsed",      used);
     tmp[p.len] = '\0';
 
+    return procfs_serve(file, tmp, p.len, buf, size);
+}
+
+/* ============================================================================
+ * /proc/interrupts
+ * ============================================================================ */
+
+/* Right-align a count in a fixed column so the per-CPU columns line up and a
+ * skewed distribution is visible at a glance rather than by reading. */
+static void pb_u64_col(pbuf_t* p, uint64_t val, size_t width)
+{
+    char digits[24];
+    size_t n = 0;
+
+    if (val == 0) {
+        digits[n++] = '0';
+    }
+    while (val > 0 && n < sizeof(digits)) {
+        digits[n++] = (char)('0' + (val % 10));
+        val /= 10;
+    }
+
+    for (size_t pad = n; pad < width; pad++) {
+        pb_char(p, ' ');
+    }
+    while (n > 0) {
+        pb_char(p, digits[--n]);
+    }
+}
+
+static const char* procfs_vector_name(uint32_t vector)
+{
+    if (vector == VECTOR_LAPIC_TIMER) {
+        return "LAPIC timer";
+    }
+    if (vector == VECTOR_PIT_TIMER) {
+        return "PIT timer";
+    }
+    if (vector == VECTOR_RESCHED) {
+        return "reschedule";
+    }
+    if (vector == VECTOR_SPURIOUS) {
+        return "spurious";
+    }
+    if (vector >= VECTOR_IPI_FIRST && vector <= VECTOR_IPI_LAST) {
+        return "IPI";
+    }
+    if (vector > VECTOR_PIT_TIMER && vector <= VECTOR_ISA_LAST) {
+        return "ISA IRQ";
+    }
+    if (vector >= VECTOR_DEVICE_FIRST && vector <= VECTOR_DEVICE_LAST) {
+        return "device";
+    }
+    return "";
+}
+
+static int procfs_read_interrupts(vfs_file_t* file, void* buf, size_t size)
+{
+    static char tmp[4096];
+    pbuf_t p = { tmp, sizeof(tmp) - 1, 0 };
+
+    uint32_t cpus = cpu_topology_count();
+    if (cpus > 8u) {
+        /* One line has to stay readable; the rest are reachable through the
+         * per-vector totals below. */
+        cpus = 8u;
+    }
+
+    pb_str(&p, "vector");
+    for (uint32_t c = 0; c < cpus; c++) {
+        pb_str(&p, "      CPU");
+        pb_u64(&p, c);
+    }
+    pb_str(&p, "        total  source\n");
+
+    for (uint32_t v = 0; v < 256u; v++) {
+        if (!irqstat_vector_seen(v)) {
+            continue;
+        }
+        pb_str(&p, "  0x");
+        pb_hex2(&p, v);
+        for (uint32_t c = 0; c < cpus; c++) {
+            pb_u64_col(&p, irqstat_get(c, v), 10);
+        }
+        pb_u64_col(&p, irqstat_get_total(v), 13);
+        pb_str(&p, "  ");
+        pb_str(&p, procfs_vector_name(v));
+        pb_char(&p, '\n');
+    }
+
+    pb_str(&p, "unhandled");
+    for (uint32_t c = 0; c < cpus; c++) {
+        pb_u64_col(&p, irqstat_get_unhandled(c), 10);
+    }
+    pb_char(&p, '\n');
+
+    tmp[p.len] = '\0';
     return procfs_serve(file, tmp, p.len, buf, size);
 }
 
@@ -509,6 +617,7 @@ static int procfs_mount(const char* source, vfs_node_t** out_root)
     if (!procfs_make_file(root, "version", procfs_read_version,   0) ||
         !procfs_make_file(root, "meminfo", procfs_read_meminfo,   0) ||
         !procfs_make_file(root, "uptime",  procfs_read_uptime,    0) ||
+        !procfs_make_file(root, "interrupts", procfs_read_interrupts, 0) ||
         !procfs_make_file(root, "status",  procfs_read_allstatus, 0)) {
         return RDNX_E_NOMEM;
     }
