@@ -848,6 +848,122 @@ uint32_t apic_get_lapic_id_ext(void)
     return (apic_id_reg >> 24) & 0xFFu;
 }
 
+/* Bounded so a wedged ICR fails the send instead of hanging the sender. */
+#define APIC_IPI_WAIT_SPINS 100000U
+
+static int apic_send_ipi_raw(uint32_t apic_id, uint32_t icr_low)
+{
+    if (!apic_initialized || !lapic_access_ready()) {
+        return -1;
+    }
+    if (!lapic_access_ipi_wait(APIC_IPI_WAIT_SPINS)) {
+        return -1;
+    }
+    lapic_access_write_icr(apic_id, icr_low);
+    return 0;
+}
+
+int apic_send_ipi(uint32_t apic_id, uint8_t vector)
+{
+    return apic_send_ipi_raw(apic_id,
+                             (uint32_t)vector
+                             | APIC_ICR_DELIVERY_FIXED
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+int apic_send_ipi_self(uint8_t vector)
+{
+    /* The self shorthand makes the destination field irrelevant, which also
+     * means this works before the sender knows its own APIC ID. */
+    return apic_send_ipi_raw(0,
+                             (uint32_t)vector
+                             | APIC_ICR_DELIVERY_FIXED
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_SELF);
+}
+
+int apic_send_init(uint32_t apic_id)
+{
+    return apic_send_ipi_raw(apic_id,
+                             APIC_ICR_DELIVERY_INIT
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+int apic_send_startup(uint32_t apic_id, uint8_t start_page)
+{
+    return apic_send_ipi_raw(apic_id,
+                             (uint32_t)start_page
+                             | APIC_ICR_DELIVERY_STARTUP
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+/* Send this processor an IPI and confirm it arrives.
+ *
+ * Runs once per CPU during bring-up. What it proves is narrow but exactly
+ * what the AP wake-up depends on: this CPU's ICR accepts a write, the write
+ * reaches the local APIC, and the vector comes back through the IDT. A
+ * broken ICR encoding -- the easy mistake being the xAPIC register pair
+ * versus the single x2APIC MSR -- shows up here rather than as an AP that
+ * silently never starts.
+ *
+ * Interrupts must be masked on entry; a short window is opened deliberately,
+ * because an IPI that is only pending proves nothing. */
+static volatile uint32_t g_ipi_selftest_hits = 0;
+
+static void apic_ipi_selftest_handler(interrupt_context_t* ctx)
+{
+    (void)ctx;
+    g_ipi_selftest_hits++;
+}
+
+int apic_ipi_selftest(void)
+{
+    if (!apic_initialized) {
+        return -1;
+    }
+
+    int vector = interrupt_vector_alloc(0xF0, 0xFE);
+    if (vector < 0) {
+        return -1;
+    }
+
+    g_ipi_selftest_hits = 0;
+    if (interrupt_register((uint32_t)vector, apic_ipi_selftest_handler) != 0) {
+        interrupt_vector_free((uint32_t)vector);
+        return -1;
+    }
+
+    int rc = -1;
+    if (apic_send_ipi_self((uint8_t)vector) == 0) {
+        __asm__ volatile ("sti");
+        /* Bounded: a vector that never arrives must fail the check, not
+         * wedge the boot. */
+        for (uint32_t spin = 0; spin < 1000000u; spin++) {
+            if (g_ipi_selftest_hits != 0) {
+                break;
+            }
+            __asm__ volatile ("pause");
+        }
+        __asm__ volatile ("cli");
+        rc = (g_ipi_selftest_hits != 0) ? 0 : -1;
+    }
+
+    interrupt_unregister((uint32_t)vector);
+    interrupt_vector_free((uint32_t)vector);
+    return rc;
+}
+
 uint8_t apic_get_lapic_id(void)
 {
     /* Callers here feed 8-bit destination fields (I/O APIC RTE, MSI address).

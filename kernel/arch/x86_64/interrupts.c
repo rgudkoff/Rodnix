@@ -14,6 +14,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "apic.h"
+#include "percpu.h"
 #include "interrupt_frame.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -309,8 +310,22 @@ void interrupt_wait(void)
 
 int interrupt_send_ipi(uint32_t cpu_id, uint32_t vector)
 {
-    /* TODO: Implement IPI sending via APIC */
-    (void)cpu_id;
-    (void)vector;
-    return -1;
+    /* cpu_id is the kernel's own CPU index -- what cpu_get_id() returns --
+     * not an APIC ID. The mapping between them lives in the per-CPU slot,
+     * which is filled when a processor is brought up. */
+    if (vector > 255u) {
+        return -1;
+    }
+
+    if (cpu_id == percpu_index()) {
+        /* Self-addressed: the shorthand avoids needing our own APIC ID and
+         * is what makes a send-to-self work identically in both LAPIC modes. */
+        return apic_send_ipi_self((uint8_t)vector);
+    }
+
+    const struct percpu* target = percpu_peer(cpu_id);
+    if (!target) {
+        return -1;
+    }
+    return apic_send_ipi(target->apic_id, (uint8_t)vector);
 }

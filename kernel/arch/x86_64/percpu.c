@@ -30,6 +30,7 @@ void percpu_init_bsp(void)
     memset(self, 0, sizeof(*self));
     self->self = self;
     self->index = 0;
+    self->online = true;
 
     percpu_wrmsr(IA32_GS_BASE, (uint64_t)(uintptr_t)self);
     percpu_wrmsr(IA32_KERNEL_GS_BASE, (uint64_t)(uintptr_t)self);
@@ -44,6 +45,14 @@ void percpu_init_bsp(void)
 void percpu_bind_bsp(uint32_t apic_id)
 {
     percpu_self()->apic_id = apic_id;
+}
+
+const struct percpu* percpu_peer(uint32_t index)
+{
+    if (index >= X86_64_MAX_CPUS || !g_percpu[index].online) {
+        return NULL;
+    }
+    return &g_percpu[index];
 }
 
 void percpu_irq_selftest(void)

@@ -81,6 +81,11 @@ struct percpu {
     struct task* current_task;
     struct thread* current_thread;
 
+    /* This slot describes a processor that has actually been brought up.
+     * Slots are zeroed .bss, so without this an IPI aimed at a CPU that was
+     * never started would read apic_id 0 and hit the boot processor. */
+    bool online;
+
     bool irq_checked;            /* percpu_irq_selftest() has run here */
 };
 
@@ -121,6 +126,10 @@ void percpu_init_bsp(void);
 
 /* Record the APIC ID once cpu_topology has determined it. */
 void percpu_bind_bsp(uint32_t apic_id);
+
+/* Slot for another processor, or NULL if that index is not online. Only for
+ * things that legitimately address another CPU, such as an IPI destination. */
+const struct percpu* percpu_peer(uint32_t index);
 
 /* Verify, from interrupt context, that %gs resolves to this processor's own
  * coherent slot. Runs once per processor off the first timer interrupt, so

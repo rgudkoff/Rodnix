@@ -30,6 +30,24 @@ uint8_t apic_get_lapic_id(void);
  * it; use this one wherever an IPI destination or a topology key is needed. */
 uint32_t apic_get_lapic_id_ext(void);
 
+/* Inter-processor interrupts.
+ *
+ * `apic_id` is the target's LAPIC / x2APIC ID, not a kernel CPU index; see
+ * interrupt_send_ipi() for the index-taking wrapper. All of these return 0 on
+ * success and -1 if the LAPIC is unavailable or a previous IPI never left the
+ * ICR. */
+int apic_send_ipi(uint32_t apic_id, uint8_t vector);
+int apic_send_ipi_self(uint8_t vector);
+/* INIT and STARTUP are the AP wake-up sequence: INIT, a pause, then STARTUP
+ * twice. `start_page` is the physical start address shifted right by 12, so
+ * the AP begins executing at start_page * 4096 in real mode. */
+int apic_send_init(uint32_t apic_id);
+int apic_send_startup(uint32_t apic_id, uint8_t start_page);
+
+/* Send this CPU an IPI and confirm it is delivered. Call with interrupts
+ * masked; it opens a short window itself. Returns 0 if the vector arrived. */
+int apic_ipi_selftest(void);
+
 /* APIC timer (LAPIC timer) */
 int apic_timer_init(uint32_t frequency);
 void apic_timer_start(void);

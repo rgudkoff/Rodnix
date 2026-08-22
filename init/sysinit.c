@@ -152,6 +152,26 @@ sysinit_cpu_topology(void)
 }
 
 static int
+sysinit_ipi(void)
+{
+    extern int apic_ipi_selftest(void);
+    extern bool apic_is_available(void);
+    extern const char* lapic_access_mode_name(void);
+
+    if (!apic_is_available()) {
+        klog("apic", "no LAPIC, IPI unavailable\n");
+        return RDNX_OK;
+    }
+
+    if (apic_ipi_selftest() == 0) {
+        klog("apic", "IPI delivery verified (%s)\n", lapic_access_mode_name());
+    } else {
+        klog("apic", "IPI self-test FAILED (%s)\n", lapic_access_mode_name());
+    }
+    return RDNX_OK;
+}
+
+static int
 sysinit_timer(void)
 {
     extern bool apic_is_available(void);
@@ -370,6 +390,10 @@ kernel_run_bootstrap_sysinit(void)
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_MIDDLE, "cpu_topology_init",
                          sysinit_cpu_topology) != 0) {
         panic("CPU topology init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_ANY, "ipi_selftest", sysinit_ipi) != 0) {
+        panic("IPI self-test step failed");
     }
 
     if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_FIRST, "timer_init", sysinit_timer) != 0) {
