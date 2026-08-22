@@ -301,23 +301,57 @@ int vsnprintf(char* str, size_t size, const char* fmt, va_list ap)
             else break;
         }
 
-        /* width */
+        /* width: a decimal literal or '*', which takes an int argument.
+         * A negative '*' width means left-alignment with its magnitude (C99). */
         int width = 0;
-        while (fmt[i] >= '0' && fmt[i] <= '9') {
-            width = width * 10 + (fmt[i] - '0');
+        if (fmt[i] == '*') {
+            int wv = va_arg(ap, int);
+            if (wv < 0) {
+                flag_left = 1;
+                width = -wv;
+            } else {
+                width = wv;
+            }
             i++;
+        } else {
+            while (fmt[i] >= '0' && fmt[i] <= '9') {
+                width = width * 10 + (fmt[i] - '0');
+                i++;
+            }
         }
 
-        /* length modifiers */
+        /* precision: '.' then a decimal literal or '*'. This must be parsed
+         * even where it is not applied, because an unparsed '.*' would consume
+         * no argument and desynchronise every following conversion. */
+        int precision = -1;
+        if (fmt[i] == '.') {
+            i++;
+            precision = 0;
+            if (fmt[i] == '*') {
+                int pv = va_arg(ap, int);
+                precision = (pv < 0) ? -1 : pv;
+                i++;
+            } else {
+                while (fmt[i] >= '0' && fmt[i] <= '9') {
+                    precision = precision * 10 + (fmt[i] - '0');
+                    i++;
+                }
+            }
+        }
+
+        /* length modifiers. Both 'l' characters of "ll" must be stepped over:
+         * leaving i on the second one makes the switch below fall into the
+         * default case, which emits the specifier literally and consumes no
+         * argument, desynchronising every following conversion. */
         int long_flag = 0;
         int long_long_flag = 0;
-        while (fmt[i] == 'l') {
-            if (long_flag) {
-                long_long_flag = 1;
-                break;
-            }
+        if (fmt[i] == 'l') {
             long_flag = 1;
             i++;
+            if (fmt[i] == 'l') {
+                long_long_flag = 1;
+                i++;
+            }
         }
 
         /* format numeric/char types to tmp first, then apply padding */
@@ -345,18 +379,13 @@ int vsnprintf(char* str, size_t size, const char* fmt, va_list ap)
             case 's': {
                 const char* sv = va_arg(ap, const char*);
                 if (!sv) sv = "(null)";
-                if (width == 0) {
-                    buf_puts(sv, str, size, &idx, &total);
-                } else {
-                    int slen = 0;
-                    const char* sp = sv;
-                    while (*sp++) slen++;
-                    if (!flag_left)
-                        for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
-                    buf_puts(sv, str, size, &idx, &total);
-                    if (flag_left)
-                        for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
-                }
+                int slen = 0;
+                while (sv[slen] && (precision < 0 || slen < precision)) slen++;
+                if (!flag_left)
+                    for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
+                for (int n = 0; n < slen; n++) buf_putc(sv[n], str, size, &idx, &total);
+                if (flag_left)
+                    for (int w = slen; w < width; w++) buf_putc(' ', str, size, &idx, &total);
                 continue;
             }
             case 'd':
