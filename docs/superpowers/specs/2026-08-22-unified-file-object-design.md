@@ -21,13 +21,18 @@
 
 ### 2.1 Слой дескрипторов
 
-`task_t` хранит три плоских массива (`kernel/core/task.h:135`):
+UNIX-персоналия задачи `proc_t` хранит три плоских массива
+(`kernel/unix/proc.h:81`):
 
 ```c
-void*   fd_table[TASK_MAX_FD];  /* TASK_MAX_FD == 32 */
-uint8_t fd_flags[TASK_MAX_FD];
-uint8_t fd_kind[TASK_MAX_FD];
+void*   fd_table[PROC_MAX_FD];  /* PROC_MAX_FD == 32 */
+uint8_t fd_flags[PROC_MAX_FD];
+uint8_t fd_kind[PROC_MAX_FD];
 ```
+
+Персоналия достаётся из задачи через `task_proc(task)`, для текущей задачи —
+`proc_current()`; оба могут вернуть `NULL`. Сама `task_t`
+(`kernel/core/task.h`) о дескрипторах ничего не знает.
 
 Тип объекта хранится отдельно от указателя на него. Диспетчеризация — цепочки
 `if (kind == UNIX_FD_KIND_VFS) ... PIPE_R ... PIPE_W ... SOCKET`.
@@ -132,8 +137,8 @@ ops никогда не видят пользовательских указат
 
 ```
 rdnx_file_alloc(ops, priv) -> refs = 1
-fd_install(task, f)        -> занять слот в таблице
-fd_get(task, fd)           -> +1, вернуть указатель
+fd_install(proc, f)        -> занять слот в таблице
+fd_get(proc, fd)           -> +1, вернуть указатель
 fd_put(f)                  -> -1; при 0 -> ops->close() + kfree
 ```
 
@@ -244,7 +249,7 @@ poll_end(&pc);   /* снять все регистрации */
 Отдельного пути для них нет.
 
 Размещение регистраций. Ядровый стек потока — 32 KiB (`KERNEL_STACK_SIZE`,
-`kernel/task.c:21`), а `sizeof(sel_waiter_t)` порядка 32 байт. Массив из 256
+`kernel/task.c:20`), а `sizeof(sel_waiter_t)` порядка 32 байт. Массив из 256
 элементов целиком на стеке — это 8 KiB, четверть стека в одной локальной
 переменной внутри syscall-пути, под которым уже лежат кадры. Поэтому: до
 `POLL_INLINE_REGS` регистраций используется встроенный массив, свыше — одна
@@ -277,7 +282,7 @@ typedef struct fd_table {
 «наименьший свободный дескриптор» сохраняется линейным сканом. `task_t` худеет
 на ~320 байт: три inline-массива уезжают в кучу.
 
-Снимается ограничение `nfds > TASK_MAX_FD` в `poll`.
+Снимается ограничение `nfds > PROC_MAX_FD` в `poll`.
 
 `select` остаётся ограничен 32 дескрипторами: его `fd_set` — это
 `struct unix_fdset_u { uint32_t bits; }` (`kernel/unix/fd/unix_fd.c:75`), одно
@@ -301,7 +306,7 @@ typedef struct fd_table {
 | 7 | `kernel/linux/linux_compat.c` (7 сайтов), `kernel/posix/posix_sys_vm.c:76` | пересборка, `syscalltest` |
 
 Шаг 6 — единственный, который можно отложить без ущерба для цели. Включён,
-потому что `task_fd_alloc`/`task_fd_get`/`task_fd_close` переписываются целиком
+потому что `proc_fd_alloc`/`proc_fd_get`/`proc_fd_close` переписываются целиком
 на шаге 1, а потолок 32 упрётся на первом сетевом сервере.
 
 ## 5. Проверка

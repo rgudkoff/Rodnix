@@ -17,7 +17,13 @@
 - `ssize_t` в дереве отсутствует. Возврат размеров — `int64_t`, отрицательное значение есть `RDNX_E_*`.
 - `spinlock_t` — из `kernel/fabric/spin.h` (`spinlock_init/lock/unlock/trylock`).
 - `TAILQ_*` — из `include/bsd/sys/queue.h`.
-- `KERNEL_STACK_SIZE` = 32 KiB (`kernel/task.c:21`). Крупные локальные массивы в syscall-пути запрещены.
+- **Таблица дескрипторов живёт в UNIX-персоналии, а не в задаче.** `task_t`
+  (`kernel/core/task.h`) — объект ядра; `proc_t` (`kernel/unix/proc.h`) — креды,
+  дескрипторы, cwd, сигналы. Из задачи персоналия достаётся через
+  `task_proc(task)`, для текущей задачи есть `proc_current()`; обе могут вернуть
+  `NULL`, и это допустимое состояние. Файлы, не включающие `kernel/unix/proc.h`,
+  к полям дескрипторов обратиться не могут — граница проверяется компилятором.
+- `KERNEL_STACK_SIZE` = 32 KiB (`kernel/task.c:20`). Крупные локальные массивы в syscall-пути запрещены.
 - `POLL_MAX_REGS` = 256, `POLL_INLINE_REGS` = 8.
 - Начальная ёмкость таблицы дескрипторов 32, потолок 1024.
 - Новые файлы ядра регистрируются в `KERNEL_C_SRCS` соответствующего `Makefile` подсистемы (`kernel/Makefile`, `fs/Makefile`).
@@ -56,8 +62,8 @@ make clean && make
 | `kernel/unix/fd/pipe.c` | `pipe_fileops`, `unix_pipe_t` | создаётся Task 3 (вынос из `unix_fd.c`) |
 | `net/socket_file.c` | `socket_fileops` | создаётся Task 3 |
 | `kernel/unix/fd/unix_fd.c` | только syscall-обвязка | сокращается Tasks 1–7 |
-| `kernel/core/task.h` | `fd_table_t` вместо трёх плоских массивов | правится Tasks 1, 6 |
-| `kernel/task.c` | `task_fd_alloc/get/close` | правится Tasks 1, 6 |
+| `kernel/unix/proc.h` | `fd_table_t` вместо трёх плоских массивов в `proc_t` | правится Tasks 1, 6 |
+| `kernel/unix/process/unix_proc.c` | `proc_fd_alloc/get/close`, рост таблицы | правится Tasks 1, 6 |
 | `userland/init/init.c` | контрактные проверки `CT-034`…`CT-040` | правится Tasks 1–6 |
 
 ---
@@ -74,8 +80,8 @@ make clean && make
 - Create: `fs/vfs_file.c`
 - Modify: `kernel/Makefile` (добавить `kernel/unix/fd/file.c`)
 - Modify: `fs/Makefile` (добавить `fs/vfs_file.c`)
-- Modify: `kernel/core/task.h:135-137`
-- Modify: `kernel/task.c:469-504`
+- Modify: `kernel/unix/proc.h:81-83`
+- Modify: `kernel/unix/process/unix_proc.c:155-191`
 - Modify: `kernel/unix/fd/unix_fd.c` (`unix_fd_release`, `unix_fd_dup_into`, `unix_clone_fds_for_spawn`, `unix_bind_fd_to_console`, `unix_fs_open*`, `unix_fs_read/write/lseek`)
 - Test: `userland/init/init.c` (`run_contract_mode_if_enabled`)
 
@@ -85,10 +91,10 @@ make clean && make
   - `rdnx_file_t* rdnx_file_alloc(const file_ops_t* ops, void* priv);`
   - `void rdnx_file_ref(rdnx_file_t* f);`
   - `void rdnx_file_put(rdnx_file_t* f);`
-  - `int fd_install(task_t* task, rdnx_file_t* f);`
-  - `rdnx_file_t* fd_get(task_t* task, int fd);`
+  - `int fd_install(proc_t* proc, rdnx_file_t* f);`
+  - `rdnx_file_t* fd_get(proc_t* proc, int fd);`
   - `void fd_put(rdnx_file_t* f);`
-  - `int fd_close(task_t* task, int fd);`
+  - `int fd_close(proc_t* proc, int fd);`
   - `extern const file_ops_t vfs_fileops;`
   - `rdnx_file_t* vfs_file_open(const char* path, int vfs_flags);`
 
@@ -286,10 +292,10 @@ rdnx_file_t* rdnx_file_alloc(const file_ops_t* ops, void* priv);
 void         rdnx_file_ref(rdnx_file_t* f);
 void         rdnx_file_put(rdnx_file_t* f);
 
-int          fd_install(task_t* task, rdnx_file_t* f);
-rdnx_file_t* fd_get(task_t* task, int fd);
+int          fd_install(proc_t* proc, rdnx_file_t* f);
+rdnx_file_t* fd_get(proc_t* proc, int fd);
 void         fd_put(rdnx_file_t* f);
-int          fd_close(task_t* task, int fd);
+int          fd_close(proc_t* proc, int fd);
 
 #endif /* _RODNIX_SYS_FILE_H */
 ```
@@ -304,7 +310,7 @@ int          fd_close(task_t* task, int fd);
 
 #include "../../../include/sys/file.h"
 #include "../../../include/error.h"
-#include "../../core/task.h"
+#include "../proc.h"
 #include "../../fabric/spin.h"
 #include "../../../lib/heap.h"
 #include <string.h>
@@ -346,17 +352,17 @@ void rdnx_file_put(rdnx_file_t* f)
     kfree(f);
 }
 
-int fd_install(task_t* task, rdnx_file_t* f)
+int fd_install(proc_t* proc, rdnx_file_t* f)
 {
-    if (!task || !f) {
+    if (!proc || !f) {
         return RDNX_E_INVALID;
     }
-    return task_fd_alloc(task, f);
+    return proc_fd_alloc(proc, f);
 }
 
-rdnx_file_t* fd_get(task_t* task, int fd)
+rdnx_file_t* fd_get(proc_t* proc, int fd)
 {
-    rdnx_file_t* f = (rdnx_file_t*)task_fd_get(task, fd);
+    rdnx_file_t* f = (rdnx_file_t*)proc_fd_get(proc, fd);
     if (f) {
         rdnx_file_ref(f);
     }
@@ -368,13 +374,13 @@ void fd_put(rdnx_file_t* f)
     rdnx_file_put(f);
 }
 
-int fd_close(task_t* task, int fd)
+int fd_close(proc_t* proc, int fd)
 {
-    rdnx_file_t* f = (rdnx_file_t*)task_fd_get(task, fd);
+    rdnx_file_t* f = (rdnx_file_t*)proc_fd_get(proc, fd);
     if (!f) {
         return RDNX_E_INVALID;
     }
-    (void)task_fd_close(task, fd);
+    (void)proc_fd_close(proc, fd);
     rdnx_file_put(f);
     return RDNX_OK;
 }
@@ -512,26 +518,27 @@ struct rdnx_file* vfs_file_open(const char* path, int vfs_flags);
 
 - [ ] **Step 9: Перевести хранение и очистку дескрипторов**
 
-В `kernel/core/task.h:135-137` заменить комментарий к `fd_table`, тип оставить `void*` (в таблице теперь лежит `rdnx_file_t*`):
+В `kernel/unix/proc.h:81-83` заменить комментарий к `fd_table`, тип оставить `void*` (в таблице теперь лежит `rdnx_file_t*`):
 
 ```c
-    void* fd_table[TASK_MAX_FD];   /* rdnx_file_t* — описание открытого файла */
-    uint8_t fd_flags[TASK_MAX_FD]; /* FD_CLOEXEC — свойство дескриптора */
+    void* fd_table[PROC_MAX_FD];   /* rdnx_file_t* — описание открытого файла */
+    uint8_t fd_flags[PROC_MAX_FD]; /* FD_CLOEXEC — свойство дескриптора */
 ```
 
-Удалить строку `uint8_t fd_kind[TASK_MAX_FD];` и все обращения к `task->fd_kind` заменить на `f->kind`.
+Удалить строку `uint8_t fd_kind[PROC_MAX_FD];` и все обращения к `proc->fd_kind` заменить на `f->kind`.
 
-В `kernel/task.c` убрать `task->fd_kind[i] = 0;` из `task_fd_alloc` и `task_fd_close`.
+В `kernel/unix/process/unix_proc.c` убрать `proc->fd_kind[i] = 0;` из `proc_fd_alloc` и `proc_fd_close`.
 
 В `kernel/unix/fd/unix_fd.c` заменить `unix_fd_release` целиком:
 
 ```c
 void unix_fd_release(task_t* task, int fd)
 {
-    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
+    proc_t* proc = task_proc(task);
+    if (!proc || fd < 0 || fd >= PROC_MAX_FD) {
         return;
     }
-    (void)fd_close(task, fd);
+    (void)fd_close(proc, fd);
 }
 ```
 
@@ -540,17 +547,18 @@ void unix_fd_release(task_t* task, int fd)
 ```c
 static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
 {
-    if (!task || oldfd < 0 || oldfd >= TASK_MAX_FD ||
-        newfd < 0 || newfd >= TASK_MAX_FD) {
+    proc_t* proc = task_proc(task);
+    if (!proc || oldfd < 0 || oldfd >= PROC_MAX_FD ||
+        newfd < 0 || newfd >= PROC_MAX_FD) {
         return RDNX_E_INVALID;
     }
-    rdnx_file_t* f = (rdnx_file_t*)task->fd_table[oldfd];
+    rdnx_file_t* f = (rdnx_file_t*)proc->fd_table[oldfd];
     if (!f) {
         return RDNX_E_INVALID;
     }
     rdnx_file_ref(f);
-    task->fd_table[newfd] = f;
-    task->fd_flags[newfd] = 0;   /* FD_CLOEXEC не наследуется через dup */
+    proc->fd_table[newfd] = f;
+    proc->fd_flags[newfd] = 0;   /* FD_CLOEXEC не наследуется через dup */
     return RDNX_OK;
 }
 ```
@@ -558,21 +566,26 @@ static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
 В `unix_clone_fds_for_spawn` заменить всё тело цикла копирования на:
 
 ```c
-    for (int fd = 0; fd < TASK_MAX_FD; fd++) {
-        rdnx_file_t* f = (rdnx_file_t*)parent->fd_table[fd];
+    const proc_t* pproc = task_proc(parent);
+    proc_t* cproc = task_proc(child);
+    if (!pproc || !cproc) {
+        return RDNX_E_INVALID;
+    }
+    for (int fd = 0; fd < PROC_MAX_FD; fd++) {
+        rdnx_file_t* f = (rdnx_file_t*)pproc->fd_table[fd];
         if (!f) {
-            child->fd_table[fd] = NULL;
-            child->fd_flags[fd] = 0;
+            cproc->fd_table[fd] = NULL;
+            cproc->fd_flags[fd] = 0;
             continue;
         }
         rdnx_file_ref(f);
-        child->fd_table[fd] = f;
-        child->fd_flags[fd] = parent->fd_flags[fd];
+        cproc->fd_table[fd] = f;
+        cproc->fd_flags[fd] = pproc->fd_flags[fd];
     }
     return RDNX_OK;
 ```
 
-В `unix_bind_fd_to_console` и во всех `unix_fs_open*` заменить пару «`kmalloc(vfs_file_t)` + `vfs_open`» на `vfs_file_open(path, flags)` и `task_fd_alloc(task, f)`; при неудаче — `rdnx_file_put(f)`.
+В `unix_bind_fd_to_console` и во всех `unix_fs_open*` заменить пару «`kmalloc(vfs_file_t)` + `vfs_open`» на `vfs_file_open(path, flags)` и `proc_fd_alloc(proc, f)`; при неудаче — `rdnx_file_put(f)`.
 
 Пометить тип: сразу после успешного `vfs_file_open` выставить `f->kind = UNIX_FD_KIND_VFS;`.
 
@@ -601,7 +614,7 @@ static const file_ops_t socket_fileops_stub = {
 };
 ```
 
-Во всех оставшихся обработчиках, которые ещё switch'атся по типу, заменить `task->fd_kind[fdi]` на `((rdnx_file_t*)h)->kind`, а рабочий указатель получать как `((rdnx_file_t*)h)->priv`.
+Во всех оставшихся обработчиках, которые ещё switch'атся по типу, заменить `proc->fd_kind[fdi]` на `((rdnx_file_t*)h)->kind`, а рабочий указатель получать как `((rdnx_file_t*)h)->priv`.
 
 В `unix_fs_read`/`unix_fs_write` для ветки VFS вызывать `f->ops->read(f, buf, n)` / `f->ops->write(f, buf, n)` — иначе `pos` из описания не будет использован и CT-034 не пройдёт. Ветки пайпа и сокета оставить как есть (переводятся в Task 3).
 
@@ -610,7 +623,7 @@ static const file_ops_t socket_fileops_stub = {
 - [ ] **Step 10: Собрать ядро**
 
 Run: `make clean && make`
-Expected: сборка без ошибок и без предупреждений о неиспользуемых функциях. Если линковщик ругается на `UNIX_FD_KIND_*` — остались необращённые обращения к `task->fd_kind`, их надо найти через `grep -rn "fd_kind" kernel/`.
+Expected: сборка без ошибок и без предупреждений о неиспользуемых функциях. Если линковщик ругается на `UNIX_FD_KIND_*` — остались необращённые обращения к `proc->fd_kind`, их надо найти через `grep -rn "fd_kind" kernel/`.
 
 - [ ] **Step 11: Прогнать контрактный набор**
 
@@ -621,7 +634,8 @@ Expected: PASS. `CT-034` и `CT-035` дают PASS, все ранее сущес
 
 ```bash
 git add include/sys/file.h kernel/unix/fd/file.c fs/vfs_file.c fs/vfs.h \
-        kernel/Makefile fs/Makefile kernel/core/task.h kernel/task.c \
+        kernel/Makefile fs/Makefile kernel/unix/proc.h \
+        kernel/unix/process/unix_proc.c \
         kernel/unix/fd/unix_fd.c userland/init/init.c
 git commit -m "feat(fd): introduce refcounted rdnx_file_t description
 
@@ -985,8 +999,8 @@ net_socket_t* socket_file_sock(rdnx_file_t* f)
 ```c
 uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
 {
-    task_t* task = task_get_current();
-    if (!task) {
+    proc_t* proc = proc_current();
+    if (!proc) {
         return (uint64_t)RDNX_E_INVALID;
     }
     void* buf = (void*)(uintptr_t)user_buf_ptr;
@@ -995,7 +1009,7 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    rdnx_file_t* f = fd_get(task, (int)fd);
+    rdnx_file_t* f = fd_get(proc, (int)fd);
     if (!f) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1056,7 +1070,7 @@ syscalls identify their type by ops pointer instead of a numeric tag."
 
 **Interfaces:**
 - Consumes: `file_ops_t.seek/ioctl/stat` (Task 1), `fd_get`/`fd_put`.
-- Produces: `O_NONBLOCK` живёт в `rdnx_file->status_flags`; `FD_CLOEXEC` — в `task->fd_flags`.
+- Produces: `O_NONBLOCK` живёт в `rdnx_file->status_flags`; `FD_CLOEXEC` — в `proc->fd_flags`.
 
 - [ ] **Step 1: Написать падающую контрактную проверку CT-038 (O_NONBLOCK разделяется, FD_CLOEXEC — нет)**
 
@@ -1109,7 +1123,7 @@ syscalls identify their type by ops pointer instead of a numeric tag."
 - [ ] **Step 2: Прогнать и убедиться, что проверка падает**
 
 Run: `TIMEOUT_SEC=60 scripts/ci/contract_qemu.sh`
-Expected: `CT-038` FAIL — сейчас `O_NONBLOCK` хранится в `task->fd_flags` как `UNIX_FD_NONBLOCK` и через `dup` не разделяется.
+Expected: `CT-038` FAIL — сейчас `O_NONBLOCK` хранится в `proc->fd_flags` как `UNIX_FD_NONBLOCK` и через `dup` не разделяется.
 
 - [ ] **Step 3: Реализовать `ioctl` в `vfs_fileops`**
 
@@ -1139,12 +1153,12 @@ static int vfs_fop_ioctl(rdnx_file_t* f, uint64_t req, void* karg)
 ```c
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
 {
-    task_t* task = task_get_current();
-    if (!task) {
+    proc_t* proc = proc_current();
+    if (!proc) {
         return (uint64_t)RDNX_E_INVALID;
     }
     vfs_stat_t st;
-    rdnx_file_t* f = fd_get(task, (int)fd);
+    rdnx_file_t* f = fd_get(proc, (int)fd);
     if (!f) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1160,7 +1174,7 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
 }
 ```
 
-В `unix_fs_fcntl`: `F_GETFD`/`F_SETFD` работают с `task->fd_flags[fd]`; `F_GETFL`/`F_SETFL` — с `f->status_flags`. Заменить все чтения `task->fd_flags[fdi] & UNIX_FD_NONBLOCK` по дереву на `f->status_flags & RDNX_F_NONBLOCK`:
+В `unix_fs_fcntl`: `F_GETFD`/`F_SETFD` работают с `proc->fd_flags[fd]`; `F_GETFL`/`F_SETFL` — с `f->status_flags`. Заменить все чтения `proc->fd_flags[fdi] & UNIX_FD_NONBLOCK` по дереву на `f->status_flags & RDNX_F_NONBLOCK`:
 
 ```bash
 grep -rn "UNIX_FD_NONBLOCK" --exclude-dir=.git .
@@ -1563,8 +1577,8 @@ grep -n "rx_len\|accept_tail\|state = TCP_ST" net/socket.c
 ```c
 uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
 {
-    task_t* task = task_get_current();
-    if (!task || nfds > POLL_MAX_REGS) {
+    proc_t* proc = proc_current();
+    if (!proc || nfds > POLL_MAX_REGS) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
@@ -1601,7 +1615,7 @@ uint64_t unix_fs_poll(uint64_t user_fds_ptr, uint64_t nfds, int64_t timeout_ms)
     for (;;) {
         ready = 0;
         for (uint64_t i = 0; i < nfds; i++) {
-            rdnx_file_t* f = fd_get(task, fds[i].fd);
+            rdnx_file_t* f = fd_get(proc, fds[i].fd);
             if (!f) {
                 fds[i].revents = UNIX_POLLNVAL;
                 ready++;
@@ -1679,15 +1693,15 @@ place."
 ## Task 6: Динамическая таблица дескрипторов
 
 **Files:**
-- Modify: `kernel/core/task.h` (`fd_table_t`, удаление плоских массивов)
-- Modify: `kernel/task.c` (`task_fd_alloc/get/close`, создание и уничтожение задачи)
-- Modify: `kernel/unix/fd/unix_fd.c` (все обращения `fd >= TASK_MAX_FD`)
+- Modify: `kernel/unix/proc.h` (`fd_table_t` в `proc_t`, удаление плоских массивов)
+- Modify: `kernel/unix/process/unix_proc.c` (`proc_fd_alloc/get/close`, `proc_attach`/`proc_detach`)
+- Modify: `kernel/unix/fd/unix_fd.c` (все обращения `fd >= PROC_MAX_FD`)
 - Modify: `kernel/unix/process/unix_process.c`, `kernel/unix/exec/unix_exec.c` (обходы таблицы)
 - Test: `userland/init/init.c`
 
 **Interfaces:**
 - Consumes: `rdnx_file_t`, `fd_install`/`fd_get`/`fd_close` (Task 1).
-- Produces: `int task_fd_grow(task_t* task, uint32_t want);`, `uint32_t task_fd_size(const task_t* task);`
+- Produces: `int proc_fd_grow(proc_t* proc, uint32_t want);`, `uint32_t proc_fd_size(const proc_t* proc);`
 
 - [ ] **Step 1: Написать падающую контрактную проверку CT-040 (больше 32 дескрипторов)**
 
@@ -1726,11 +1740,11 @@ Expected: `CT-040` FAIL — открывается не более 32 минус
 
 - [ ] **Step 3: Ввести `fd_table_t`**
 
-В `kernel/core/task.h` заменить три поля на одно и объявить константы:
+В `kernel/unix/proc.h` заменить три поля на одно и объявить константы:
 
 ```c
-#define TASK_FD_INITIAL  32u
-#define TASK_FD_MAX      1024u
+#define PROC_FD_INITIAL  32u
+#define PROC_FD_MAX      1024u
 
 typedef struct fd_table {
     struct rdnx_file** files;
@@ -1740,33 +1754,33 @@ typedef struct fd_table {
 } fd_table_t;
 ```
 
-В `task_t` вместо `fd_table`/`fd_flags`/`fd_kind`:
+В `proc_t` вместо `fd_table`/`fd_flags`/`fd_kind`:
 
 ```c
     fd_table_t fds;
 ```
 
-`TASK_MAX_FD` сохранить как алиас `TASK_FD_MAX`, чтобы не править разом все проверки границ; вычистить алиас можно в Task 7.
+`PROC_MAX_FD` сохранить как алиас `PROC_FD_MAX`, чтобы не править разом все проверки границ; вычистить алиас можно в Task 7.
 
 - [ ] **Step 4: Реализовать рост таблицы**
 
-В `kernel/task.c`:
+В `kernel/unix/process/unix_proc.c`:
 
 ```c
-int task_fd_grow(task_t* task, uint32_t want)
+int proc_fd_grow(proc_t* proc, uint32_t want)
 {
-    if (!task || want > TASK_FD_MAX) {
+    if (!proc || want > PROC_FD_MAX) {
         return RDNX_E_INVALID;
     }
-    if (want <= task->fds.size) {
+    if (want <= proc->fds.size) {
         return RDNX_OK;
     }
-    uint32_t ns = task->fds.size ? task->fds.size : TASK_FD_INITIAL;
+    uint32_t ns = proc->fds.size ? proc->fds.size : PROC_FD_INITIAL;
     while (ns < want) {
         ns *= 2u;
     }
-    if (ns > TASK_FD_MAX) {
-        ns = TASK_FD_MAX;
+    if (ns > PROC_FD_MAX) {
+        ns = PROC_FD_MAX;
     }
 
     struct rdnx_file** nf = (struct rdnx_file**)kmalloc(ns * sizeof(*nf));
@@ -1778,39 +1792,39 @@ int task_fd_grow(task_t* task, uint32_t want)
     }
     memset(nf, 0, ns * sizeof(*nf));
     memset(ng, 0, ns);
-    if (task->fds.files) {
-        memcpy(nf, task->fds.files, task->fds.size * sizeof(*nf));
-        memcpy(ng, task->fds.flags, task->fds.size);
-        kfree(task->fds.files);
-        kfree(task->fds.flags);
+    if (proc->fds.files) {
+        memcpy(nf, proc->fds.files, proc->fds.size * sizeof(*nf));
+        memcpy(ng, proc->fds.flags, proc->fds.size);
+        kfree(proc->fds.files);
+        kfree(proc->fds.flags);
     }
-    task->fds.files = nf;
-    task->fds.flags = ng;
-    task->fds.size  = ns;
+    proc->fds.files = nf;
+    proc->fds.flags = ng;
+    proc->fds.size  = ns;
     return RDNX_OK;
 }
 
-uint32_t task_fd_size(const task_t* task)
+uint32_t proc_fd_size(const proc_t* proc)
 {
-    return task ? task->fds.size : 0u;
+    return proc ? proc->fds.size : 0u;
 }
 ```
 
-`task_fd_alloc` сканирует до `fds.size`, при исчерпании вызывает `task_fd_grow(task, fds.size + 1)` и повторяет; при `RDNX_E_NOMEM` или достижении `TASK_FD_MAX` возвращает `RDNX_E_BUSY`. Начальная таблица заводится при создании задачи вызовом `task_fd_grow(task, TASK_FD_INITIAL)`; при уничтожении задачи `files` и `flags` освобождаются после закрытия всех дескрипторов.
+`proc_fd_alloc` сканирует до `fds.size`, при исчерпании вызывает `proc_fd_grow(proc, fds.size + 1)` и повторяет; при `RDNX_E_NOMEM` или достижении `PROC_FD_MAX` возвращает `RDNX_E_BUSY`. Начальная таблица заводится в `proc_attach()` вызовом `proc_fd_grow(proc, PROC_FD_INITIAL)`; в `proc_detach()` `files` и `flags` освобождаются после закрытия всех дескрипторов.
 
 - [ ] **Step 5: Обновить обходы таблицы**
 
 ```bash
-grep -rn "TASK_MAX_FD\|fd_table\[\|fd_flags\[" --exclude-dir=.git kernel/
+grep -rn "PROC_MAX_FD\|fd_table\[\|fd_flags\[" --exclude-dir=.git kernel/ fs/ sched/ shell/
 ```
 
-Каждый цикл `for (int fd = 0; fd < TASK_MAX_FD; fd++)` заменить на `for (uint32_t fd = 0; fd < task_fd_size(task); fd++)`; каждую проверку границы `fd >= TASK_MAX_FD` — на `fd >= (int)task_fd_size(task)`. Обращения `task->fd_table[fd]` заменить на `task->fds.files[fd]`, `task->fd_flags[fd]` — на `task->fds.flags[fd]`.
+Каждый цикл `for (int fd = 0; fd < PROC_MAX_FD; fd++)` заменить на `for (uint32_t fd = 0; fd < proc_fd_size(proc); fd++)`; каждую проверку границы `fd >= PROC_MAX_FD` — на `fd >= (int)proc_fd_size(proc)`. Обращения `proc->fd_table[fd]` заменить на `proc->fds.files[fd]`, `proc->fd_flags[fd]` — на `proc->fds.flags[fd]`. Там, где в руках только `task_t*`, персоналия берётся как `proc_t* proc = task_proc(task);`.
 
-В `unix_clone_fds_for_spawn` перед копированием вызвать `task_fd_grow(child, task_fd_size(parent))`.
+В `unix_clone_fds_for_spawn` перед копированием вызвать `proc_fd_grow(cproc, proc_fd_size(pproc))`.
 
 - [ ] **Step 6: Снять лимит `nfds` в `poll`, зафиксировать лимит `select`**
 
-В `unix_fs_poll` проверка уже опирается на `POLL_MAX_REGS` (Task 5). Проверить, что нигде не осталось `nfds > TASK_MAX_FD`:
+В `unix_fs_poll` проверка уже опирается на `POLL_MAX_REGS` (Task 5). Проверить, что нигде не осталось `nfds > PROC_MAX_FD`:
 
 ```bash
 grep -n "nfds" kernel/unix/fd/unix_fd.c
@@ -1840,7 +1854,8 @@ Expected: PASS, включая `CT-040`.
 - [ ] **Step 8: Коммит**
 
 ```bash
-git add kernel/core/task.h kernel/task.c kernel/unix/fd/unix_fd.c \
+git add kernel/unix/proc.h kernel/unix/process/unix_proc.c \
+        kernel/unix/fd/unix_fd.c \
         kernel/unix/process/unix_process.c kernel/unix/exec/unix_exec.c \
         userland/init/init.c
 git commit -m "feat(fd): grow the descriptor table on demand
@@ -1877,10 +1892,10 @@ grep -rn "UNIX_FD_KIND_\|->kind" --exclude-dir=.git --exclude-dir=docs .
 
 - [ ] **Step 2: Заменить проверки типа на сравнение ops**
 
-В `kernel/posix/posix_sys_vm.c:76` проверка «дескриптор ссылается на файл» становится:
+В `kernel/posix/posix_sys_vm.c:76` проверка «дескриптор ссылается на файл» становится (`proc` берётся как `task_proc(task)` — задача там уже в руках):
 
 ```c
-    rdnx_file_t* f = fd_get(task, fd);
+    rdnx_file_t* f = fd_get(proc, fd);
     if (!f || f->ops != &vfs_fileops) {
         if (f) { fd_put(f); }
         return (uint64_t)RDNX_E_INVALID;
