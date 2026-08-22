@@ -96,6 +96,15 @@ struct percpu {
      * path has to invent an answer for. */
     struct thread* sched_idle;
 
+    /* Nonzero while this processor must not be switched away from.
+     *
+     * A spinlock held with interrupts enabled is not enough in a preemptive
+     * kernel: the holder can be preempted, and the next thread on the same
+     * processor spins for a lock whose owner will never be scheduled again.
+     * Raising this makes the timer defer the switch instead, which costs a
+     * tick of latency rather than the machine. */
+    uint32_t preempt_count;
+
     bool sched_in_switch;
     bool sched_resched_pending;
     uint32_t sched_ticks_until_preempt;
@@ -192,6 +201,27 @@ static inline uint32_t percpu_index(void)
 static inline uint32_t percpu_apic_id(void)
 {
     return percpu_self()->apic_id;
+}
+
+/* Preemption control. Nesting counts, so a lock taken inside another lock
+ * does not re-enable switching when the inner one is dropped. */
+static inline void percpu_preempt_disable(void)
+{
+    percpu_self()->preempt_count++;
+    __asm__ volatile ("" ::: "memory");
+}
+
+static inline void percpu_preempt_enable(void)
+{
+    __asm__ volatile ("" ::: "memory");
+    if (percpu_self()->preempt_count > 0) {
+        percpu_self()->preempt_count--;
+    }
+}
+
+static inline bool percpu_preempt_blocked(void)
+{
+    return percpu_self()->preempt_count != 0;
 }
 
 /* FS.Base the entry stubs should restore on the way back to userspace. */

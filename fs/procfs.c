@@ -199,7 +199,10 @@ static const char* procfs_vector_name(uint32_t vector)
 
 static int procfs_read_interrupts(vfs_file_t* file, void* buf, size_t size)
 {
-    static char tmp[4096];
+    /* On the stack, like every other generator here. A static buffer would
+     * be shared by two readers on two processors, each overwriting the
+     * other's output mid-generation. */
+    char tmp[2048];
     pbuf_t p = { tmp, sizeof(tmp) - 1, 0 };
 
     uint32_t cpus = cpu_topology_count();

@@ -81,6 +81,16 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         return frame;
     }
 
+    /* Someone on this processor is holding a spinlock. Switching now would
+     * leave the lock held by a thread that is no longer running, and the
+     * next thread to want it would spin until the holder is scheduled again
+     * -- which, if it is spinning too, is never. The reschedule is not lost,
+     * only deferred: resched_pending stays set and the next tick takes it. */
+    if (percpu_preempt_blocked()) {
+        resched_pending = true;
+        return frame;
+    }
+
     in_scheduler = true;
     static int log_count = 0;
     thread_t* cur = thread_get_current();

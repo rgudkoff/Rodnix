@@ -53,7 +53,9 @@ typedef struct vfs_node {
      *   the last vfs_file_t holding it is closed.
      *   unlinked = true once the node has been removed from the namespace.
      */
-    uint32_t ref_count;
+    /* Manipulated atomically; see vfs_node_retain/release. Not a plain
+     * counter: it is written from any thread on any processor. */
+    volatile uint32_t ref_count;
     bool     unlinked;
 } vfs_node_t;
 
