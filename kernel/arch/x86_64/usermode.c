@@ -101,13 +101,18 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0,
     uint64_t user_cs = GDT_USER_CS | 0x3;
     uint64_t user_ds = GDT_USER_DS | 0x3;
 
+    /* GS is left as the kernel found it. Writing a selector to GS zeroes the
+     * hidden base, and IA32_GS_BASE addresses this CPU's struct percpu -- the
+     * next syscall or interrupt from this thread would enter the kernel with
+     * a null per-CPU pointer. Userspace has no way to set a GS base
+     * (arch_prctl implements ARCH_SET_FS only) and does not read GS, so
+     * leaving it alone costs the user nothing. */
     __asm__ volatile (
         "cli\n\t"
         "movw %w0, %%ax\n\t"
         "mov %%ax, %%ds\n\t"
         "mov %%ax, %%es\n\t"
         "mov %%ax, %%fs\n\t"
-        "mov %%ax, %%gs\n\t"
         "mov %4, %%rdi\n\t"
         "mov %5, %%rsi\n\t"
         "mov %6, %%rdx\n\t"

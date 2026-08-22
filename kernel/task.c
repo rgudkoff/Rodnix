@@ -10,6 +10,7 @@
 #include "../sched/waitq.h"
 #include "core/cpu.h"
 #include "arch/interrupt_frame.h"
+#include "arch/percpu.h"
 #include "core/interrupts.h"
 #include "../fs/vfs.h"
 #include "../include/console.h"
@@ -21,20 +22,6 @@
 #define STACK_POISON_BYTE 0xCC
 
 /*
- * LOCKING: per-CPU locals — no lock needed.
- *   Each CPU reads/writes only its own slot via cpu_get_id().
- *   On UP (single CPU) cpu_get_id() always returns 0.
- *   On SMP cpu_get_id() must return the correct APIC id before
- *   the scheduler starts (currently always 0 — see cpu.c TODO).
- */
-#define MAX_CPUS 8
-typedef struct {
-    task_t*   task;
-    thread_t* thread;
-} cpu_local_t;
-static cpu_local_t g_cpu_locals[MAX_CPUS];
-
-/*
  * LOCKING: task registry — protected by IRQL_HIGH (task_registry_lock / task_registry_unlock).
  *   Protects: all_tasks_head, all_tasks_by_id, next_task_id, next_thread_id.
  *   Mechanism: raises IRQL to IRQL_HIGH (disables interrupts on UP), effectively
@@ -44,9 +31,11 @@ static cpu_local_t g_cpu_locals[MAX_CPUS];
  * LOCKING: stack_cache — protected by IRQL_HIGH (task_stack_cache_lock / task_stack_cache_unlock).
  *   Protects: stack_cache[], stack_cache_count, stack_cache_hits, stack_cache_misses.
  *
- * LOCKING: g_cpu_locals[] — each slot written only by the owning CPU.
- *   On UP (current target) cpu_get_id() always returns 0; no explicit lock needed.
- *   On SMP: each CPU accesses only its own slot; cross-CPU reads are advisory only.
+ * LOCKING: current task/thread — no lock needed.
+ *   They live in struct percpu, reached through this CPU's GS base
+ *   (kernel/arch/x86_64/percpu.h). A processor only ever addresses its own
+ *   slot, so there is nothing for another CPU to race against; cross-CPU
+ *   reads, if ever added, are advisory only.
  */
 static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
@@ -198,22 +187,22 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
 
 task_t* task_get_current(void)
 {
-    return g_cpu_locals[cpu_get_id()].task;
+    return percpu_self()->current_task;
 }
 
 void task_set_current(task_t* task)
 {
-    g_cpu_locals[cpu_get_id()].task = task;
+    percpu_self()->current_task = task;
 }
 
 thread_t* thread_get_current(void)
 {
-    return g_cpu_locals[cpu_get_id()].thread;
+    return percpu_self()->current_thread;
 }
 
 void thread_set_current(thread_t* thread)
 {
-    g_cpu_locals[cpu_get_id()].thread = thread;
+    percpu_self()->current_thread = thread;
 }
 
 void thread_set_priority(thread_t* thread, uint8_t priority)

@@ -8,6 +8,7 @@
 #include "types.h"
 #include "gdt.h"
 #include "cpu_topology.h"
+#include "percpu.h"
 #include "../../../include/common.h"
 #include <stddef.h>
 
@@ -311,8 +312,10 @@ int cpu_get_info(cpu_info_t* info)
 
 uint32_t cpu_get_id(void)
 {
-    /* TODO: Get real CPU ID via APIC */
-    return 0;
+    /* One GS-relative load. Safe from interrupt context: no lock is taken,
+     * and there is no window in which a preempted caller could observe a
+     * different processor's slot. */
+    return percpu_index();
 }
 
 uint32_t cpu_get_count(void)

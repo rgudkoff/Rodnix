@@ -137,12 +137,18 @@ isr_common_stub:
     mov rax, gs
     push rax
     
-    ; Load kernel data segments
+    ; Load kernel data segments.
+    ;
+    ; GS is deliberately left alone. Writing any selector to GS in 64-bit
+    ; mode zeroes the hidden base, and IA32_GS_BASE is what addresses this
+    ; CPU's struct percpu (kernel/arch/x86_64/percpu.h) -- the C handler
+    ; below reads it for the current thread and task. The selector itself is
+    ; ignored for addressing in 64-bit flat mode, so there is nothing to
+    ; gain by reloading it and a per-CPU pointer to lose.
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
     
     ; Call C handler
     mov rdi, rsp    ; Pass pointer to registers
@@ -164,8 +170,10 @@ isr_done:
     mov es, ax
     mov rax, [rsp + 8]     ; fs
     mov fs, ax
-    mov rax, [rsp + 0]     ; gs
-    mov gs, ax
+    ; GS is not restored: it was never modified on entry, so it already holds
+    ; the value userspace had, and writing it would zero the kernel's GS base.
+    ; The saved slot stays in the frame so the layout shared with
+    ; syscall_fast_entry.S and interrupt_frame.h is untouched.
     add rsp, 32
     jmp .isr_after_segs
 .isr_kernel_return:
@@ -175,7 +183,6 @@ isr_done:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 .isr_after_segs:
     ; Re-apply FS.Base MSR.  Loading a segment selector in 64-bit mode zeroes
     ; the hidden base field, so the "mov fs, [saved_user_sel]" above cleared
@@ -250,12 +257,18 @@ irq_common_stub:
     mov rax, gs
     push rax
     
-    ; Load kernel data segments
+    ; Load kernel data segments.
+    ;
+    ; GS is deliberately left alone. Writing any selector to GS in 64-bit
+    ; mode zeroes the hidden base, and IA32_GS_BASE is what addresses this
+    ; CPU's struct percpu (kernel/arch/x86_64/percpu.h) -- the C handler
+    ; below reads it for the current thread and task. The selector itself is
+    ; ignored for addressing in 64-bit flat mode, so there is nothing to
+    ; gain by reloading it and a per-CPU pointer to lose.
     mov ax, 0x10
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
     
     ; Call C handler (EOI is sent in irq_handler)
     mov rdi, rsp    ; Pass pointer to registers
@@ -277,8 +290,10 @@ irq_done:
     mov es, ax
     mov rax, [rsp + 8]     ; fs
     mov fs, ax
-    mov rax, [rsp + 0]     ; gs
-    mov gs, ax
+    ; GS is not restored: it was never modified on entry, so it already holds
+    ; the value userspace had, and writing it would zero the kernel's GS base.
+    ; The saved slot stays in the frame so the layout shared with
+    ; syscall_fast_entry.S and interrupt_frame.h is untouched.
     add rsp, 32
     jmp .irq_after_segs
 .irq_kernel_return:
@@ -288,7 +303,6 @@ irq_done:
     mov ds, ax
     mov es, ax
     mov fs, ax
-    mov gs, ax
 .irq_after_segs:
     ; Re-apply FS.Base MSR (same reason as in isr_common_stub above).
     mov    ecx, 0xC0000100

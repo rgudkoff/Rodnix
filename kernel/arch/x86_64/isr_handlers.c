@@ -25,6 +25,7 @@
 #include "config.h"
 #include "pic.h"
 #include "apic.h"
+#include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
 
@@ -278,6 +279,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
 
         interrupt_send_eoi(vector);
         if (vector == 32) {
+            percpu_irq_selftest();
             /* Timer tick drives preemption */
             scheduler_tick();
             regs = scheduler_switch_from_irq(regs);

@@ -37,7 +37,7 @@ Tracked in detail in `docs/ru/smp_bringup.md`. Ordered, because starting
 APs before the syscall/interrupt entry paths are per-CPU corrupts the
 system on the first concurrent syscall.
 - [x] Enumerate CPUs from MADT type 0/9 (`acpi_madt_get_cpus`)
-- [ ] Per-CPU infrastructure: `struct percpu`, GS base, `swapgs`, `cpu_id()`
+- [x] Per-CPU infrastructure: `struct percpu`, GS base, `cpu_id()`
 - [ ] Rewrite `syscall_fast_entry.S` / `isr_stubs.S` onto GS-relative state
 - [ ] Per-CPU GDT + TSS + IST stacks
 - [ ] Implement `interrupt_send_ipi()` (xAPIC ICR pair and x2APIC MSR)

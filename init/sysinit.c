@@ -20,6 +20,7 @@
 #include "../kernel/arch/config.h"
 #include "../kernel/arch/acpi.h"
 #include "../kernel/arch/cpu_topology.h"
+#include "../kernel/arch/percpu.h"
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
@@ -51,6 +52,16 @@ sysinit_cpu(void)
 {
     extern int cpu_init(void);
     return cpu_init();
+}
+
+static int
+sysinit_percpu(void)
+{
+    /* Runs immediately after cpu_init and before anything that can call
+     * task_get_current(): from here on, "which processor am I" is a
+     * GS-relative load rather than a hardcoded zero. */
+    percpu_init_bsp();
+    return RDNX_OK;
 }
 
 static int
@@ -104,10 +115,14 @@ sysinit_cpu_topology(void)
         return RDNX_OK;
     }
 
-    uint32_t total = cpu_topology_count();
-    uint32_t startable = cpu_topology_startable_count();
     const struct cpu_topology_entry* bsp =
         cpu_topology_get(cpu_topology_bsp_index());
+    if (bsp) {
+        percpu_bind_bsp(bsp->apic_id);
+    }
+
+    uint32_t total = cpu_topology_count();
+    uint32_t startable = cpu_topology_startable_count();
 
     klog("cpu", "%u processor(s), %u startable, BSP apic_id=%u\n",
          (unsigned)total,
@@ -307,6 +322,10 @@ kernel_run_bootstrap_sysinit(void)
         panic("CPU init failed");
     }
     klog("cpu", "ready\n");
+
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_SECOND, "percpu_init", sysinit_percpu) != 0) {
+        panic("Per-CPU init failed");
+    }
 
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_FIRST, "interrupts_init", sysinit_interrupts) != 0) {
         panic("Interrupts init failed");
