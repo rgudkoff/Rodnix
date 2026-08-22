@@ -11,6 +11,7 @@ KERNEL_C_SRCS += \
 	kernel/kmod.c \
 	kernel/unix/uaccess/unix_uaccess.c \
 	kernel/unix/fd/unix_fd.c \
+	kernel/unix/fd/file.c \
 	kernel/unix/fs/unix_fs.c \
 	kernel/unix/exec/unix_exec.c \
 	kernel/unix/process/unix_process.c \

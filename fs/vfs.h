@@ -171,3 +171,6 @@ int vfs_fchmod(vfs_file_t* file, uint16_t mode);
 /* Pass (uint32_t)-1 for uid or gid to leave the field unchanged. */
 int vfs_chown(const char* path, uint32_t uid, uint32_t gid);
 int vfs_fchown(vfs_file_t* file, uint32_t uid, uint32_t gid);
+
+struct rdnx_file;
+struct rdnx_file* vfs_file_open(const char* path, int vfs_flags);

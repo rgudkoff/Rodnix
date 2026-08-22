@@ -161,7 +161,6 @@ int proc_fd_alloc(proc_t* proc, void* handle)
         if (!proc->fd_table[i]) {
             proc->fd_table[i] = handle;
             proc->fd_flags[i] = 0;
-            proc->fd_kind[i] = 0;
             return i;
         }
     }
@@ -186,7 +185,6 @@ int proc_fd_close(proc_t* proc, int fd)
     }
     proc->fd_table[fd] = NULL;
     proc->fd_flags[fd] = 0;
-    proc->fd_kind[fd] = 0;
     return RDNX_OK;
 }
 

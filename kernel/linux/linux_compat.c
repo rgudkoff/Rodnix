@@ -7,6 +7,7 @@
 #include "../posix/posix_sys_vm.h"
 #include "../core/task.h"
 #include "../../fs/vfs.h"
+#include "../../include/sys/file.h"
 #include "../unix/unix_layer.h"
 #include "../arch/pmm.h"
 #include "../../mm/vm_map.h"
@@ -386,11 +387,13 @@ static int linux_proc_fd_target(const char* path, char* out, size_t out_sz)
     if (*p != '\0') {
         return RDNX_E_NOTFOUND;
     }
-    if (fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+    /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), (int)fd);
+    if (fd >= PROC_MAX_FD || !rf || rf->kind != UNIX_FD_KIND_VFS) {
         return RDNX_E_NOTFOUND;
     }
 
-    file = (vfs_file_t*)proc_fd_get(task_proc(t), (int)fd);
+    file = (vfs_file_t*)rf->priv;
     if (!file || !file->node) {
         return RDNX_E_NOTFOUND;
     }
@@ -766,10 +769,15 @@ uint64_t linux_compat_dispatch(uint64_t num,
             return (uint64_t)(-LINUX_EINVAL);
         }
         int _fd = (int)a1;
-        if (_fd < 0 || _fd >= PROC_MAX_FD || task_proc(_t)->fd_kind[_fd] != UNIX_FD_KIND_VFS) {
+        if (_fd < 0 || _fd >= PROC_MAX_FD) {
             return (uint64_t)(-LINUX_EBADF);
         }
-        vfs_file_t* _f = (vfs_file_t*)proc_fd_get(task_proc(_t), _fd);
+        /* было: task_proc(_t)->fd_kind[_fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* _rf = (rdnx_file_t*)proc_fd_get(task_proc(_t), _fd);
+        if (!_rf || _rf->kind != UNIX_FD_KIND_VFS) {
+            return (uint64_t)(-LINUX_EBADF);
+        }
+        vfs_file_t* _f = (vfs_file_t*)_rf->priv;
         if (!_f || !_f->node) {
             return (uint64_t)(-LINUX_EBADF);
         }
@@ -1075,10 +1083,15 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 81: { /* fchdir */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
+        /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), fd);
+        if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
+            return (uint64_t)(-LINUX_EINVAL);
+        }
+        vfs_file_t* f = (vfs_file_t*)rf->priv;
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }
@@ -1458,10 +1471,15 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 17: { /* pread64 */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
+        /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), fd);
+        if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
+            return (uint64_t)(-LINUX_EINVAL);
+        }
+        vfs_file_t* f = (vfs_file_t*)rf->priv;
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
@@ -1474,10 +1492,15 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 18: { /* pwrite64 */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
+        /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), fd);
+        if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
+            return (uint64_t)(-LINUX_EINVAL);
+        }
+        vfs_file_t* f = (vfs_file_t*)rf->priv;
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
@@ -1536,10 +1559,12 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!t || fd < 0 || fd >= PROC_MAX_FD || !out || out_len < sizeof(linux_dirent_u_t)) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        if (task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), fd);
+        if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
+        vfs_file_t* f = (vfs_file_t*)rf->priv;
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }
@@ -1578,10 +1603,12 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!t || fd < 0 || fd >= PROC_MAX_FD || !out || out_len < sizeof(linux_dirent64_u_t)) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        if (task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        /* было: task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+        rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(t), fd);
+        if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
+        vfs_file_t* f = (vfs_file_t*)rf->priv;
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }

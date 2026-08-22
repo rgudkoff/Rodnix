@@ -78,9 +78,8 @@ struct rdnx_proc {
     uint16_t umask;               /* Маска прав создания файлов */
 
     /* --- Дескрипторы и файловая позиция процесса --- */
-    void* fd_table[PROC_MAX_FD];  /* vfs_file_t* / pipe / socket */
-    uint8_t fd_flags[PROC_MAX_FD];/* FD_CLOEXEC и т.п. */
-    uint8_t fd_kind[PROC_MAX_FD]; /* UNIX_FD_KIND_* */
+    void* fd_table[PROC_MAX_FD];   /* rdnx_file_t* — описание открытого файла */
+    uint8_t fd_flags[PROC_MAX_FD]; /* FD_CLOEXEC — свойство дескриптора */
     char cwd[PROC_CWD_MAX];       /* Текущая рабочая директория */
 
     /* --- Завершение и ожидание --- */

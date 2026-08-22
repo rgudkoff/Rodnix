@@ -1,5 +1,6 @@
 #include "../unix_layer.h"
 #include "../../../fs/vfs.h"
+#include "../../../include/sys/file.h"
 #include "../../../lib/heap.h"
 #include "../../../console/tty_console.h"
 #include "../../../sched/scheduler.h"
@@ -46,14 +47,6 @@ enum {
     UNIX_TTY_IOCTL_SETATTR = 0x7403,
     UNIX_TTY_IOCTL_GETWINSZ = 0x7404,
     UNIX_TTY_IOCTL_SETWINSZ = 0x7405
-};
-
-enum {
-    UNIX_POLLIN = 0x0001,
-    UNIX_POLLOUT = 0x0004,
-    UNIX_POLLERR = 0x0008,
-    UNIX_POLLHUP = 0x0010,
-    UNIX_POLLNVAL = 0x0020
 };
 
 typedef struct unix_termios_u {
@@ -314,18 +307,6 @@ static inline void unix_pipe_unlock(irql_t old)
     (void)set_irql(old);
 }
 
-static void unix_pipe_retain(unix_pipe_t* p, uint8_t kind)
-{
-    if (!p || p->magic != UNIX_PIPE_MAGIC) {
-        return;
-    }
-    if (kind == UNIX_FD_KIND_PIPE_R) {
-        p->readers++;
-    } else if (kind == UNIX_FD_KIND_PIPE_W) {
-        p->writers++;
-    }
-}
-
 static void unix_pipe_release(unix_pipe_t* p, uint8_t kind)
 {
     if (!p || p->magic != UNIX_PIPE_MAGIC) {
@@ -352,71 +333,51 @@ static void unix_pipe_release(unix_pipe_t* p, uint8_t kind)
     }
 }
 
+/* временно в unix_fd.c, переезжает в pipe.c / socket_file.c в Task 3 */
+static int pipe_fop_close(rdnx_file_t* f)
+{
+    unix_pipe_release((unix_pipe_t*)f->priv, f->kind);
+    f->priv = NULL;
+    return RDNX_OK;
+}
+static const file_ops_t pipe_fileops_stub = {
+    .name = "pipe", .close = pipe_fop_close
+};
+
+static int socket_fop_close(rdnx_file_t* f)
+{
+    net_socket_close((net_socket_t*)f->priv);
+    f->priv = NULL;
+    return RDNX_OK;
+}
+static const file_ops_t socket_fileops_stub = {
+    .name = "socket", .close = socket_fop_close
+};
+
 void unix_fd_release(task_t* task, int fd)
 {
     proc_t* proc = task_proc(task);
-    if (!task || fd < 0 || fd >= PROC_MAX_FD || !proc->fd_table[fd]) {
+    if (!proc || fd < 0 || fd >= PROC_MAX_FD) {
         return;
     }
-
-    uint8_t kind = proc->fd_kind[fd];
-    if (kind == UNIX_FD_KIND_VFS) {
-        vfs_file_t* file = (vfs_file_t*)proc->fd_table[fd];
-        vfs_close(file);
-        kfree(file);
-    } else if (kind == UNIX_FD_KIND_PIPE_R || kind == UNIX_FD_KIND_PIPE_W) {
-        unix_pipe_t* p = (unix_pipe_t*)proc->fd_table[fd];
-        unix_pipe_release(p, kind);
-    } else if (kind == UNIX_FD_KIND_SOCKET) {
-        net_socket_t* sock = (net_socket_t*)proc->fd_table[fd];
-        net_socket_close(sock);
-    }
-
-    (void)proc_fd_close(proc, fd);
+    (void)fd_close(proc, fd);
 }
 
 static int unix_fd_dup_into(task_t* task, int oldfd, int newfd)
 {
     proc_t* proc = task_proc(task);
-    if (!task || oldfd < 0 || oldfd >= PROC_MAX_FD || newfd < 0 || newfd >= PROC_MAX_FD) {
+    if (!proc || oldfd < 0 || oldfd >= PROC_MAX_FD ||
+        newfd < 0 || newfd >= PROC_MAX_FD) {
         return RDNX_E_INVALID;
     }
-    if (!proc->fd_table[oldfd]) {
+    rdnx_file_t* f = (rdnx_file_t*)proc->fd_table[oldfd];
+    if (!f) {
         return RDNX_E_INVALID;
     }
-
-    uint8_t kind = proc->fd_kind[oldfd];
-    if (kind == UNIX_FD_KIND_VFS) {
-        vfs_file_t* copy = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-        if (!copy) {
-            return RDNX_E_NOMEM;
-        }
-        if (vfs_file_dup((vfs_file_t*)proc->fd_table[oldfd], copy) != RDNX_OK) {
-            kfree(copy);
-            return RDNX_E_INVALID;
-        }
-        proc->fd_table[newfd] = copy;
-        proc->fd_kind[newfd] = UNIX_FD_KIND_VFS;
-        proc->fd_flags[newfd] = 0;
-        return RDNX_OK;
-    }
-    if (kind == UNIX_FD_KIND_PIPE_R || kind == UNIX_FD_KIND_PIPE_W) {
-        unix_pipe_t* p = (unix_pipe_t*)proc->fd_table[oldfd];
-        if (!p || p->magic != UNIX_PIPE_MAGIC) {
-            return RDNX_E_INVALID;
-        }
-        irql_t old = unix_pipe_lock();
-        unix_pipe_retain(p, kind);
-        unix_pipe_unlock(old);
-        proc->fd_table[newfd] = p;
-        proc->fd_kind[newfd] = kind;
-        proc->fd_flags[newfd] = 0;
-        return RDNX_OK;
-    }
-    if (kind == UNIX_FD_KIND_SOCKET) {
-        return RDNX_E_UNSUPPORTED;
-    }
-    return RDNX_E_UNSUPPORTED;
+    rdnx_file_ref(f);
+    proc->fd_table[newfd] = f;
+    proc->fd_flags[newfd] = 0;   /* FD_CLOEXEC не наследуется через dup */
+    return RDNX_OK;
 }
 
 static int unix_bind_fd_to_console(task_t* task, int fd, int open_flags)
@@ -430,18 +391,17 @@ static int unix_bind_fd_to_console(task_t* task, int fd, int open_flags)
         unix_fd_release(task, fd);
     }
 
-    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    if (!file) {
-        return RDNX_E_NOMEM;
-    }
-    if (vfs_open("/dev/console", open_flags, file) != RDNX_OK) {
-        kfree(file);
+    rdnx_file_t* f = vfs_file_open("/dev/console", open_flags);
+    if (!f) {
         return RDNX_E_NOTFOUND;
     }
+    f->kind = UNIX_FD_KIND_VFS;
 
-    proc->fd_table[fd] = file;
-    proc->fd_kind[fd] = UNIX_FD_KIND_VFS;
-    proc->fd_flags[fd] = 0;
+    int rc = proc_fd_alloc(proc, f);
+    if (rc < 0) {
+        rdnx_file_put(f);
+        return rc;
+    }
     return RDNX_OK;
 }
 
@@ -469,73 +429,15 @@ int unix_clone_fds_for_spawn(const task_t* parent, task_t* child)
         return RDNX_E_INVALID;
     }
     for (int fd = 0; fd < PROC_MAX_FD; fd++) {
-        void* src = pproc->fd_table[fd];
-        uint8_t kind = pproc->fd_kind[fd];
-        if (!src) {
+        rdnx_file_t* f = (rdnx_file_t*)pproc->fd_table[fd];
+        if (!f) {
             cproc->fd_table[fd] = NULL;
             cproc->fd_flags[fd] = 0;
-            cproc->fd_kind[fd] = UNIX_FD_KIND_NONE;
             continue;
         }
-
-        if (kind == UNIX_FD_KIND_VFS) {
-            vfs_file_t* copy = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-            if (!copy) {
-                for (int i = 0; i < PROC_MAX_FD; i++) {
-                    if (cproc->fd_table[i]) {
-                        unix_fd_release(child, i);
-                    }
-                }
-                return RDNX_E_NOMEM;
-            }
-            if (vfs_file_dup((vfs_file_t*)src, copy) != RDNX_OK) {
-                kfree(copy);
-                for (int i = 0; i < PROC_MAX_FD; i++) {
-                    if (cproc->fd_table[i]) {
-                        unix_fd_release(child, i);
-                    }
-                }
-                return RDNX_E_INVALID;
-            }
-            cproc->fd_table[fd] = copy;
-            cproc->fd_kind[fd] = UNIX_FD_KIND_VFS;
-            cproc->fd_flags[fd] = pproc->fd_flags[fd];
-            continue;
-        }
-
-        if (kind == UNIX_FD_KIND_PIPE_R || kind == UNIX_FD_KIND_PIPE_W) {
-            unix_pipe_t* p = (unix_pipe_t*)src;
-            if (!p || p->magic != UNIX_PIPE_MAGIC) {
-                for (int i = 0; i < PROC_MAX_FD; i++) {
-                    if (cproc->fd_table[i]) {
-                        unix_fd_release(child, i);
-                    }
-                }
-                return RDNX_E_INVALID;
-            }
-            irql_t old = unix_pipe_lock();
-            unix_pipe_retain(p, kind);
-            unix_pipe_unlock(old);
-            cproc->fd_table[fd] = p;
-            cproc->fd_kind[fd] = kind;
-            cproc->fd_flags[fd] = pproc->fd_flags[fd];
-            continue;
-        }
-
-        if (kind == UNIX_FD_KIND_SOCKET) {
-            /* Sockets are not inherited yet (no shared ref model for net_socket_t). */
-            cproc->fd_table[fd] = NULL;
-            cproc->fd_kind[fd] = UNIX_FD_KIND_NONE;
-            cproc->fd_flags[fd] = 0;
-            continue;
-        }
-
-        for (int i = 0; i < PROC_MAX_FD; i++) {
-            if (cproc->fd_table[i]) {
-                unix_fd_release(child, i);
-            }
-        }
-        return RDNX_E_UNSUPPORTED;
+        rdnx_file_ref(f);
+        cproc->fd_table[fd] = f;
+        cproc->fd_flags[fd] = pproc->fd_flags[fd];
     }
     return RDNX_OK;
 }
@@ -564,33 +466,26 @@ uint64_t unix_fs_open(uint64_t user_path_ptr, uint64_t flags)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    if (!file) {
-        return (uint64_t)RDNX_E_NOMEM;
-    }
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    int orc = vfs_open(path_buf, vfs_flags, file);
-    if (orc != RDNX_OK) {
-        kfree(file);
-        return (uint64_t)orc;
+    rdnx_file_t* f = vfs_file_open(path_buf, vfs_flags);
+    if (!f) {
+        return (uint64_t)RDNX_E_INVALID;
     }
     /* Store only access mode + status flags; strip one-shot flags (O_CREAT, O_TRUNC). */
-    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    f->kind = UNIX_FD_KIND_VFS;
 
     task_t* task = task_get_current();
     proc_t* proc = task_proc(task);
     if (!task) {
-        vfs_close(file);
-        kfree(file);
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_INVALID;
     }
-    int fd = proc_fd_alloc(proc, file);
+    int fd = proc_fd_alloc(proc, f);
     if (fd < 0) {
-        vfs_close(file);
-        kfree(file);
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_BUSY;
     }
-    proc->fd_kind[fd] = UNIX_FD_KIND_VFS;
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
     if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
     return (uint64_t)fd;
@@ -603,32 +498,25 @@ uint64_t unix_fs_open_kernel_path(const char* path, uint64_t flags)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    if (!file) {
-        return (uint64_t)RDNX_E_NOMEM;
-    }
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    int orc = vfs_open(path, vfs_flags, file);
-    if (orc != RDNX_OK) {
-        kfree(file);
-        return (uint64_t)orc;
+    rdnx_file_t* f = vfs_file_open(path, vfs_flags);
+    if (!f) {
+        return (uint64_t)RDNX_E_INVALID;
     }
-    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    f->kind = UNIX_FD_KIND_VFS;
 
     task_t* task = task_get_current();
     proc_t* proc = task_proc(task);
     if (!task) {
-        vfs_close(file);
-        kfree(file);
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_INVALID;
     }
-    int fd = proc_fd_alloc(proc, file);
+    int fd = proc_fd_alloc(proc, f);
     if (fd < 0) {
-        vfs_close(file);
-        kfree(file);
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_BUSY;
     }
-    proc->fd_kind[fd] = UNIX_FD_KIND_VFS;
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
     if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
     return (uint64_t)fd;
@@ -657,10 +545,11 @@ uint64_t unix_fs_openat(uint64_t dirfd_u, uint64_t user_path_ptr, uint64_t flags
         return (uint64_t)RDNX_E_INVALID;
     }
     /* Only VFS fds can serve as a directory reference. */
-    if (proc->fd_kind[dirfd] != UNIX_FD_KIND_VFS) {
+    rdnx_file_t* dir_f = (rdnx_file_t*)proc->fd_table[dirfd];
+    if (dir_f->kind != UNIX_FD_KIND_VFS) {
         return (uint64_t)RDNX_E_INVALID; /* ENOTDIR — not a VFS descriptor */
     }
-    vfs_file_t* dir_file = (vfs_file_t*)proc->fd_table[dirfd];
+    vfs_file_t* dir_file = (vfs_file_t*)dir_f->priv;
     if (!dir_file->node || dir_file->node->type != VFS_NODE_DIR) {
         return (uint64_t)RDNX_E_INVALID; /* ENOTDIR */
     }
@@ -689,25 +578,19 @@ uint64_t unix_fs_openat(uint64_t dirfd_u, uint64_t user_path_ptr, uint64_t flags
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    vfs_file_t* file = (vfs_file_t*)kmalloc(sizeof(vfs_file_t));
-    if (!file) {
-        return (uint64_t)RDNX_E_NOMEM;
-    }
     int vfs_flags = unix_posix_flags_to_vfs(posix_flags);
-    int orc = vfs_open(path_buf, vfs_flags, file);
-    if (orc != RDNX_OK) {
-        kfree(file);
-        return (uint64_t)orc;
+    rdnx_file_t* f = vfs_file_open(path_buf, vfs_flags);
+    if (!f) {
+        return (uint64_t)RDNX_E_INVALID;
     }
-    file->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    ((vfs_file_t*)f->priv)->open_flags = posix_flags & ~(UNIX_O_CLOEXEC | UNIX_O_ONESHOT);
+    f->kind = UNIX_FD_KIND_VFS;
 
-    int fd = proc_fd_alloc(proc, file);
+    int fd = proc_fd_alloc(proc, f);
     if (fd < 0) {
-        vfs_close(file);
-        kfree(file);
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_BUSY;
     }
-    proc->fd_kind[fd] = UNIX_FD_KIND_VFS;
     if (posix_flags & UNIX_O_CLOEXEC)  proc->fd_flags[fd] |= UNIX_FD_CLOEXEC;
     if (posix_flags & UNIX_O_NONBLOCK) proc->fd_flags[fd] |= UNIX_FD_NONBLOCK;
     return (uint64_t)fd;
@@ -820,25 +703,23 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
     }
 
     int fdi = (int)fd;
-    void* h = proc_fd_get(proc, fdi);
+    rdnx_file_t* h = (rdnx_file_t*)proc_fd_get(proc, fdi);
     if (!h) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_VFS) {
-        vfs_file_t* file = (vfs_file_t*)h;
-        int ret = vfs_read(file, buf, n);
-        return (uint64_t)ret;
+    if (h->kind == UNIX_FD_KIND_VFS) {
+        return (uint64_t)h->ops->read(h, buf, n);
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_SOCKET) {
-        net_socket_t* sock = (net_socket_t*)h;
+    if (h->kind == UNIX_FD_KIND_SOCKET) {
+        net_socket_t* sock = (net_socket_t*)h->priv;
         int ret = net_socket_tcp_recv(sock, buf, n, 5000u);
         return (ret >= 0) ? (uint64_t)ret : (uint64_t)RDNX_E_INVALID;
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_PIPE_R) {
-        unix_pipe_t* p = (unix_pipe_t*)h;
+    if (h->kind == UNIX_FD_KIND_PIPE_R) {
+        unix_pipe_t* p = (unix_pipe_t*)h->priv;
         if (!p || p->magic != UNIX_PIPE_MAGIC) {
             return (uint64_t)RDNX_E_INVALID;
         }
@@ -901,25 +782,23 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
     }
 
     int fdi = (int)fd;
-    void* h = proc_fd_get(proc, fdi);
+    rdnx_file_t* h = (rdnx_file_t*)proc_fd_get(proc, fdi);
     if (!h) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_VFS) {
-        vfs_file_t* file = (vfs_file_t*)h;
-        int ret = vfs_write(file, buf, n);
-        return (uint64_t)ret;
+    if (h->kind == UNIX_FD_KIND_VFS) {
+        return (uint64_t)h->ops->write(h, buf, n);
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_SOCKET) {
-        net_socket_t* sock = (net_socket_t*)h;
+    if (h->kind == UNIX_FD_KIND_SOCKET) {
+        net_socket_t* sock = (net_socket_t*)h->priv;
         int ret = net_socket_tcp_send(sock, buf, n);
         return (ret >= 0) ? (uint64_t)ret : (uint64_t)RDNX_E_INVALID;
     }
 
-    if (proc->fd_kind[fdi] == UNIX_FD_KIND_PIPE_W) {
-        unix_pipe_t* p = (unix_pipe_t*)h;
+    if (h->kind == UNIX_FD_KIND_PIPE_W) {
+        unix_pipe_t* p = (unix_pipe_t*)h->priv;
         if (!p || p->magic != UNIX_PIPE_MAGIC) {
             return (uint64_t)RDNX_E_INVALID;
         }
@@ -966,26 +845,20 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
 uint64_t unix_fs_lseek(uint64_t fd, uint64_t off, uint64_t whence)
 {
     task_t* task = task_get_current();
-    vfs_file_t* file;
-    uint64_t new_pos = 0;
-    int ret;
+    rdnx_file_t* f;
 
     if (!task) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD || task_proc(task)->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    file = (vfs_file_t*)proc_fd_get(task_proc(task), (int)fd);
-    if (!file) {
+    f = (rdnx_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    ret = vfs_seek(file, (int64_t)off, (int)whence, &new_pos);
-    if (ret != RDNX_OK) {
-        return (uint64_t)ret;
-    }
-    return new_pos;
+    return (uint64_t)f->ops->seek(f, (int64_t)off, (int)whence);
 }
 
 uint64_t unix_fs_truncate(uint64_t user_path_ptr, uint64_t size)
@@ -1000,15 +873,20 @@ uint64_t unix_fs_truncate(uint64_t user_path_ptr, uint64_t size)
 uint64_t unix_fs_ftruncate(uint64_t fd, uint64_t size)
 {
     task_t* task = task_get_current();
+    rdnx_file_t* f;
     vfs_file_t* file;
 
     if (!task) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD || task_proc(task)->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    file = (vfs_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    f = (rdnx_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    file = (vfs_file_t*)f->priv;
     if (!file || !file->writable) {
         return (uint64_t)RDNX_E_DENIED;
     }
@@ -1115,10 +993,14 @@ uint64_t unix_fs_ioctl(uint64_t fd, uint64_t request, uint64_t user_arg_ptr)
 {
     task_t* task = task_get_current();
     int fdi = (int)fd;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD || task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_VFS) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    vfs_file_t* file = (vfs_file_t*)proc_fd_get(task_proc(task), fdi);
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)rf->priv;
     if (!file || !file->node || !file->node->inode) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1275,6 +1157,7 @@ uint64_t unix_fs_stat(uint64_t user_path_ptr, uint64_t user_stat_ptr)
 uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
 {
     task_t* task = task_get_current();
+    rdnx_file_t* f;
     vfs_file_t* file;
     vfs_stat_t st;
     int rc;
@@ -1285,10 +1168,14 @@ uint64_t unix_fs_fstat(uint64_t fd, uint64_t user_stat_ptr)
     if (!unix_user_range_ok((void*)(uintptr_t)user_stat_ptr, sizeof(unix_stat_u_t))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD || task_proc(task)->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+    if ((int)fd < 0 || (int)fd >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    file = (vfs_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    f = (rdnx_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    file = (vfs_file_t*)f->priv;
     if (!file) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1321,10 +1208,14 @@ uint64_t unix_fs_chmod(uint64_t user_path_ptr, uint64_t mode)
 uint64_t unix_fs_fchmod(uint64_t fd, uint64_t mode)
 {
     task_t* task = task_get_current();
-    if (!task || (int)fd < 0 || (int)fd >= PROC_MAX_FD || task_proc(task)->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+    if (!task || (int)fd < 0 || (int)fd >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    vfs_file_t* file = (vfs_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    rdnx_file_t* f = (rdnx_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)f->priv;
     if (!file) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1343,10 +1234,14 @@ uint64_t unix_fs_chown(uint64_t user_path_ptr, uint64_t uid, uint64_t gid)
 uint64_t unix_fs_fchown(uint64_t fd, uint64_t uid, uint64_t gid)
 {
     task_t* task = task_get_current();
-    if (!task || (int)fd < 0 || (int)fd >= PROC_MAX_FD || task_proc(task)->fd_kind[(int)fd] != UNIX_FD_KIND_VFS) {
+    if (!task || (int)fd < 0 || (int)fd >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    vfs_file_t* file = (vfs_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    rdnx_file_t* f = (rdnx_file_t*)proc_fd_get(task_proc(task), (int)fd);
+    if (!f || f->kind != UNIX_FD_KIND_VFS) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    vfs_file_t* file = (vfs_file_t*)f->priv;
     if (!file) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1362,6 +1257,7 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
     if (!task || fdi < 0 || fdi >= PROC_MAX_FD || !proc->fd_table[fdi]) {
         return (uint64_t)RDNX_E_INVALID;
     }
+    rdnx_file_t* h = (rdnx_file_t*)proc->fd_table[fdi];
 
     /* Mutable status flags that F_SETFL may toggle. */
     static const int unix_setfl_mask = UNIX_O_NONBLOCK;
@@ -1393,9 +1289,9 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
             proc->fd_flags[fdi] = ((uint8_t)arg) & UNIX_FD_CLOEXEC;
             return (uint64_t)RDNX_OK;
         case UNIX_F_GETFL: {
-            uint8_t kind = proc->fd_kind[fdi];
+            uint8_t kind = h->kind;
             if (kind == UNIX_FD_KIND_VFS) {
-                vfs_file_t* f = (vfs_file_t*)proc->fd_table[fdi];
+                vfs_file_t* f = (vfs_file_t*)h->priv;
                 if (!f) return (uint64_t)RDNX_E_INVALID;
                 return (uint64_t)f->open_flags;
             }
@@ -1412,9 +1308,9 @@ uint64_t unix_fs_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg)
             return (uint64_t)fl;
         }
         case UNIX_F_SETFL: {
-            uint8_t kind = proc->fd_kind[fdi];
+            uint8_t kind = h->kind;
             if (kind == UNIX_FD_KIND_VFS) {
-                vfs_file_t* f = (vfs_file_t*)proc->fd_table[fdi];
+                vfs_file_t* f = (vfs_file_t*)h->priv;
                 if (!f) return (uint64_t)RDNX_E_INVALID;
                 f->open_flags = (f->open_flags & ~unix_setfl_mask) |
                                 ((int)arg & unix_setfl_mask);
@@ -1445,10 +1341,11 @@ static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
         pfd->revents = UNIX_POLLNVAL;
         return 1;
     }
+    rdnx_file_t* h = (rdnx_file_t*)proc->fd_table[fdi];
 
-    uint8_t kind = proc->fd_kind[fdi];
+    uint8_t kind = h->kind;
     if (kind == UNIX_FD_KIND_VFS) {
-        vfs_file_t* file = (vfs_file_t*)proc->fd_table[fdi];
+        vfs_file_t* file = (vfs_file_t*)h->priv;
         if (!file || !file->node || !file->node->inode) {
             pfd->revents = UNIX_POLLNVAL;
             return 1;
@@ -1470,7 +1367,7 @@ static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
             }
         }
     } else if (kind == UNIX_FD_KIND_PIPE_R) {
-        unix_pipe_t* p = (unix_pipe_t*)proc->fd_table[fdi];
+        unix_pipe_t* p = (unix_pipe_t*)h->priv;
         if (!p || p->magic != UNIX_PIPE_MAGIC) {
             pfd->revents = UNIX_POLLNVAL;
             return 1;
@@ -1487,7 +1384,7 @@ static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
             rev |= UNIX_POLLHUP;
         }
     } else if (kind == UNIX_FD_KIND_PIPE_W) {
-        unix_pipe_t* p = (unix_pipe_t*)proc->fd_table[fdi];
+        unix_pipe_t* p = (unix_pipe_t*)h->priv;
         if (!p || p->magic != UNIX_PIPE_MAGIC) {
             pfd->revents = UNIX_POLLNVAL;
             return 1;
@@ -1697,20 +1594,34 @@ static int unix_pipe_alloc_fds(task_t* task, int* fd_r_out, int* fd_w_out)
     p->tail    = 0;
     p->count   = 0;
 
-    int fd_r = proc_fd_alloc(proc, p);
+    rdnx_file_t* fr = rdnx_file_alloc(&pipe_fileops_stub, p);
+    if (!fr) {
+        p->magic = 0;
+        kfree(p);
+        return RDNX_E_NOMEM;
+    }
+    fr->kind = UNIX_FD_KIND_PIPE_R;
+    int fd_r = proc_fd_alloc(proc, fr);
     if (fd_r < 0) {
+        /* fr was never installed into the fd table; nothing else references p. */
+        kfree(fr);
         p->magic = 0;
         kfree(p);
         return RDNX_E_BUSY;
     }
-    proc->fd_kind[fd_r] = UNIX_FD_KIND_PIPE_R;
 
-    int fd_w = proc_fd_alloc(proc, p);
+    rdnx_file_t* fw = rdnx_file_alloc(&pipe_fileops_stub, p);
+    if (!fw) {
+        unix_fd_release(task, fd_r);
+        return RDNX_E_NOMEM;
+    }
+    fw->kind = UNIX_FD_KIND_PIPE_W;
+    int fd_w = proc_fd_alloc(proc, fw);
     if (fd_w < 0) {
         unix_fd_release(task, fd_r);
+        rdnx_file_put(fw);
         return RDNX_E_BUSY;
     }
-    proc->fd_kind[fd_w] = UNIX_FD_KIND_PIPE_W;
 
     *fd_r_out = fd_r;
     *fd_w_out = fd_w;
@@ -1792,12 +1703,18 @@ uint64_t unix_fs_socket(uint64_t domain, uint64_t type, uint64_t protocol)
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    int fd = proc_fd_alloc(proc, sock);
-    if (fd < 0) {
+    rdnx_file_t* f = rdnx_file_alloc(&socket_fileops_stub, sock);
+    if (!f) {
         net_socket_close(sock);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    f->kind = UNIX_FD_KIND_SOCKET;
+
+    int fd = proc_fd_alloc(proc, f);
+    if (fd < 0) {
+        rdnx_file_put(f);
         return (uint64_t)RDNX_E_BUSY;
     }
-    proc->fd_kind[fd] = UNIX_FD_KIND_SOCKET;
     proc->fd_flags[fd] = 0;
     return (uint64_t)fd;
 }
@@ -1807,13 +1724,17 @@ uint64_t unix_fs_bind(uint64_t fd, uint64_t user_addr_ptr)
     task_t* task = task_get_current();
     int fdi = (int)fd;
     sockaddr_in_t* addr = (sockaddr_in_t*)(uintptr_t)user_addr_ptr;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD || task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!addr || !unix_user_range_ok(addr, sizeof(*addr))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* sock = (net_socket_t*)proc_fd_get(task_proc(task), fdi);
+    net_socket_t* sock = (net_socket_t*)rf->priv;
     if (!sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1825,13 +1746,17 @@ uint64_t unix_fs_connect(uint64_t fd, uint64_t user_addr_ptr)
     task_t* task = task_get_current();
     int fdi = (int)fd;
     sockaddr_in_t* addr = (sockaddr_in_t*)(uintptr_t)user_addr_ptr;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD || task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
         return (uint64_t)RDNX_E_INVALID;
     }
     if (!addr || !unix_user_range_ok(addr, sizeof(*addr))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* sock = (net_socket_t*)proc_fd_get(task_proc(task), fdi);
+    net_socket_t* sock = (net_socket_t*)rf->priv;
     if (!sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1851,7 +1776,11 @@ uint64_t unix_fs_sendto(uint64_t fd,
     const void* buf = (const void*)(uintptr_t)user_buf_ptr;
     size_t n = (size_t)len;
     sockaddr_in_t* dst = (sockaddr_in_t*)(uintptr_t)user_dst_addr_ptr;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD || task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
         return (uint64_t)RDNX_E_INVALID;
     }
     /* n == 0 is a valid zero-length datagram per POSIX; only validate the
@@ -1865,7 +1794,7 @@ uint64_t unix_fs_sendto(uint64_t fd,
     if (!dst || user_dst_len < sizeof(sockaddr_in_t) || !unix_user_range_ok(dst, sizeof(*dst))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* sock = (net_socket_t*)proc_fd_get(task_proc(task), fdi);
+    net_socket_t* sock = (net_socket_t*)rf->priv;
     if (!sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1890,7 +1819,11 @@ uint64_t unix_fs_recvfrom(uint64_t fd,
     void* buf = (void*)(uintptr_t)user_buf_ptr;
     size_t n = (size_t)len;
     sockaddr_in_t* src = (sockaddr_in_t*)(uintptr_t)user_src_addr_ptr;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD || task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
         return (uint64_t)RDNX_E_INVALID;
     }
     /* n == 0 is a valid zero-length datagram per POSIX; only validate the
@@ -1904,7 +1837,7 @@ uint64_t unix_fs_recvfrom(uint64_t fd,
     if (src && !unix_user_range_ok(src, sizeof(*src))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* sock = (net_socket_t*)proc_fd_get(task_proc(task), fdi);
+    net_socket_t* sock = (net_socket_t*)rf->priv;
     if (!sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1920,11 +1853,14 @@ uint64_t unix_fs_listen(uint64_t fd, uint64_t backlog)
 {
     task_t* task = task_get_current();
     int fdi = (int)fd;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD ||
-        task_proc(task)->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* sock = (net_socket_t*)proc_fd_get(task_proc(task), fdi);
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    net_socket_t* sock = (net_socket_t*)rf->priv;
     if (!sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1939,15 +1875,18 @@ uint64_t unix_fs_accept(uint64_t fd, uint64_t user_addr_ptr,
     task_t* task = task_get_current();
     proc_t* proc = task_proc(task);
     int fdi = (int)fd;
-    if (!task || fdi < 0 || fdi >= PROC_MAX_FD ||
-        proc->fd_kind[fdi] != UNIX_FD_KIND_SOCKET) {
+    if (!task || fdi < 0 || fdi >= PROC_MAX_FD) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(proc, fdi);
+    if (!rf || rf->kind != UNIX_FD_KIND_SOCKET) {
         return (uint64_t)RDNX_E_INVALID;
     }
     sockaddr_in_t* addr = (sockaddr_in_t*)(uintptr_t)user_addr_ptr;
     if (addr && !unix_user_range_ok(addr, sizeof(*addr))) {
         return (uint64_t)RDNX_E_INVALID;
     }
-    net_socket_t* listen_sock = (net_socket_t*)proc_fd_get(proc, fdi);
+    net_socket_t* listen_sock = (net_socket_t*)rf->priv;
     if (!listen_sock) {
         return (uint64_t)RDNX_E_INVALID;
     }
@@ -1957,12 +1896,18 @@ uint64_t unix_fs_accept(uint64_t fd, uint64_t user_addr_ptr,
         return (uint64_t)RDNX_E_TIMEOUT;
     }
 
-    int new_fd = proc_fd_alloc(proc, conn_sock);
-    if (new_fd < 0) {
+    rdnx_file_t* nf = rdnx_file_alloc(&socket_fileops_stub, conn_sock);
+    if (!nf) {
         net_socket_close(conn_sock);
+        return (uint64_t)RDNX_E_NOMEM;
+    }
+    nf->kind = UNIX_FD_KIND_SOCKET;
+
+    int new_fd = proc_fd_alloc(proc, nf);
+    if (new_fd < 0) {
+        rdnx_file_put(nf);
         return (uint64_t)RDNX_E_BUSY;
     }
-    proc->fd_kind[new_fd] = UNIX_FD_KIND_SOCKET;
     proc->fd_flags[new_fd] = 0;
     return (uint64_t)new_fd;
 }

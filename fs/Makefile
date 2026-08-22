@@ -2,6 +2,7 @@
 
 KERNEL_C_SRCS += \
 	fs/vfs.c \
+	fs/vfs_file.c \
 	fs/devfs.c \
 	fs/ext2.c \
 	fs/procfs.c
