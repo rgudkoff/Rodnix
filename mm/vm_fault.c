@@ -132,7 +132,27 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
         return RDNX_OK;
     }
 
-    return RDNX_E_DENIED;
+    /*
+     * A mapping is present and the access is one the entry permits -- the
+     * protection checks above already rejected the cases where it is not,
+     * and the copy-on-write case is handled higher up. So the fault has
+     * already been satisfied by somebody else between the processor taking
+     * it and this handler getting to look.
+     *
+     * That is an ordinary outcome on more than one processor, not an error:
+     * two threads touch the same page, both fault, the first installs the
+     * mapping and the second arrives to find the work done. Reporting it as
+     * a failure kills a process for having been second.
+     *
+     * The kernel-wide lock makes it more likely rather than less. The second
+     * faulter blocks on Giant, so by the time it runs the first has finished
+     * -- which is why this only started showing up once application
+     * processors began executing threads.
+     *
+     * Returning success retries the instruction, which now finds its
+     * translation.
+     */
+    return RDNX_OK;
 }
 
 int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)

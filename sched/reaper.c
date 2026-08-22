@@ -128,6 +128,27 @@ void scheduler_reap_dead_threads(void)
         if (!dead) {
             break;
         }
+        /*
+         * Do not touch the thread until no processor is still executing on
+         * its kernel stack.
+         *
+         * A thread reaches this list the moment it is marked DEAD, which is
+         * before the processor running it has switched off its stack -- the
+         * stub clears on_cpu only after `mov rsp, rax`. Retiring the stack in
+         * that window poisons memory a processor is still running on, and the
+         * next thing it executes is 0xCC repeated, which is how this was
+         * found: a #GP with rip = 0xcccccccccccccccc.
+         *
+         * The same flag the scheduler uses to hand a thread between
+         * processors answers this too: it is exactly "somebody is on this
+         * stack". Deferring rather than spinning, because the reaper has
+         * nothing to gain by waiting and the thread will still be here next
+         * round.
+         */
+        if (__atomic_load_n(&dead->on_cpu, __ATOMIC_ACQUIRE) != 0) {
+            break;
+        }
+
         dead->reap_queued = 0;
         task_t* owner = dead->task;
         if (owner) {

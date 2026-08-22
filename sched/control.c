@@ -92,8 +92,20 @@ void scheduler_block(void)
 
     in_scheduler = true;
 
+    /*
+     * Somebody already woke this thread between it deciding to sleep and
+     * getting here, so it is READY and sitting in the run queue. Blocking now
+     * would put it back to sleep with the wakeup already spent -- and leave a
+     * BLOCKED thread in the run queue, which is what surfaced as
+     * "ready_dequeue: thread N state=3".
+     *
+     * A caller that reaches here is inside a loop re-testing its condition,
+     * so returning without blocking is safe: it will look again and find the
+     * condition satisfied.
+     */
     if (cur->state != THREAD_STATE_RUNNING) {
-        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)cur->thread_id, cur->state);
+        in_scheduler = false;
+        return;
     }
     scheduler_thread_set_state(cur, THREAD_STATE_BLOCKED, "scheduler_block");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
