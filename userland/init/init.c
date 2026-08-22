@@ -1297,6 +1297,64 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        /* CT-036: unlink открытого файла не рвёт чтение через живой fd.
+         * posix_open() передаёт flags как POSIX O_* биты (см.
+         * unix_posix_flags_to_vfs() в kernel/unix/fd/unix_fd.c) — значение
+         * VFS_OPEN_CREATE (4) в этой кодировке совпадает с O_NONBLOCK, а не
+         * с O_CREAT (0x200), так что создание файла нужно запрашивать через
+         * O_WRONLY|O_CREAT|O_TRUNC (sys/fcntl.h, доступен через unistd.h).
+         *
+         * Путь намеренно не /mnt (brief specified /mnt verbatim, departure
+         * approved by coordinator ruling): /mnt is the ext2 mount, and
+         * ext2_unlink() (fs/ext2.c) frees the inode's data blocks
+         * synchronously and unconditionally, with no awareness of
+         * vfs_node.ref_count — a pre-existing ext2 defect, not something
+         * this task's fs/vfs.c reconciliation controls. Root ("/") is the
+         * ramfs mount; ramfs files keep their bytes in vfs_inode_t.data,
+         * which vfs_free_node() only frees once ref_count reaches zero, so
+         * this exercises exactly the vfs.c-layer invariant Task 2 is about. */
+        int local_ok = 1;
+        char buf[8];
+        long wfd = posix_open("/ct_unlink.txt", O_WRONLY | O_CREAT | O_TRUNC);
+        if (wfd < 0 || posix_write((int)wfd, "live", 4) != 4) {
+            local_ok = 0;
+        }
+        if (wfd >= 0) {
+            (void)posix_close((int)wfd);
+        }
+
+        if (local_ok) {
+            long rfd = posix_open("/ct_unlink.txt", VFS_OPEN_READ);
+            if (rfd < 0) {
+                local_ok = 0;
+            } else {
+                if (posix_unlink("/ct_unlink.txt") < 0) {
+                    local_ok = 0;
+                }
+                /* Имя удалено, но описание живо — данные обязаны читаться. */
+                long n = posix_read((int)rfd, buf, sizeof(buf));
+                if (n != 4 || buf[0] != 'l' || buf[3] != 'e') {
+                    local_ok = 0;
+                }
+                (void)posix_close((int)rfd);
+                /* Повторное открытие обязано провалиться. */
+                long again = posix_open("/ct_unlink.txt", VFS_OPEN_READ);
+                if (again >= 0) {
+                    (void)posix_close((int)again);
+                    local_ok = 0;
+                }
+            }
+        }
+
+        if (local_ok) {
+            ct_log("CT-036", "PASS", "unlinked file readable via open fd");
+        } else {
+            ct_log("CT-036", "FAIL", "unlink broke open fd");
+            ok = 0;
+        }
+    }
+
+    {
         /* CT-041: после fork описание общее. Закрытие дескриптора у родителя
          * не должно обрывать его у потомка. */
         int local_ok = 1;

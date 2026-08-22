@@ -161,6 +161,16 @@ static vfs_node_t* vfs_alloc_node(const char* name, vfs_node_type_t type)
     return node;
 }
 
+/*
+ * Инвариант ссылок на ноду:
+ *   ref_count == (число живых rdnx_file_t, ссылающихся на ноду)
+ *                + (1, пока unlinked == false)
+ *
+ * vfs_open   : +1  (одно описание — одна ссылка)
+ * vfs_close  : -1
+ * vfs_unlink : снимает ссылку дерева, выставляет unlinked = true
+ * Нода освобождается, когда ref_count достигает нуля.
+ */
 static void vfs_free_node(vfs_node_t* node)
 {
     if (!node) {
@@ -932,16 +942,6 @@ int vfs_close(vfs_file_t* file)
     }
     file->pos = 0;
     file->writable = false;
-    return RDNX_OK;
-}
-
-int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst)
-{
-    if (!src || !dst || !src->node) {
-        return RDNX_E_INVALID;
-    }
-    *dst = *src;                   /* shallow copy — position, flags, node ptr */
-    vfs_node_retain(dst->node);    /* dst now holds its own reference */
     return RDNX_OK;
 }
 

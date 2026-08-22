@@ -154,9 +154,6 @@ int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file);
 int vfs_close(vfs_file_t* file);
-/* Duplicate an open file descriptor — retains node so both src and dst
- * hold independent references. dst must not already be open. */
-int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
 int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);
