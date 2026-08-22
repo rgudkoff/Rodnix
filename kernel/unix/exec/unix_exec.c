@@ -163,10 +163,11 @@ static void unix_spawn_thread(void* arg)
         kfree(sa);
     }
     task_t* task = task_get_current();
+    proc_t* proc = task_proc(task);
     if (task) {
         unix_proc_close_fds(task);
-        task->exit_code = (ret == RDNX_OK) ? 0 : 127;
-        task->exited = 1;
+        proc->exit_code = (ret == RDNX_OK) ? 0 : 127;
+        proc->exited = 1;
         task->state = TASK_STATE_ZOMBIE;
         unix_proc_notify_waiters(task->parent_task_id);
     }
@@ -254,20 +255,20 @@ uint64_t unix_proc_spawn(uint64_t user_path_ptr, uint64_t user_argv_ptr, uint64_
     }
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
-    task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
-    (void)task_set_supp_groups(child, parent->supp_groups, parent->supp_group_count);
-    strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
-    child->cwd[sizeof(child->cwd) - 1] = '\0';
+    proc_set_ids(task_proc(child), task_proc(parent)->uid, task_proc(parent)->gid, task_proc(parent)->euid, task_proc(parent)->egid);
+    (void)proc_set_supp_groups(task_proc(child), task_proc(parent)->supp_groups, task_proc(parent)->supp_group_count);
+    strncpy(task_proc(child)->cwd, task_proc(parent)->cwd, sizeof(task_proc(child)->cwd) - 1);
+    task_proc(child)->cwd[sizeof(task_proc(child)->cwd) - 1] = '\0';
 
     if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
         task_destroy(child);
         return (uint64_t)RDNX_E_GENERIC;
     }
-    if (!child->fd_table[0] && !child->fd_table[1] && !child->fd_table[2]) {
+    if (!task_proc(child)->fd_table[0] && !task_proc(child)->fd_table[1] && !task_proc(child)->fd_table[2]) {
         (void)unix_bind_stdio_to_console(child);
     }
 
-    if (!child->fd_table[0] || !child->fd_table[1] || !child->fd_table[2]) {
+    if (!task_proc(child)->fd_table[0] || !task_proc(child)->fd_table[1] || !task_proc(child)->fd_table[2]) {
         task_destroy(child);
         return (uint64_t)RDNX_E_GENERIC;
     }

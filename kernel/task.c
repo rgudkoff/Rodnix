@@ -12,7 +12,6 @@
 #include "arch/interrupt_frame.h"
 #include "core/interrupts.h"
 #include "../fs/vfs.h"
-#include "unix/unix_layer.h"
 #include "../include/console.h"
 #include "../include/error.h"
 #include <stddef.h>
@@ -240,48 +239,17 @@ task_t* task_create(void)
     task->vm_brk_end = 0;
     task->vm_mmap_base = 0;
     task->vm_mmap_hint = 0;
+    task->vm_brk_base = 0;
+    task->vm_brk_end = 0;
+    task->vm_mmap_base = 0;
+    task->vm_mmap_hint = 0;
     task->state = TASK_STATE_NEW;
-    task->uid = 0;
-    task->gid = 0;
-    task->euid = 0;
-    task->egid = 0;
-    task->supp_group_count = 0;
-    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
-        task->supp_groups[i] = 0;
-    }
-    task->session_id = task->task_id;
-    task->process_group_id = task->task_id;
-    task->umask = 0022;
-    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
-        task->fd_table[i] = NULL;
-        task->fd_flags[i] = 0;
-        task->fd_kind[i] = 0;
-    }
-    task->cwd[0] = '/';
-    task->cwd[1] = '\0';
-    task->exit_code = 0;
-    task->exited = 0;
-    task->waited = 0;
-    for (uint32_t i = 0; i < 32; i++) {
-        task->sigaction[i].handler = 0;
-        task->sigaction[i].flags = 0;
-        task->sigaction[i].restorer = 0;
-        task->sigaction[i].mask = 0;
-    }
-    task->sig_pending = 0;
-    task->sig_in_handler = 0;
     task->abi = TASK_ABI_NATIVE;
     task->tls_fs_base = 0;
-    {
-        uint64_t* p = (uint64_t*)&task->sig_saved;
-        for (size_t i = 0; i < sizeof(task->sig_saved) / sizeof(uint64_t); i++) {
-            p[i] = 0;
-        }
-    }
+    task->proc = NULL;
     task->main_thread = NULL;
     TAILQ_INIT(&task->threads);
     task->thread_count = 0;
-    waitq_init(&task->child_waitq, "child_wait");
     task->ref_count = 1;
     task->task_id_link.rbe_link[0] = NULL;
     task->task_id_link.rbe_link[1] = NULL;
@@ -291,6 +259,12 @@ task_t* task_create(void)
     (void)RB_INSERT(task_id_index, &all_tasks_by_id, task);
     task_registry_unlock(old);
     task->arch_specific = NULL;
+
+    /* UNIX-персоналия живёт в POSIX-слое; ядро только владеет её временем жизни. */
+    if (!proc_attach(task)) {
+        task_destroy(task);
+        return NULL;
+    }
     return task;
 }
 
@@ -320,11 +294,7 @@ void task_destroy(task_t* task)
     TAILQ_FOREACH_SAFE(thr, &task->threads, task_link, tmp) {
         thread_destroy(thr);
     }
-    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
-        if (task->fd_table[i]) {
-            unix_fd_release(task, (int)i);
-        }
-    }
+    proc_detach(task);
     vm_task_destroy(task);
     kfree(task);
 }
@@ -340,99 +310,6 @@ task_t* task_find_by_id(uint64_t task_id)
     task_t* found = RB_FIND(task_id_index, &all_tasks_by_id, &key);
     task_registry_unlock(old);
     return found;
-}
-
-task_t* task_find_child_by_parent(uint64_t parent_task_id, int require_exited, int include_waited)
-{
-    task_t* found = NULL;
-    irql_t old = task_registry_lock();
-    for (task_t* it = all_tasks_head; it; it = it->next_all) {
-        bool child_exited;
-        if (it->parent_task_id != parent_task_id) {
-            continue;
-        }
-        if (!include_waited && it->waited) {
-            continue;
-        }
-        child_exited = it->exited ||
-                       (it->state == TASK_STATE_ZOMBIE) ||
-                       (it->state == TASK_STATE_DEAD);
-        if (require_exited && !child_exited) {
-            continue;
-        }
-        found = it;
-        break;
-    }
-    task_registry_unlock(old);
-    return found;
-}
-
-void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid)
-{
-    if (!task) {
-        return;
-    }
-    task->uid = uid;
-    task->gid = gid;
-    task->euid = euid;
-    task->egid = egid;
-}
-
-int task_set_supp_groups(task_t* task, const uint32_t* gids, uint32_t count)
-{
-    if (!task) {
-        return RDNX_E_INVALID;
-    }
-    if (count > TASK_MAX_SUPP_GROUPS) {
-        return RDNX_E_INVALID;
-    }
-    task->supp_group_count = 0;
-    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
-        task->supp_groups[i] = 0;
-    }
-    for (uint32_t i = 0; i < count; i++) {
-        task->supp_groups[i] = gids ? gids[i] : 0;
-    }
-    task->supp_group_count = count;
-    return RDNX_OK;
-}
-
-uint32_t task_get_supp_group_count(const task_t* task)
-{
-    return task ? task->supp_group_count : 0;
-}
-
-int task_copy_supp_groups(const task_t* task, uint32_t* out_gids, uint32_t max_count)
-{
-    if (!task) {
-        return RDNX_E_INVALID;
-    }
-    if (task->supp_group_count > max_count) {
-        return RDNX_E_INVALID;
-    }
-    if (task->supp_group_count > 0 && !out_gids) {
-        return RDNX_E_INVALID;
-    }
-    for (uint32_t i = 0; i < task->supp_group_count; i++) {
-        out_gids[i] = task->supp_groups[i];
-    }
-    return (int)task->supp_group_count;
-}
-
-int task_in_group(const task_t* task, uint32_t gid)
-{
-    if (!task) {
-        return 0;
-    }
-    if (task->gid == gid || task->egid == gid) {
-        return 1;
-    }
-    for (uint32_t i = 0; i < task->supp_group_count; i++) {
-        if (task->supp_groups[i] == gid) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 void task_set_abi(task_t* task, task_abi_t abi)
@@ -451,57 +328,9 @@ task_abi_t task_get_abi(const task_t* task)
     return (task->abi == (uint8_t)TASK_ABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
 }
 
-uint32_t task_get_euid(const task_t* task)
-{
-    return task ? task->euid : 0;
-}
-
-uint32_t task_get_egid(const task_t* task)
-{
-    return task ? task->egid : 0;
-}
-
 uint32_t task_get_thread_count(const task_t* task)
 {
     return task ? task->thread_count : 0;
-}
-
-int task_fd_alloc(task_t* task, void* handle)
-{
-    if (!task || !handle) {
-        return RDNX_E_INVALID;
-    }
-    for (int i = 0; i < TASK_MAX_FD; i++) {
-        if (!task->fd_table[i]) {
-            task->fd_table[i] = handle;
-            task->fd_flags[i] = 0;
-            task->fd_kind[i] = 0;
-            return i;
-        }
-    }
-    return RDNX_E_BUSY;
-}
-
-void* task_fd_get(task_t* task, int fd)
-{
-    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
-        return NULL;
-    }
-    return task->fd_table[fd];
-}
-
-int task_fd_close(task_t* task, int fd)
-{
-    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
-        return RDNX_E_INVALID;
-    }
-    if (!task->fd_table[fd]) {
-        return RDNX_E_INVALID;
-    }
-    task->fd_table[fd] = NULL;
-    task->fd_flags[fd] = 0;
-    task->fd_kind[fd] = 0;
-    return RDNX_OK;
 }
 
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)

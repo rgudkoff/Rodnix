@@ -14,6 +14,7 @@
 #include "../../include/version.h"
 #include "../lib/heap.h"
 #include "../kernel/core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../kernel/arch/x86_64/pmm.h"
 
 /* ============================================================================
@@ -185,25 +186,39 @@ static char task_state_char(task_state_t s)
     }
 }
 
+/* Kernel-задачи не обязаны иметь UNIX-персоналию: читаем её безопасно. */
+static uint32_t proc_uid_or_zero(const task_t* t)
+{
+    const proc_t* pr = task_proc(t);
+    return pr ? pr->uid : 0u;
+}
+
+static const char* proc_cwd_or(const task_t* t, const char* fallback)
+{
+    const proc_t* pr = task_proc(t);
+    return (pr && pr->cwd[0]) ? pr->cwd : fallback;
+}
+
 static void pb_task_status(pbuf_t* p, const task_t* t)
 {
-    pb_kv_str(p, "Name",  t->cwd[0] ? t->cwd : "kernel");
+    const proc_t* pr = task_proc(t);
+    pb_kv_str(p, "Name",  (pr && pr->cwd[0]) ? pr->cwd : "kernel");
     pb_kv_str(p, "State", task_state_name(t->state));
     pb_kv_u64(p, "Pid",   t->task_id);
     pb_kv_u64(p, "PPid",  t->parent_task_id);
     pb_kv_u64(p, "Threads", t->thread_count);
     /* Uid: real effective saved fs */
     pb_str(p, "Uid:\t");
-    pb_u64(p, t->uid);  pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\n');
+    pb_u64(p, pr ? pr->uid : 0);  pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\n');
     /* Gid: real effective saved fs */
     pb_str(p, "Gid:\t");
-    pb_u64(p, t->gid);  pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\n');
+    pb_u64(p, pr ? pr->gid : 0);  pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\n');
 }
 
 static int procfs_read_self_status(vfs_file_t* file, void* buf, size_t size)
@@ -271,11 +286,11 @@ static void procfs_append_task(const task_t* t, void* ctx)
     pb_char(&p, '\t');
     pb_u64(&p, t->thread_count);
     pb_char(&p, '\t');
-    pb_u64(&p, t->uid);
+    pb_u64(&p, proc_uid_or_zero(t));
     pb_char(&p, '\t');
     pb_u64(&p, t->thread_group.cpu_ticks);
     pb_char(&p, '\t');
-    pb_str(&p, t->cwd[0] ? t->cwd : "/");
+    pb_str(&p, proc_cwd_or(t, "/"));
     pb_char(&p, '\n');
 
     ab->len += p.len;
@@ -333,13 +348,13 @@ static int procfs_read_pid_stat(vfs_file_t* file, void* buf, size_t size)
         /* pid (command) stat ppid uid nthrd cputicks */
         pb_u64(&p, t->task_id);
         pb_str(&p, " (");
-        pb_str(&p, t->cwd[0] ? t->cwd : "kernel");
+        pb_str(&p, proc_cwd_or(t, "kernel"));
         pb_str(&p, ") ");
         pb_char(&p, task_state_char(t->state));
         pb_char(&p, ' ');
         pb_u64(&p, t->parent_task_id);
         pb_char(&p, ' ');
-        pb_u64(&p, t->uid);
+        pb_u64(&p, proc_uid_or_zero(t));
         pb_char(&p, ' ');
         pb_u64(&p, t->thread_count);
         pb_char(&p, ' ');
@@ -363,13 +378,13 @@ static int procfs_read_self_stat(vfs_file_t* file, void* buf, size_t size)
     if (t) {
         pb_u64(&p, t->task_id);
         pb_str(&p, " (");
-        pb_str(&p, t->cwd[0] ? t->cwd : "kernel");
+        pb_str(&p, proc_cwd_or(t, "kernel"));
         pb_str(&p, ") ");
         pb_char(&p, task_state_char(t->state));
         pb_char(&p, ' ');
         pb_u64(&p, t->parent_task_id);
         pb_char(&p, ' ');
-        pb_u64(&p, t->uid);
+        pb_u64(&p, proc_uid_or_zero(t));
         pb_char(&p, ' ');
         pb_u64(&p, t->thread_count);
         pb_char(&p, ' ');

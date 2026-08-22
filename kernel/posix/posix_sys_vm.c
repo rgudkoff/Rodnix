@@ -73,11 +73,11 @@ uint64_t posix_mmap(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     int fd = (int)a5;
-    if (fd < 0 || fd >= TASK_MAX_FD || task->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+    if (fd < 0 || fd >= PROC_MAX_FD || task_proc(task)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
         return (uint64_t)RDNX_E_INVALID;
     }
     uint64_t off = a6;
-    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, fd);
+    vfs_file_t* file = (vfs_file_t*)proc_fd_get(task_proc(task), fd);
     if (!file || !file->node || !file->node->inode || file->node->type != VFS_NODE_FILE) {
         return (uint64_t)RDNX_E_INVALID;
     }

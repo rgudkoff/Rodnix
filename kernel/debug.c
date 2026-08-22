@@ -7,6 +7,7 @@
 #include "../include/console.h"
 #include "../include/common.h"
 #include "core/task.h"
+#include "unix/proc.h"
 #include "../trace/ktrace.h"
 
 #define PANIC_EVENT_MAX 16
@@ -98,9 +99,10 @@ static void panic_dump_state(void)
     thread_t* thread = thread_get_current();
     kputs("Context:\n");
     if (task) {
+        const proc_t* pr = task_proc(task);
         kprintf("  task=%llu  uid=%u  euid=%u  state=%d\n",
                 (unsigned long long)task->task_id,
-                task->uid, task->euid, (int)task->state);
+                pr ? pr->uid : 0u, proc_get_euid(pr), (int)task->state);
     } else {
         kputs("  task=<none>\n");
     }

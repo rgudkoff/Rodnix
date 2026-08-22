@@ -19,6 +19,7 @@
 #include "../kernel/core/cpu.h"
 #include "../kernel/core/memory.h"
 #include "../kernel/core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "../include/common.h"
@@ -803,11 +804,12 @@ static int shell_cmd_run(int argc, char** argv)
         return RDNX_E_NOMEM;
     }
     user_task->state = TASK_STATE_READY;
-    task_set_ids(user_task,
-                 parent_task->uid,
-                 parent_task->gid,
-                 parent_task->euid,
-                 parent_task->egid);
+    const proc_t* parent_proc = task_proc(parent_task);
+    proc_set_ids(task_proc(user_task),
+                 parent_proc->uid,
+                 parent_proc->gid,
+                 parent_proc->euid,
+                 parent_proc->egid);
     if (posix_bind_stdio_to_console(user_task) != RDNX_OK) {
         task_destroy(user_task);
         kfree(args->path);

@@ -386,11 +386,11 @@ static int linux_proc_fd_target(const char* path, char* out, size_t out_sz)
     if (*p != '\0') {
         return RDNX_E_NOTFOUND;
     }
-    if (fd >= TASK_MAX_FD || t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+    if (fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
         return RDNX_E_NOTFOUND;
     }
 
-    file = (vfs_file_t*)task_fd_get(t, (int)fd);
+    file = (vfs_file_t*)proc_fd_get(task_proc(t), (int)fd);
     if (!file || !file->node) {
         return RDNX_E_NOTFOUND;
     }
@@ -766,10 +766,10 @@ uint64_t linux_compat_dispatch(uint64_t num,
             return (uint64_t)(-LINUX_EINVAL);
         }
         int _fd = (int)a1;
-        if (_fd < 0 || _fd >= TASK_MAX_FD || _t->fd_kind[_fd] != UNIX_FD_KIND_VFS) {
+        if (_fd < 0 || _fd >= PROC_MAX_FD || task_proc(_t)->fd_kind[_fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EBADF);
         }
-        vfs_file_t* _f = (vfs_file_t*)task_fd_get(_t, _fd);
+        vfs_file_t* _f = (vfs_file_t*)proc_fd_get(task_proc(_t), _fd);
         if (!_f || !_f->node) {
             return (uint64_t)(-LINUX_EBADF);
         }
@@ -938,7 +938,7 @@ uint64_t linux_compat_dispatch(uint64_t num,
             task_t* _ct = task_get_current();
             uint64_t fg = tty_console_get_fg_pgrp();
             if (fg == 0 && _ct) {
-                fg = _ct->process_group_id;
+                fg = task_proc(_ct)->process_group_id;
             }
             *pgid_ptr = (int32_t)fg;
             return 0;
@@ -1075,10 +1075,10 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 81: { /* fchdir */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= TASK_MAX_FD || t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)task_fd_get(t, fd);
+        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }
@@ -1086,8 +1086,9 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (linux_vfs_node_to_abspath(f->node, abs, sizeof(abs)) != RDNX_OK) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        strncpy(t->cwd, abs, sizeof(t->cwd) - 1);
-        t->cwd[sizeof(t->cwd) - 1] = '\0';
+        proc_t* proc = task_proc(t);
+        strncpy(proc->cwd, abs, sizeof(proc->cwd) - 1);
+        proc->cwd[sizeof(proc->cwd) - 1] = '\0';
         return 0;
     }
     case 82: { /* rename */
@@ -1106,7 +1107,7 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if ((int64_t)rc >= 0 && t) {
             char pbuf[UNIX_PATH_MAX];
             if (unix_copy_user_cstr(pbuf, sizeof(pbuf), (const char*)(uintptr_t)a1) == RDNX_OK) {
-                linux_mode_set(pbuf, (uint16_t)(a2 & ~(uint64_t)(t->umask & 0777u)));
+                linux_mode_set(pbuf, (uint16_t)(a2 & ~(uint64_t)(task_proc(t)->umask & 0777u)));
             }
         }
         return rc;
@@ -1122,7 +1123,7 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if ((int64_t)rc >= 0 && t) {
             char pbuf[UNIX_PATH_MAX];
             if (unix_copy_user_cstr(pbuf, sizeof(pbuf), (const char*)(uintptr_t)a1) == RDNX_OK) {
-                linux_mode_set(pbuf, (uint16_t)(a2 & ~(uint64_t)(t->umask & 0777u)));
+                linux_mode_set(pbuf, (uint16_t)(a2 & ~(uint64_t)(task_proc(t)->umask & 0777u)));
             }
         }
         return rc;
@@ -1250,8 +1251,9 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!t) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        uint32_t old = t->umask & 0777u;
-        t->umask = (uint16_t)(a1 & 0777u);
+        proc_t* proc = task_proc(t);
+        uint32_t old = proc->umask & 0777u;
+        proc->umask = (uint16_t)(a1 & 0777u);
         return (uint64_t)old;
     }
     case 105: { /* setuid */
@@ -1284,12 +1286,17 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (pgid == 0) {
             pgid = target->task_id;
         }
-        target->process_group_id = pgid;
-        if (target->session_id == 0) {
-            target->session_id = cur->session_id ? cur->session_id : cur->task_id;
+        proc_t* tproc = task_proc(target);
+        proc_t* cproc = task_proc(cur);
+        if (!tproc || !cproc) {
+            return (uint64_t)(-LINUX_ESRCH);
+        }
+        tproc->process_group_id = pgid;
+        if (tproc->session_id == 0) {
+            tproc->session_id = cproc->session_id ? cproc->session_id : cur->task_id;
         }
         if (tty_console_get_fg_pgrp() == 0 && target == cur) {
-            tty_console_set_fg_pgrp(target->process_group_id);
+            tty_console_set_fg_pgrp(tproc->process_group_id);
         }
         return 0;
     }
@@ -1304,29 +1311,38 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!_t) {
             return (uint64_t)(-LINUX_ESRCH);
         }
-        return _t->process_group_id ? _t->process_group_id : _t->task_id;
+        proc_t* proc = task_proc(_t);
+        return (proc && proc->process_group_id) ? proc->process_group_id : _t->task_id;
     }
     case 112: { /* setsid */
         task_t* _t = task_get_current();
         if (!_t) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        _t->session_id = _t->task_id;
-        _t->process_group_id = _t->task_id;
-        tty_console_set_fg_pgrp(_t->process_group_id);
-        return _t->session_id;
+        proc_t* proc = task_proc(_t);
+        if (!proc) {
+            return (uint64_t)(-LINUX_EINVAL);
+        }
+        proc->session_id = _t->task_id;
+        proc->process_group_id = _t->task_id;
+        tty_console_set_fg_pgrp(proc->process_group_id);
+        return proc->session_id;
     }
     case 113: { /* setpgid compat / setpgrp — same as 109 */
         task_t* cur = task_get_current();
         if (!cur) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        cur->process_group_id = cur->task_id;
-        if (cur->session_id == 0) {
-            cur->session_id = cur->task_id;
+        proc_t* proc = task_proc(cur);
+        if (!proc) {
+            return (uint64_t)(-LINUX_EINVAL);
+        }
+        proc->process_group_id = cur->task_id;
+        if (proc->session_id == 0) {
+            proc->session_id = cur->task_id;
         }
         if (tty_console_get_fg_pgrp() == 0) {
-            tty_console_set_fg_pgrp(cur->process_group_id);
+            tty_console_set_fg_pgrp(proc->process_group_id);
         }
         return 0;
     }
@@ -1340,7 +1356,8 @@ uint64_t linux_compat_dispatch(uint64_t num,
         if (!t) {
             return (uint64_t)(-LINUX_ESRCH);
         }
-        return t->session_id ? t->session_id : t->task_id;
+        proc_t* proc = task_proc(t);
+        return (proc && proc->session_id) ? proc->session_id : t->task_id;
     }
     case 110: { /* getppid */
         task_t* t = task_get_current();
@@ -1441,10 +1458,10 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 17: { /* pread64 */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= TASK_MAX_FD || t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)task_fd_get(t, fd);
+        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
@@ -1457,10 +1474,10 @@ uint64_t linux_compat_dispatch(uint64_t num,
     case 18: { /* pwrite64 */
         task_t* t = task_get_current();
         int fd = (int)a1;
-        if (!t || fd < 0 || fd >= TASK_MAX_FD || t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD || task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)task_fd_get(t, fd);
+        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
         if (!f) {
             return (uint64_t)(-LINUX_EINVAL);
         }
@@ -1516,13 +1533,13 @@ uint64_t linux_compat_dispatch(uint64_t num,
         int fd = (int)a1;
         uint8_t* out = (uint8_t*)(uintptr_t)a2;
         uint64_t out_len = a3;
-        if (!t || fd < 0 || fd >= TASK_MAX_FD || !out || out_len < sizeof(linux_dirent_u_t)) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD || !out || out_len < sizeof(linux_dirent_u_t)) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        if (t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)task_fd_get(t, fd);
+        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }
@@ -1558,13 +1575,13 @@ uint64_t linux_compat_dispatch(uint64_t num,
         int fd = (int)a1;
         uint8_t* out = (uint8_t*)(uintptr_t)a2;
         uint64_t out_len = a3;
-        if (!t || fd < 0 || fd >= TASK_MAX_FD || !out || out_len < sizeof(linux_dirent64_u_t)) {
+        if (!t || fd < 0 || fd >= PROC_MAX_FD || !out || out_len < sizeof(linux_dirent64_u_t)) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        if (t->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+        if (task_proc(t)->fd_kind[fd] != UNIX_FD_KIND_VFS) {
             return (uint64_t)(-LINUX_EINVAL);
         }
-        vfs_file_t* f = (vfs_file_t*)task_fd_get(t, fd);
+        vfs_file_t* f = (vfs_file_t*)proc_fd_get(task_proc(t), fd);
         if (!f || !f->node || f->node->type != VFS_NODE_DIR) {
             return (uint64_t)(-LINUX_ENOTDIR);
         }

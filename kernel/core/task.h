@@ -17,6 +17,11 @@
 
 struct interrupt_frame;
 
+/* UNIX-персоналия задачи (креды, дескрипторы, cwd, сигналы).
+ * Полное определение — kernel/unix/proc.h; ядро видит только указатель. */
+struct rdnx_proc;
+typedef struct rdnx_proc proc_t;
+
 /* ============================================================================
  * Состояние задачи
  * ============================================================================ */
@@ -56,14 +61,6 @@ typedef enum {
 #define PRIORITY_MIN 0
 #define PRIORITY_MAX 255
 #define PRIORITY_DEFAULT 128
-
-/* ============================================================================
- * File descriptors (minimal)
- * ============================================================================ */
-
-#define TASK_MAX_FD 32
-#define TASK_CWD_MAX 256
-#define TASK_MAX_SUPP_GROUPS 16
 
 /* ============================================================================
  * Scheduling class
@@ -118,57 +115,18 @@ typedef struct task {
     uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
     void* address_space;       /* Адресное пространство (vm_map) */
     void* vm_map;              /* VM map (unix-style user virtual memory map) */
+    /* Раскладка пользовательского адресного пространства: владелец — mm/vm_map.c
+     * (vm_task_brk/vm_task_mmap*). Осознанно оставлено в задаче, чтобы VM-слой
+     * не зависел от POSIX-персоналии. */
     uint64_t vm_brk_base;      /* Base of brk() region (end of data/bss image) */
     uint64_t vm_brk_end;       /* Current program break */
     uint64_t vm_mmap_base;     /* Base for mmap() allocations */
     uint64_t vm_mmap_hint;     /* Next mmap() search hint */
     task_state_t state;        /* Состояние задачи */
-    uint32_t uid;              /* Реальный UID */
-    uint32_t gid;              /* Реальный GID */
-    uint32_t euid;             /* Эффективный UID */
-    uint32_t egid;             /* Эффективный GID */
-    uint32_t supp_groups[TASK_MAX_SUPP_GROUPS]; /* Supplementary groups */
-    uint32_t supp_group_count; /* Number of supplementary groups */
-    uint64_t session_id;       /* Linux/POSIX session id */
-    uint64_t process_group_id; /* Linux/POSIX process group id */
-    uint16_t umask;            /* process umask (POSIX bits) */
-    void* fd_table[TASK_MAX_FD]; /* Таблица файловых дескрипторов (vfs_file_t*) */
-    uint8_t fd_flags[TASK_MAX_FD]; /* Флаги дескрипторов (например, FD_CLOEXEC) */
-    uint8_t fd_kind[TASK_MAX_FD];  /* Тип дескриптора (unix fd kind) */
-    char cwd[TASK_CWD_MAX];     /* Текущая рабочая директория */
-    int32_t exit_code;         /* Код завершения процесса */
-    uint8_t exited;            /* Процесс завершен через posix_exit */
-    uint8_t waited;            /* Статус уже забран waitpid */
-    struct {
-        uint64_t handler;
-        uint64_t flags;
-        uint64_t restorer;
-        uint64_t mask;
-    } sigaction[32];
-    uint32_t sig_pending;
-    uint8_t sig_in_handler;
-    uint8_t abi;               /* task_abi_t */
+    uint8_t abi;               /* task_abi_t: селектор персоналии (читается arch-кодом) */
     uint64_t tls_fs_base;      /* userspace FS base (arch_prctl/linux ABI) */
-    struct {
-        uint64_t rip;
-        uint64_t rsp;
-        uint64_t rflags;
-        uint64_t rax;
-        uint64_t rbx;
-        uint64_t rcx;
-        uint64_t rdx;
-        uint64_t rsi;
-        uint64_t rdi;
-        uint64_t rbp;
-        uint64_t r8;
-        uint64_t r9;
-        uint64_t r10;
-        uint64_t r11;
-        uint64_t r12;
-        uint64_t r13;
-        uint64_t r14;
-        uint64_t r15;
-    } sig_saved;
+    proc_t* proc;              /* UNIX-персоналия (kernel/unix/proc.h): заводится в task_create(),
+                                * читатели обязаны считать NULL допустимым */
     struct thread* main_thread;/* Основной поток процесса */
     TAILQ_HEAD(thread_list, thread) threads; /* Список всех потоков задачи */
     uint32_t thread_count;     /* Количество потоков задачи */
@@ -177,7 +135,6 @@ typedef struct task {
     RB_ENTRY(task) task_id_link; /* Узел task_id-индекса */
     void* arch_specific;       /* Архитектурно-зависимые данные */
     thread_group_t thread_group; /* CPU-учёт группы для планировщика */
-    waitq_t child_waitq;       /* Parent sleeps here while waiting for a child to exit */
 } task_t;
 
 /* ============================================================================
@@ -240,6 +197,11 @@ task_t* task_create(void);
  */
 void task_destroy(task_t* task);
 
+/* Хуки UNIX-персоналии (реализация — kernel/unix/process/unix_proc.c).
+ * Объявлены здесь, чтобы ядро управляло временем жизни proc, не зная его полей. */
+proc_t* proc_attach(task_t* task);
+void proc_detach(task_t* task);
+
 /**
  * Получение текущей задачи
  * @return Указатель на текущую задачу
@@ -252,57 +214,8 @@ task_t* task_get_current(void);
  */
 void task_set_current(task_t* task);
 
-/**
- * Установка идентификаторов пользователя/группы
- * @param task Указатель на задачу
- * @param uid Реальный UID
- * @param gid Реальный GID
- * @param euid Эффективный UID
- * @param egid Эффективный GID
- */
-void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid);
-int task_set_supp_groups(task_t* task, const uint32_t* gids, uint32_t count);
-uint32_t task_get_supp_group_count(const task_t* task);
-int task_copy_supp_groups(const task_t* task, uint32_t* out_gids, uint32_t max_count);
-int task_in_group(const task_t* task, uint32_t gid);
 void task_set_abi(task_t* task, task_abi_t abi);
 task_abi_t task_get_abi(const task_t* task);
-
-/* ============================================================================
- * File descriptors helpers
- * ============================================================================ */
-
-/**
- * Allocate a new file descriptor in task table
- * @return fd >= 0 on success, negative value on error
- */
-int task_fd_alloc(task_t* task, void* handle);
-
-/**
- * Get handle by fd
- * @return handle or NULL
- */
-void* task_fd_get(task_t* task, int fd);
-
-/**
- * Close and clear fd
- * @return 0 on success, negative value on error
- */
-int task_fd_close(task_t* task, int fd);
-
-/**
- * Получение эффективного UID
- * @param task Указатель на задачу
- * @return euid
- */
-uint32_t task_get_euid(const task_t* task);
-
-/**
- * Получение эффективного GID
- * @param task Указатель на задачу
- * @return egid
- */
-uint32_t task_get_egid(const task_t* task);
 
 /**
  * Получение количества потоков задачи
@@ -317,7 +230,6 @@ uint32_t task_get_thread_count(const task_t* task);
  * @return Pointer to task or NULL
  */
 task_t* task_find_by_id(uint64_t task_id);
-task_t* task_find_child_by_parent(uint64_t parent_task_id, int require_exited, int include_waited);
 
 typedef struct {
     uint32_t cache_count;

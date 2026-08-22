@@ -148,7 +148,8 @@ void scheduler_reap_dead_threads(void)
                     scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
                     task_destroy(owner);
                 } else {
-                    if (owner->waited) {
+                    const proc_t* owner_proc = task_proc(owner);
+                    if (owner_proc && owner_proc->waited) {
                         scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_waited_destroy");
                         task_destroy(owner);
                     } else {

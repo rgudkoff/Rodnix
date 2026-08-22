@@ -13,6 +13,7 @@
 #include "../lib/heap.h"
 #include "../kernel/security.h"
 #include "../core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
 #include "../../include/error.h"
@@ -133,8 +134,8 @@ static vfs_inode_t* vfs_alloc_inode(vfs_node_type_t type)
     inode->mode = (type == VFS_NODE_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT;
     task_t* creator = task_get_current();
     if (creator) {
-        inode->uid = creator->euid;
-        inode->gid = creator->egid;
+        inode->uid = proc_get_euid(task_proc(creator));
+        inode->gid = proc_get_egid(task_proc(creator));
     }
     return inode;
 }
@@ -704,8 +705,8 @@ int vfs_mkdir(const char* path)
             return RDNX_OK;
         }
         task_t* creator = task_get_current();
-        uint32_t euid = creator ? creator->euid : 0u;
-        uint32_t egid = creator ? creator->egid : 0u;
+        uint32_t euid = proc_get_euid(task_proc(creator));
+        uint32_t egid = proc_get_egid(task_proc(creator));
         vfs_node_t* new_node = NULL;
         return ext2_create_dir(parent, leaf, 0755u, euid, egid, &new_node);
     }
@@ -861,8 +862,8 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
         }
         if (parent->inode && parent->inode->fs_tag == VFS_FS_TAG_EXT2) {
             task_t* creator = task_get_current();
-            uint32_t euid = creator ? creator->euid : 0u;
-            uint32_t egid = creator ? creator->egid : 0u;
+            uint32_t euid = proc_get_euid(task_proc(creator));
+            uint32_t egid = proc_get_egid(task_proc(creator));
             int crc = ext2_create_file(parent, leaf, 0644u, euid, egid, &node);
             if (crc != RDNX_OK) {
                 return crc;
@@ -1253,7 +1254,8 @@ static int vfs_check_can_chmod(const vfs_inode_t* inode)
     if (!caller) {
         return RDNX_E_DENIED;
     }
-    if (caller->euid == 0 || caller->euid == inode->uid) {
+    uint32_t euid = proc_get_euid(task_proc(caller));
+    if (euid == 0 || euid == inode->uid) {
         return RDNX_OK;
     }
     return RDNX_E_DENIED;
@@ -1265,7 +1267,7 @@ static int vfs_check_can_chown(void)
     if (!caller) {
         return RDNX_E_DENIED;
     }
-    return (caller->euid == 0) ? RDNX_OK : RDNX_E_DENIED;
+    return (proc_get_euid(task_proc(caller)) == 0) ? RDNX_OK : RDNX_E_DENIED;
 }
 
 int vfs_chmod(const char* path, uint16_t mode)
