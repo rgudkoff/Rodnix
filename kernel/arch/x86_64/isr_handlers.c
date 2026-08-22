@@ -110,6 +110,82 @@ static void irq_send_eoi(uint32_t irq)
     }
 }
 
+/*
+ * How many firings with nobody to take them before a line is shut off.
+ *
+ * The old policy shut it off on the first one, silently. That loses the line
+ * for good to a single stray during init -- a device asserting before its
+ * driver registers -- and leaves nothing to explain why the device later
+ * appears dead.
+ *
+ * Consecutive is what makes the threshold safe to set low: a handler running
+ * even once resets the count, so a slow or intermittent source never
+ * approaches it, while a line stuck asserted re-enters here as fast as the
+ * processor can acknowledge and crosses it in milliseconds. Something has to
+ * shut that off, or the machine makes no further progress.
+ */
+#define UNHANDLED_MASK_THRESHOLD 10000u
+
+/* Lines this code masked, so a driver registering later can have them back
+ * -- masking is a defence against a runaway, not a verdict on the device. */
+static bool g_masked_unhandled[256];
+
+void interrupt_unmask_if_we_masked(uint32_t vector);
+
+static void interrupt_note_unhandled(uint32_t vector)
+{
+    if (vector >= 256u || g_masked_unhandled[vector]) {
+        return;
+    }
+    if (irqstat_unhandled_streak(vector) < UNHANDLED_MASK_THRESHOLD) {
+        return;
+    }
+
+    /* Only the legacy range maps to a line this kernel can mask. An MSI
+     * vector is masked at the device, which needs the driver that is by
+     * definition absent here -- so say so rather than pretend. */
+    if (vector < 48u) {
+        uint32_t irq = vector - 32u;
+        extern bool ioapic_is_available(void);
+        if (apic_is_available() && ioapic_is_available()) {
+            apic_disable_irq((uint8_t)irq);
+        } else {
+            pic_disable_irq((uint8_t)irq);
+        }
+        g_masked_unhandled[vector] = true;
+        kprintf("[IRQ] vector 0x%x (IRQ %u) fired %u times with no handler; "
+                "line masked\n",
+                (unsigned)vector, (unsigned)irq,
+                (unsigned)UNHANDLED_MASK_THRESHOLD);
+    } else {
+        /* Latch so this reports once rather than every firing. */
+        g_masked_unhandled[vector] = true;
+        kprintf("[IRQ] vector 0x%x fired %u times with no handler and cannot "
+                "be masked here; it will keep firing\n",
+                (unsigned)vector, (unsigned)UNHANDLED_MASK_THRESHOLD);
+    }
+}
+
+void interrupt_unmask_if_we_masked(uint32_t vector)
+{
+    if (vector >= 256u || !g_masked_unhandled[vector]) {
+        return;
+    }
+    g_masked_unhandled[vector] = false;
+
+    if (vector < 48u) {
+        uint32_t irq = vector - 32u;
+        extern bool ioapic_is_available(void);
+        if (apic_is_available() && ioapic_is_available()) {
+            apic_enable_irq((uint8_t)irq);
+        } else {
+            pic_enable_irq((uint8_t)irq);
+        }
+        kprintf("[IRQ] vector 0x%x (IRQ %u) unmasked: a handler registered\n",
+                (unsigned)vector, (unsigned)irq);
+    }
+}
+
 static inline bool interrupt_is_tick(uint32_t vector)
 {
     return vector == VECTOR_LAPIC_TIMER || vector == VECTOR_PIT_TIMER;
@@ -293,18 +369,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             ctx.arch_specific = (void*)regs;
             interrupt_handlers[vector](&ctx);
         } else {
-            /* Only legacy PIC IRQs can be safely masked here. */
-            if (vector < 48) {
-                uint32_t irq = vector - 32;
-                if (irq != 0) {
-                    extern bool ioapic_is_available(void);
-                    if (apic_is_available() && ioapic_is_available()) {
-                        apic_disable_irq((uint8_t)irq);
-                    } else {
-                        pic_disable_irq((uint8_t)irq);
-                    }
-                }
-            }
+            interrupt_note_unhandled(vector);
         }
 
         interrupt_send_eoi(vector);

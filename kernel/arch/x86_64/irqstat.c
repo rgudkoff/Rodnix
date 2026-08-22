@@ -19,6 +19,10 @@ static uint64_t g_unhandled[X86_64_MAX_CPUS];
  * and a lost write costs a line in a report, not correctness. */
 static bool g_seen[IRQSTAT_VECTORS];
 
+/* Per vector rather than per CPU: the question it answers is about the line,
+ * which is one thing however many processors see it. */
+static uint64_t g_unhandled_streak[IRQSTAT_VECTORS];
+
 void irqstat_count(uint32_t cpu, uint32_t vector, bool handled)
 {
     if (cpu >= X86_64_MAX_CPUS || vector >= IRQSTAT_VECTORS) {
@@ -28,8 +32,23 @@ void irqstat_count(uint32_t cpu, uint32_t vector, bool handled)
     g_counts[cpu][vector]++;
     g_seen[vector] = true;
 
-    if (!handled) {
+    if (handled) {
+        g_unhandled_streak[vector] = 0;
+    } else {
         g_unhandled[cpu]++;
+        g_unhandled_streak[vector]++;
+    }
+}
+
+uint64_t irqstat_unhandled_streak(uint32_t vector)
+{
+    return (vector < IRQSTAT_VECTORS) ? g_unhandled_streak[vector] : 0;
+}
+
+void irqstat_clear_streak(uint32_t vector)
+{
+    if (vector < IRQSTAT_VECTORS) {
+        g_unhandled_streak[vector] = 0;
     }
 }
 

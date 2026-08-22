@@ -38,4 +38,15 @@ uint64_t irqstat_get_unhandled(uint32_t cpu);
  * 250-odd vectors that never do. */
 bool irqstat_vector_seen(uint32_t vector);
 
+/* Consecutive firings of this vector with no handler to take them.
+ * Consecutive is the point: a device that strays a few times before its
+ * driver registers resets this to zero the moment the driver runs, while a
+ * line stuck asserted never does. That distinction is what lets a runaway
+ * line be shut off without punishing a slow one. */
+uint64_t irqstat_unhandled_streak(uint32_t vector);
+
+/* Forget the streak for a vector -- called when a handler is registered, so a
+ * driver that arrives late starts from a clean slate. */
+void irqstat_clear_streak(uint32_t vector);
+
 #endif /* _RODNIX_ARCH_X86_64_IRQSTAT_H */

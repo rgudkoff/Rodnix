@@ -16,6 +16,10 @@
 #include "apic.h"
 #include "percpu.h"
 #include "vectors.h"
+#include "irqstat.h"
+
+/* Defined in isr_handlers.c, which owns the unhandled-line policy. */
+void interrupt_unmask_if_we_masked(uint32_t vector);
 #include "lapic_access.h"
 #include "lapic_regs.h"
 #include "spin.h"
@@ -198,6 +202,12 @@ int interrupt_register(uint32_t vector, interrupt_handler_t handler)
     }
     interrupt_handlers[vector] = handler;
     spinlock_unlock_irqrestore(&vector_lock, flags);
+
+    /* A driver arriving after the line was shut off gets it back. Masking an
+     * unhandled line is a defence against a runaway, not a permanent verdict
+     * on the device (docs/ru/irq_audit.md, F8). */
+    irqstat_clear_streak(vector);
+    interrupt_unmask_if_we_masked(vector);
 
     return 0;
 }
