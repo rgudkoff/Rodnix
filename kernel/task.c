@@ -4,6 +4,7 @@
  */
 
 #include "core/task.h"
+#include "fabric/spin.h"
 #include "../mm/vm_map.h"
 #include "../lib/heap.h"
 #include "../sched/scheduler.h"
@@ -62,14 +63,18 @@ RB_GENERATE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
 #endif
 static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
 
-static inline irql_t task_registry_lock(void)
+/* Real mutual exclusion: the registry is walked and mutated from every
+ * processor, and masking interrupts only ever excluded this one. */
+static spinlock_t task_registry_spin;
+
+static inline uint64_t task_registry_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&task_registry_spin);
 }
 
-static inline void task_registry_unlock(irql_t old)
+static inline void task_registry_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&task_registry_spin, flags);
 }
 
 #define STACK_CACHE_SIZE 32
@@ -80,14 +85,17 @@ static uint64_t stack_cache_misses = 0;
 static uint64_t stack_cache_retired = 0;
 static uint64_t stack_cache_poison_failures = 0;
 
-static inline irql_t task_stack_cache_lock(void)
+/* Same reasoning as the registry lock above. */
+static spinlock_t task_stack_cache_spin;
+
+static inline uint64_t task_stack_cache_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&task_stack_cache_spin);
 }
 
-static inline void task_stack_cache_unlock(irql_t old)
+static inline void task_stack_cache_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&task_stack_cache_spin, flags);
 }
 
 static bool stack_has_poison(const void* stack)
@@ -125,7 +133,7 @@ void* task_kernel_stack_acquire(void)
 {
     for (;;) {
         void* stack = NULL;
-        irql_t old = task_stack_cache_lock();
+        uint64_t old = task_stack_cache_lock();
         if (stack_cache_count > 0) {
             stack = stack_cache[--stack_cache_count];
             stack_cache[stack_cache_count] = NULL;
@@ -137,7 +145,7 @@ void* task_kernel_stack_acquire(void)
             break;
         }
         if (!stack_has_poison(stack)) {
-            irql_t old2 = task_stack_cache_lock();
+            uint64_t old2 = task_stack_cache_lock();
             stack_cache_poison_failures++;
             task_stack_cache_unlock(old2);
             kfree(stack);
@@ -145,7 +153,7 @@ void* task_kernel_stack_acquire(void)
         }
         return stack;
     }
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     stack_cache_misses++;
     task_stack_cache_unlock(old);
     return kmalloc(KERNEL_STACK_SIZE);
@@ -158,7 +166,7 @@ void task_kernel_stack_retire(void* stack, size_t size)
     }
     extern void* memset(void* s, int c, size_t n);
     memset(stack, STACK_POISON_BYTE, KERNEL_STACK_SIZE);
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     stack_cache_retired++;
     if (stack_cache_count < STACK_CACHE_SIZE) {
         stack_cache[stack_cache_count++] = stack;
@@ -174,7 +182,7 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
     if (!out_stats) {
         return RDNX_E_INVALID;
     }
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     out_stats->cache_count = stack_cache_count;
     out_stats->cache_capacity = STACK_CACHE_SIZE;
     out_stats->cache_hits = stack_cache_hits;
@@ -219,7 +227,7 @@ task_t* task_create(void)
         return NULL;
     }
 
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     task->task_id = next_task_id++;
     task->parent_task_id = 0;
     task->address_space = NULL;
@@ -262,7 +270,7 @@ void task_destroy(task_t* task)
     if (!task) {
         return;
     }
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     if (all_tasks_head == task) {
         all_tasks_head = task->next_all;
     } else {
@@ -295,7 +303,7 @@ task_t* task_find_by_id(uint64_t task_id)
     }
     task_t key = {0};
     key.task_id = task_id;
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     task_t* found = RB_FIND(task_id_index, &all_tasks_by_id, &key);
     task_registry_unlock(old);
     return found;
@@ -630,7 +638,7 @@ void task_for_each(task_iter_fn_t fn, void* ctx)
     if (!fn) {
         return;
     }
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     for (task_t* it = all_tasks_head; it; it = it->next_all) {
         fn(it, ctx);
     }

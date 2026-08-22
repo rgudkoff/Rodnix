@@ -4,6 +4,7 @@
  */
 
 #include "heap.h"
+#include "../kernel/fabric/spin.h"
 #include "../include/common.h"
 #include "../include/debug.h"
 #include "../include/error.h"
@@ -21,14 +22,18 @@ typedef struct heap_block {
 static heap_block_t* heap_head = NULL;
 static heap_block_t* heap_tail = NULL;
 
-static inline irql_t heap_lock(void)
+/* The heap is reachable from every processor, so masking interrupts is not
+ * enough on its own -- see spinlock_lock_irqsave(). */
+static spinlock_t heap_spin;
+
+static inline uint64_t heap_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&heap_spin);
 }
 
-static inline void heap_unlock(irql_t old)
+static inline void heap_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&heap_spin, flags);
 }
 
 static bool heap_block_in_list(const heap_block_t* needle)
@@ -198,7 +203,7 @@ int heap_init(size_t initial_pages)
 
 void* kmalloc(size_t size)
 {
-    irql_t old = heap_lock();
+    uint64_t old = heap_lock();
     if (size == 0) {
         heap_unlock(old);
         return NULL;
@@ -223,7 +228,7 @@ void* kmalloc(size_t size)
 
 void kfree(void* ptr)
 {
-    irql_t old = heap_lock();
+    uint64_t old = heap_lock();
     if (!ptr) {
         heap_unlock(old);
         return;

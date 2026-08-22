@@ -15,6 +15,7 @@
 #include "pic.h"
 #include "apic.h"
 #include "percpu.h"
+#include "spin.h"
 #include "interrupt_frame.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -25,10 +26,16 @@
 
 /* Array of registered interrupt handlers (one per vector, 0-255) */
 interrupt_handler_t interrupt_handlers[256];
+
+/* Guards interrupt_vector_reserved[] and the handler table against another
+ * processor allocating the same vector at the same moment. */
+static spinlock_t vector_lock;
 static bool interrupt_vector_reserved[256];
 
 /* Current Interrupt Request Level (IRQL) */
-volatile irql_t current_irql = IRQL_PASSIVE;
+/* IRQL lives in struct percpu; these reach it by the same name the rest of
+ * the file already used. */
+#define current_irql (percpu_self()->irql)
 
 /* ============================================================================
  * External References
@@ -189,8 +196,6 @@ int interrupt_unregister(uint32_t vector)
 
 int interrupt_vector_alloc(uint32_t min_vector, uint32_t max_vector)
 {
-    irql_t old_level;
-
     if (min_vector < 32u) {
         min_vector = 32u;
     }
@@ -201,22 +206,20 @@ int interrupt_vector_alloc(uint32_t min_vector, uint32_t max_vector)
         return -1;
     }
 
-    old_level = set_irql(IRQL_HIGH);
+    uint64_t flags = spinlock_lock_irqsave(&vector_lock);
     for (uint32_t vector = min_vector; vector <= max_vector; vector++) {
         if (!interrupt_vector_reserved[vector] && interrupt_handlers[vector] == NULL) {
             interrupt_vector_reserved[vector] = true;
-            (void)set_irql(old_level);
+            spinlock_unlock_irqrestore(&vector_lock, flags);
             return (int)vector;
         }
     }
-    (void)set_irql(old_level);
+    spinlock_unlock_irqrestore(&vector_lock, flags);
     return -1;
 }
 
 void interrupt_vector_free(uint32_t vector)
 {
-    irql_t old_level;
-
     if (vector >= 256u) {
         return;
     }
@@ -224,9 +227,9 @@ void interrupt_vector_free(uint32_t vector)
         return;
     }
 
-    old_level = set_irql(IRQL_HIGH);
+    uint64_t flags = spinlock_lock_irqsave(&vector_lock);
     interrupt_vector_reserved[vector] = false;
-    (void)set_irql(old_level);
+    spinlock_unlock_irqrestore(&vector_lock, flags);
 }
 
 /**
@@ -242,8 +245,7 @@ void interrupts_enable(void)
 {
     /* Set IRQL to PASSIVE and enable interrupts */
     /* Use volatile to prevent optimization issues */
-    volatile irql_t* irql_ptr = &current_irql;
-    *irql_ptr = IRQL_PASSIVE;
+    current_irql = IRQL_PASSIVE;
     
     /* Enable interrupts - execute sti directly without barriers */
     __asm__ volatile ("sti");
@@ -269,7 +271,7 @@ void interrupts_disable(void)
 
 irql_t get_current_irql(void)
 {
-    return current_irql;
+    return (irql_t)current_irql;
 }
 
 /**
@@ -285,7 +287,7 @@ irql_t get_current_irql(void)
  */
 irql_t set_irql(irql_t new_level)
 {
-    irql_t old_level = current_irql;
+    irql_t old_level = (irql_t)current_irql;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     
     current_irql = new_level;

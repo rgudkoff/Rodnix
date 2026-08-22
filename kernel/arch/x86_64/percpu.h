@@ -75,6 +75,10 @@ struct percpu {
     uint64_t isr_iret_cs;
     uint64_t isr_iret_rflags;
 
+    /* Interrupt request level of this processor. Was a single global, which
+     * on SMP means every CPU reporting whatever the last one set. */
+    uint32_t irql;
+
     uint32_t index;              /* dense slot, assigned in bring-up order */
     uint32_t apic_id;            /* filled once the topology is known */
 

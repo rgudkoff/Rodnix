@@ -4,6 +4,8 @@
  */
 
 #include "spin.h"
+#include "../core/cpu.h"
+#include "../../include/debug.h"
 
 void spinlock_init(spinlock_t* lock)
 {
@@ -45,3 +47,33 @@ bool spinlock_trylock(spinlock_t* lock)
     return __sync_lock_test_and_set(&lock->locked, 1) == 0;
 }
 
+
+uint64_t spinlock_lock_irqsave_named(spinlock_t* lock, const char* name)
+{
+    uint64_t flags;
+    __asm__ volatile ("pushfq\n\tpopq %0\n\tcli" : "=r"(flags) :: "memory");
+
+    if (lock) {
+        uint32_t me = cpu_get_id() + 1u;
+        if (lock->owner_plus_one == me) {
+            panicf("spinlock %s re-acquired on cpu%u",
+                   name ? name : "?", (unsigned)(me - 1u));
+        }
+        while (__sync_lock_test_and_set(&lock->locked, 1)) {
+            __asm__ volatile ("pause");
+        }
+        lock->owner_plus_one = me;
+    }
+    __asm__ volatile ("" ::: "memory");
+    return flags;
+}
+
+void spinlock_unlock_irqrestore(spinlock_t* lock, uint64_t flags)
+{
+    __asm__ volatile ("" ::: "memory");
+    if (lock) {
+        lock->owner_plus_one = 0;
+        __sync_lock_release(&lock->locked);
+    }
+    __asm__ volatile ("pushq %0\n\tpopfq" :: "r"(flags) : "memory", "cc");
+}

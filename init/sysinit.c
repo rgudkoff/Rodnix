@@ -481,7 +481,6 @@ kernel_enable_runtime_interrupts(void)
 {
     extern void apic_timer_stop(void);
     extern void pit_disable(void);
-    extern volatile irql_t current_irql;
     extern void apic_timer_start(void);
     extern void pit_enable(void);
     extern uint64_t scheduler_get_ticks(void);
@@ -499,7 +498,8 @@ kernel_enable_runtime_interrupts(void)
     }
     __asm__ volatile ("" ::: "memory");
 
-    current_irql = IRQL_PASSIVE;
+    /* IRQL is per-CPU now; set this processor's own. */
+    (void)set_irql(IRQL_PASSIVE);
     __asm__ volatile ("" ::: "memory");
 
     __asm__ volatile ("sti");

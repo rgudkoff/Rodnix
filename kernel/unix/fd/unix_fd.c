@@ -1,4 +1,5 @@
 #include "../unix_layer.h"
+#include "../../fabric/spin.h"
 #include "../../../fs/vfs.h"
 #include "../../../include/sys/file.h"
 #include "../../../lib/heap.h"
@@ -299,14 +300,18 @@ static bool unix_user_io_range_mapped(task_t* task, const void* ptr, size_t len,
     return true;
 }
 
-static inline irql_t unix_pipe_lock(void)
+/* Pipe state is shared across processors; masking interrupts excludes only
+ * the CPU doing it. */
+static spinlock_t unix_pipe_spin;
+
+static inline uint64_t unix_pipe_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&unix_pipe_spin);
 }
 
-static inline void unix_pipe_unlock(irql_t old)
+static inline void unix_pipe_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&unix_pipe_spin, flags);
 }
 
 static void unix_pipe_release(unix_pipe_t* p, uint8_t kind)
@@ -315,7 +320,7 @@ static void unix_pipe_release(unix_pipe_t* p, uint8_t kind)
         return;
     }
 
-    irql_t old = unix_pipe_lock();
+    uint64_t old = unix_pipe_lock();
     if (kind == UNIX_FD_KIND_PIPE_R) {
         if (p->readers > 0) {
             p->readers--;
@@ -742,7 +747,7 @@ uint64_t unix_fs_read(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             uint8_t ch = 0;
             bool have_byte = false;
 
-            irql_t old = unix_pipe_lock();
+            uint64_t old = unix_pipe_lock();
             count = p->count;
             writers = p->writers;
             if (count > 0) {
@@ -820,7 +825,7 @@ uint64_t unix_fs_write(uint64_t fd, uint64_t user_buf_ptr, uint64_t len)
             uint32_t count;
             bool pushed = false;
 
-            irql_t old = unix_pipe_lock();
+            uint64_t old = unix_pipe_lock();
             readers = p->readers;
             count = p->count;
             if (readers > 0 && count < UNIX_PIPE_CAP) {
@@ -1384,7 +1389,7 @@ static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
             pfd->revents = UNIX_POLLNVAL;
             return 1;
         }
-        irql_t old = unix_pipe_lock();
+        uint64_t old = unix_pipe_lock();
         uint32_t count = p->count;
         uint32_t writers = p->writers;
         unix_pipe_unlock(old);
@@ -1401,7 +1406,7 @@ static int unix_poll_one(task_t* task, unix_pollfd_u_t* pfd)
             pfd->revents = UNIX_POLLNVAL;
             return 1;
         }
-        irql_t old = unix_pipe_lock();
+        uint64_t old = unix_pipe_lock();
         uint32_t count = p->count;
         uint32_t readers = p->readers;
         unix_pipe_unlock(old);
@@ -1628,7 +1633,7 @@ static int unix_pipe_alloc_fds(task_t* task, int* fd_r_out, int* fd_w_out)
          * decrement p->writers. Force it to 0 here so releasing fd_r drops
          * p->readers to 0 too and unix_pipe_release() actually frees p —
          * otherwise p leaks forever (readers==0 but writers stuck at 1). */
-        irql_t old = unix_pipe_lock();
+        uint64_t old = unix_pipe_lock();
         p->writers = 0;
         unix_pipe_unlock(old);
         unix_fd_release(task, fd_r);
