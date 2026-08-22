@@ -830,16 +830,31 @@ int ioapic_init(void)
  * 
  * @note Get current CPU's LAPIC ID
  */
-uint8_t apic_get_lapic_id(void)
+uint32_t apic_get_lapic_id_ext(void)
 {
     if (!apic_initialized) {
         return 0;
     }
-    
-    /* Read APIC ID register */
+
     uint32_t apic_id_reg = apic_read_register(APIC_ID);
-    /* APIC ID is in bits 24-31 */
-    return (uint8_t)((apic_id_reg >> 24) & 0xFF);
+
+    /* xAPIC keeps the ID in bits 24-31 of the MMIO register; x2APIC exposes
+     * the whole 32-bit ID in MSR 0x802 with no shift. Applying the xAPIC
+     * shift in x2APIC mode reads back zero for every low ID, which silently
+     * collapses all processors onto destination 0. */
+    if (lapic_access_mode() == LAPIC_MODE_X2APIC) {
+        return apic_id_reg;
+    }
+    return (apic_id_reg >> 24) & 0xFFu;
+}
+
+uint8_t apic_get_lapic_id(void)
+{
+    /* Callers here feed 8-bit destination fields (I/O APIC RTE, MSI address).
+     * Truncation is wrong for x2APIC IDs above 255, which needs interrupt
+     * remapping to express at all; it is still strictly better than the
+     * unconditional shift this used to do. */
+    return (uint8_t)(apic_get_lapic_id_ext() & 0xFFu);
 }
 
 /**

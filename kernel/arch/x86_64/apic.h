@@ -25,6 +25,10 @@ void apic_enable(void);
 void apic_disable(void);
 void apic_send_eoi(void);
 uint8_t apic_get_lapic_id(void);
+/* Full-width LAPIC ID of the current CPU. In x2APIC mode the ID register is
+ * 32 bits wide and not shifted, so the 8-bit accessor above cannot represent
+ * it; use this one wherever an IPI destination or a topology key is needed. */
+uint32_t apic_get_lapic_id_ext(void);
 
 /* APIC timer (LAPIC timer) */
 int apic_timer_init(uint32_t frequency);
