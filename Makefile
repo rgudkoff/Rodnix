@@ -1,143 +1,27 @@
 # ================== RodNIX Makefile (cross-host, multi-arch) ==================
+#
+# The build is split the way XNU's is, so that each question has one place to
+# be answered:
+#
+#   makedefs/MakeInc.cmd    host tools
+#   makedefs/MakeInc.def    target, toolchain, flags        -- how it is built
+#   makedefs/MakeInc.dir    the component list              -- what exists
+#   makedefs/MakeInc.rule   compile and link rules
+#   config/MASTER[.<arch>]  enabled options                 -- what it is
+#   <component>/conf/files  that component's sources
+#
+# This file is left with the things that are neither: the artifacts (ISO,
+# initrd, USB image), running under QEMU, and the CI smokes.
 
-SHELL := /bin/bash
+.DEFAULT_GOAL := all
 
-# Architecture selection.
-ARCH ?= x86_64
-TOOLCHAIN ?= gcc
-SUPPORTED_ARCHES := x86_64 arm64 riscv64
-SUPPORTED_TOOLCHAINS := gcc clang
-
-ifeq ($(filter $(ARCH),$(SUPPORTED_ARCHES)),)
-$(error Unsupported ARCH '$(ARCH)'. Supported values: $(SUPPORTED_ARCHES))
-endif
-
-ifeq ($(filter $(TOOLCHAIN),$(SUPPORTED_TOOLCHAINS)),)
-$(error Unsupported TOOLCHAIN '$(TOOLCHAIN)'. Supported values: $(SUPPORTED_TOOLCHAINS))
-endif
-
-ARCH_DIR := $(ARCH)
-
-# Target defaults.
-ifeq ($(ARCH),x86_64)
-TARGET_TRIPLE := x86_64-elf
-ARCH_CFLAGS = -m64 -mcmodel=kernel -mno-red-zone
-ARCH_ASFLAGS = -f elf64
-ARCH_LDFLAGS = -m elf_x86_64
-QEMU_SYSTEM = qemu-system-x86_64
-else ifeq ($(ARCH),arm64)
-TARGET_TRIPLE := aarch64-elf
-ARCH_CFLAGS =
-ARCH_ASFLAGS =
-ARCH_LDFLAGS =
-QEMU_SYSTEM = qemu-system-aarch64
-else ifeq ($(ARCH),riscv64)
-TARGET_TRIPLE := riscv64-elf
-ARCH_CFLAGS =
-ARCH_ASFLAGS =
-ARCH_LDFLAGS =
-QEMU_SYSTEM = qemu-system-riscv64
-endif
-
-# Toolchain selection.
-ifeq ($(TOOLCHAIN),gcc)
-CROSS_COMPILE ?= $(TARGET_TRIPLE)-
-CC = $(CROSS_COMPILE)gcc
-LD = $(CROSS_COMPILE)ld
-COMMON_TC_CFLAGS =
-else ifeq ($(TOOLCHAIN),clang)
-CC = clang
-# Prefer ld.lld; fall back to lld (Homebrew LLVM on macOS exposes it as 'lld').
-_LLD := $(or $(shell command -v ld.lld 2>/dev/null),$(shell command -v lld 2>/dev/null),ld.lld)
-LD ?= $(_LLD)
-COMMON_TC_CFLAGS = --target=$(TARGET_TRIPLE)
-endif
-
-ifeq ($(ARCH),x86_64)
-AS = nasm
-else
-AS = $(CC)
-endif
-
-# Compiler flags (64-bit)
-CFLAGS = $(COMMON_TC_CFLAGS) \
-         $(ARCH_CFLAGS) \
-         -std=c11 \
-         -ffreestanding \
-         -fno-stack-protector \
-         -fno-builtin \
-         -nostdlib \
-         -O2 \
-         -g \
-         -Wall \
-         -Wextra \
-         -MMD \
-         -MP \
-         -I./include \
-         -I./fs \
-         -I./init \
-         -I./lib \
-         -I./mm \
-         -I./net \
-         -I./sched \
-         -I./console \
-         -I./trace \
-         -I./shell \
-         -I./idl \
-         -I./kernel/core \
-         -I./kernel/arch \
-         -I./kernel/arch/$(ARCH_DIR) \
-         -I./kernel/fabric \
-         -I./kernel/input
-
-ASFLAGS = $(ARCH_ASFLAGS)
-LDFLAGS = $(ARCH_LDFLAGS) -T link.ld --no-warn-mismatch -z max-page-size=0x1000
-
-BUILD_ROOT = build
-ISO_ROOT   = iso
-BUILD_DIR = $(BUILD_ROOT)/$(ARCH)
-ISO_DIR   = $(ISO_ROOT)/$(ARCH)
-USERLAND_DIR = userland
-USERLAND_ROOTFS = $(USERLAND_DIR)/rootfs
-USERLAND_BUILD_DIR = $(USERLAND_DIR)/build/$(ARCH)
-INITRD_IMG = $(BUILD_DIR)/initrd.img
-
-# ===== Sources =====
-KERNEL_C_SRCS :=
-KERNEL_ASM_SRCS :=
-DRIVERS_C_SRCS :=
-BOOT_ASM_SRCS :=
-
-include kernel/Makefile
-include drivers/Makefile
-include boot/Makefile
-
-ALL_C_SRCS   = $(KERNEL_C_SRCS) $(DRIVERS_C_SRCS)
-ALL_ASM_SRCS = $(KERNEL_ASM_SRCS) $(BOOT_ASM_SRCS)
-
-KERNEL_C_OBJS   = $(ALL_C_SRCS:.c=.o)
-KERNEL_ASM_OBJS = $(ALL_ASM_SRCS:.S=.o)
-OBJS = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_OBJS) $(KERNEL_ASM_OBJS))
-DEPS = $(OBJS:.o=.d)
-
-KERNEL_OBJS  = $(addprefix $(BUILD_DIR)/, $(KERNEL_C_SRCS:.c=.o) $(KERNEL_ASM_SRCS:.S=.o))
-DRIVERS_OBJS = $(addprefix $(BUILD_DIR)/, $(DRIVERS_C_SRCS:.c=.o))
-BOOT_OBJS    = $(addprefix $(BUILD_DIR)/, $(BOOT_ASM_SRCS:.S=.o))
-
-KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
-ISO_OUT    = $(BUILD_DIR)/rodnix.iso
+include makedefs/MakeInc.cmd
+include makedefs/MakeInc.def
+include makedefs/MakeInc.dir
+include makedefs/MakeInc.rule
 
 UNAME_S := $(shell uname -s)
 
-# ===== Tools =====
-GRUB_MKRESCUE := grub-mkrescue
-GRUB_MKRESCUE_ALT := i686-elf-grub-mkrescue
-GRUB_MKRESCUE_ALT_PATH := /opt/homebrew/opt/i686-elf-grub/bin/i686-elf-grub-mkrescue
-GRUB_FILE := grub-file
-GRUB_FILE_ALT := i686-elf-grub-file
-GRUB_FILE_ALT_PATH := /opt/homebrew/opt/i686-elf-grub/bin/i686-elf-grub-file
-XORRISO := xorriso
-LIMINE := limine
 
 # QEMU accel
 # Use software emulation by default to avoid unavailable host accelerators.
@@ -171,30 +55,17 @@ IDL_INPUT ?= scripts/idl/example.defs
 
 
 # ===== Phony =====
-.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi sync-bsd-abi help check-deps idl userland initrd kernel drivers boot posix-syscalls check-contract contract-smoke check-contract-10 check-ifconfig-smoke check-smp-topology check-tcc-smoke qemu-disk tcc tcc-disk tcc-smoke usb-image usb-flash
+# Component targets (kernel, mm, sched, ...) are declared phony in
+# makedefs/MakeInc.dir, next to the list that defines them.
+.PHONY: all clean run run-verbose _run_impl iso debug gdb check check-abi \
+        sync-bsd-abi help check-deps idl-headers idl-copy userland initrd \
+        posix-syscalls check-contract contract-smoke check-contract-10 \
+        check-ifconfig-smoke check-smp-topology check-tcc-smoke qemu-disk \
+        tcc tcc-disk tcc-smoke usb-image usb-flash
 
 # ===== Build =====
 all: check-abi posix-syscalls $(KERNEL_BIN)
 	@echo "[+] Built RodNIX kernel (64-bit)"
-
-$(KERNEL_BIN): $(OBJS) link.ld
-	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
-	@echo "[+] Linked kernel: $@"
-
-$(BUILD_DIR)/%.o: %.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -MF $(@:.o=.d) -c $< -o $@
-	@echo "[CC] $<"
-
-$(BUILD_DIR)/%.o: %.S
-	@mkdir -p $(dir $@)
-	@if [ "$<" = "boot/boot.S" ]; then \
-		$(AS) $(ASFLAGS) -Wno-zext-reloc $< -o $@; \
-	else \
-		$(AS) $(ASFLAGS) $< -o $@; \
-	fi
-	@echo "[AS] $<"
 
 # ===== ISO =====
 iso: $(KERNEL_BIN) initrd
@@ -407,9 +278,12 @@ usb-flash: usb-image
 	fi
 	@bash scripts/flash_usb.sh "$(USB_IMG)" "$(USB_DEV)"
 
-idl:
+# Code generation, as distinct from building the idl component. Before the
+# component targets existed, this was called "idl"; it now has a name that
+# says which of the two it is.
+idl-headers:
 	@mkdir -p $(IDL_OUT)
-	@python3 scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
+	@$(PYTHON) scripts/idl/idlgen.py $(IDL_INPUT) $(IDL_OUT)
 
 idl-copy:
 	@mkdir -p include/idl
@@ -420,11 +294,9 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all         - Build kernel (default)"
-	@echo "  kernel      - Build only kernel objects"
-	@echo "  drivers     - Build only driver objects"
-	@echo "  boot        - Build only boot objects"
+	@echo "  <component> - Build one component's objects; see below"
 	@echo "  clean       - Remove build artifacts"
-	@echo "  idl         - Generate IDL headers"
+	@echo "  idl-headers - Generate IDL headers"
 	@echo "  userland    - Build userland binaries"
 	@echo "  initrd      - Build initrd image"
 	@echo "  iso         - Create bootable ISO with GRUB"
@@ -460,6 +332,13 @@ help:
 	@echo "  TOOLCHAIN=gcc  - Default cross-GCC flow"
 	@echo "  TOOLCHAIN=clang - Use clang + lld with --target=<triple>"
 	@echo ""
+	@echo "Components (each builds on its own, e.g. 'make mm'):"
+	@echo "  $(COMPONENTS)"
+	@echo ""
+	@echo "  Sources        - <component>/conf/files[.<arch>]"
+	@echo "  Options        - config/MASTER[.<arch>]"
+	@echo "  Flags & rules  - makedefs/MakeInc.*"
+	@echo ""
 	@echo "Artifact layout:"
 	@echo "  Kernel image   - $(BUILD_ROOT)/<arch>/rodnix.kernel"
 	@echo "  ISO image      - $(BUILD_ROOT)/<arch>/rodnix.iso"
@@ -470,14 +349,9 @@ help:
 userland: posix-syscalls
 	@$(MAKE) -C $(USERLAND_DIR) ARCH=$(ARCH) TOOLCHAIN=$(TOOLCHAIN)
 
-kernel: $(KERNEL_OBJS)
-
-drivers: $(DRIVERS_OBJS)
-
-boot: $(BOOT_OBJS)
-
 initrd: userland scripts/mkinitrd.py
-	@python3 scripts/mkinitrd.py $(USERLAND_ROOTFS) $(INITRD_IMG)
+	@mkdir -p $(dir $(INITRD_IMG))
+	@$(PYTHON) scripts/mkinitrd.py $(USERLAND_ROOTFS) $(INITRD_IMG)
 
 posix-syscalls: scripts/mkposixsyscalls.py kernel/posix/syscalls.master
 	@python3 scripts/mkposixsyscalls.py .

@@ -1,0 +1,10 @@
+# Freestanding routines the kernel links against in place of libc.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+lib/string.c                                 standard
+lib/heap.c                                   standard

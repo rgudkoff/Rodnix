@@ -1,0 +1,16 @@
+# Networking stack.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+net/net.c                                    standard
+net/bsd_inet.c                               standard
+net/bsd_ether.c                              standard
+net/bsd_mbuf.c                               standard
+net/bsd_ifnet.c                              standard
+net/bsd_netisr.c                             standard
+net/stack.c                                  standard
+net/socket.c                                 standard

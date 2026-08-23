@@ -426,14 +426,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             return regs;
         }
         
-        /* Exception 7 (No Coprocessor) - can occur if FPU is used in interrupt handler */
-        /* Silently ignore - this can happen when FPU is accessed in interrupt context */
-        if (vector == 7) {
-            /* This can occur if FPU is used in interrupt handler */
-            /* Just return silently - FPU operations should not be done in interrupt context */
-            return regs;
-        }
-
         /* Serial exception dump for boot.log */
         serial_write_str("\n[EXC] iret rsp=");
         serial_write_hex64(iret_rsp);

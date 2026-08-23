@@ -1,0 +1,13 @@
+# Boot and runtime tracing.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+trace/bootstrap.c                            standard
+trace/bootlog.c                              standard
+trace/ktrace.c                               standard
+trace/startup_trace.c                        standard
+trace/tracev2.c                              standard

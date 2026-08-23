@@ -1,0 +1,16 @@
+# Scheduler, run queues and wait queues.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+sched/state.c                                standard
+sched/runqueue.c                             standard
+sched/control.c                              standard
+sched/tick.c                                 standard
+sched/switch.c                               standard
+sched/reaper.c                               standard
+sched/debug.c                                standard
+sched/waitq.c                                standard

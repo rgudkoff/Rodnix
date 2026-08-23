@@ -1,0 +1,29 @@
+# Compile and link rules.
+#
+# One rule per source kind, shared by every component. A component that needs
+# something different says so in its conf/Makefile.inc rather than growing a
+# branch inside these recipes:
+#
+#   <source path>_CFLAGS_ADD     += ...   extra code-generation flags
+#   <source path>_CWARNFLAGS_ADD += ...   relax warnings for one file
+#   <source path>_ASFLAGS_ADD    += ...   assembler flags for one file
+#
+# The key is the source path, not the object basename that XNU uses: objects
+# here keep their directory, and kernel/debug.c and sched/debug.c would
+# otherwise both answer to "debug.o".
+
+$(KERNEL_BIN): $(OBJS) link.ld
+	@mkdir -p $(dir $@)
+	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	@echo "[+] Linked kernel: $@"
+
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $($<_CFLAGS_ADD) $(CWARNFLAGS) $($<_CWARNFLAGS_ADD) \
+		-MF $(@:.o=.d) -c $< -o $@
+	@echo "[CC] $<"
+
+$(BUILD_DIR)/%.o: %.S
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $($<_ASFLAGS_ADD) $< -o $@
+	@echo "[AS] $<"

@@ -1,0 +1,10 @@
+# In-kernel IDL runtime.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+idl/idl_runtime.c                            standard
+idl/idl_demo.c                               optional idl_demo

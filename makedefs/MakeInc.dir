@@ -1,0 +1,61 @@
+# Components.
+#
+# A component is a top-level source directory that owns a manifest:
+#
+#   <component>/conf/files          machine-independent sources
+#   <component>/conf/files.<arch>   sources for one architecture
+#   <component>/conf/Makefile.inc   optional: flags for this component
+#
+# This mirrors XNU, where bsd/, osfmk/, iokit/ and the rest each carry a
+# conf/ directory of their own. The list below is also the link order, so it
+# reads bottom-up: the entry point, then the core, then what builds on it.
+#
+# Adding a source file means adding one line to one manifest. Adding a
+# component means creating its conf/ directory and naming it here.
+
+COMPONENTS = boot \
+             kernel \
+             init \
+             mm \
+             sched \
+             lib \
+             fs \
+             net \
+             drivers \
+             console \
+             trace \
+             idl \
+             shell
+
+# Read one manifest, if it exists, through the option set from config/MASTER.
+conf_read = $(if $(wildcard $(1)),$(shell $(AWK) -v options='$(OPTIONS)' -f makedefs/files.awk $(1)))
+
+# Source paths to object paths under the per-architecture build directory.
+# Objects keep their source path, so kernel/debug.c and sched/debug.c do not
+# collide the way they would in a flat object directory.
+objs_of = $(addprefix $(BUILD_DIR)/,$(patsubst %.S,%.o,$(patsubst %.c,%.o,$(1))))
+
+define rodnix_component
+$(1)_SRCS := $$(call conf_read,$(1)/conf/files) \
+             $$(call conf_read,$(1)/conf/files.$$(ARCH))
+$(1)_OBJS  = $$(call objs_of,$$($(1)_SRCS))
+ALL_SRCS  += $$($(1)_SRCS)
+-include $(1)/conf/Makefile.inc
+endef
+
+$(foreach _c,$(COMPONENTS),$(eval $(call rodnix_component,$(_c))))
+
+ifneq ($(filter __CONF_ERROR__,$(ALL_SRCS)),)
+$(error component manifest: parse errors above)
+endif
+
+ALL_C_SRCS   = $(filter %.c,$(ALL_SRCS))
+ALL_ASM_SRCS = $(filter %.S,$(ALL_SRCS))
+
+OBJS = $(call objs_of,$(ALL_SRCS))
+DEPS = $(patsubst %.o,%.d,$(filter $(BUILD_DIR)/%.o,$(call objs_of,$(ALL_C_SRCS))))
+
+# Every component is buildable on its own: `make mm` compiles just mm's
+# objects. These are phony because each name is also a directory.
+.PHONY: $(COMPONENTS)
+$(foreach _c,$(COMPONENTS),$(eval $(_c): $$($(_c)_OBJS)))

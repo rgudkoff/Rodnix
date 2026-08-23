@@ -1,0 +1,32 @@
+# Core kernel: tasks, IPC, syscalls, locking, time, and the fabric.
+#
+# Sources built only for x86_64.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+kernel/arch/x86_64/interrupts.c              standard
+kernel/arch/x86_64/idt.c                     standard
+kernel/arch/x86_64/pic.c                     standard
+kernel/arch/x86_64/lapic_access.c            standard
+kernel/arch/x86_64/apic.c                    standard
+kernel/arch/x86_64/isr_handlers.c            standard
+kernel/arch/x86_64/cpu.c                     standard
+kernel/arch/x86_64/ktime_arch.c              standard
+kernel/arch/x86_64/cpu_topology.c            standard
+kernel/arch/x86_64/percpu.c                  standard
+kernel/arch/x86_64/irqstat.c                 standard
+kernel/arch/x86_64/tlb.c                     standard
+kernel/arch/x86_64/smp.c                     standard
+kernel/arch/x86_64/gdt.c                     standard
+kernel/arch/x86_64/pmm.c                     standard
+kernel/arch/x86_64/paging.c                  standard
+kernel/arch/x86_64/pit.c                     standard
+kernel/arch/x86_64/memory.c                  standard
+kernel/arch/x86_64/boot.c                    standard
+kernel/arch/x86_64/acpi.c                    standard
+kernel/arch/x86_64/syscall_fast.c            standard
+kernel/arch/x86_64/usermode.c                standard
+kernel/arch/x86_64/isr_stubs.S               standard
+kernel/arch/x86_64/ap_trampoline.S           standard
+kernel/arch/x86_64/syscall_fast_entry.S      standard

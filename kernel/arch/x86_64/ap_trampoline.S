@@ -91,12 +91,11 @@ ap_long:
     ; FS and GS are left alone. Writing a selector to GS zeroes the hidden
     ; base, and the C entry sets that base to this CPU's percpu slot.
 
-    ; Enable SSE before any compiled code runs. GCC emits XMM instructions
-    ; freely -- memset alone uses movd/punpcklbw -- and an application
-    ; processor comes out of reset with CR0.EM set and CR4.OSFXSR clear, so
-    ; the first such instruction raises #UD. The boot processor does this in
-    ; cpu_init(); an AP cannot, because getting to cpu_init's C code already
-    ; requires it. Mirrors the CR0/CR4 bits set in kernel/arch/x86_64/cpu.c.
+    ; An application processor comes out of reset with CR0.EM set and
+    ; CR4.OSFXSR clear. Kernel code no longer needs SSE -- it is built
+    ; -mno-mmx -mno-sse -msoft-float -- but user threads scheduled onto this
+    ; CPU do, and they would take #UD otherwise. Mirrors the CR0/CR4 bits the
+    ; boot processor sets in cpu_init() (kernel/arch/x86_64/cpu.c).
     mov rax, cr0
     and rax, ~(1 << 2)              ; clear CR0.EM (no x87 emulation)
     or  rax, 1 << 1                 ; set CR0.MP

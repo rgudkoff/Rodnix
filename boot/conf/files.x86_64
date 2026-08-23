@@ -1,0 +1,8 @@
+# Multiboot2 entry: the code that runs before the kernel is mapped.
+#
+# Sources built only for x86_64.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+boot/boot.S                                  standard

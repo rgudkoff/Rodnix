@@ -1,0 +1,20 @@
+# Fabric device drivers.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+drivers/fabric/usb/usb_xhci.c                standard
+drivers/fabric/usb/usb_host_pci.c            standard
+drivers/fabric/usb/usb_hid.c                 standard
+drivers/fabric/usb/usb_msc.c                 standard
+drivers/fabric/hid/hid_kbd.c                 standard
+drivers/fabric/net/virtio_net_stub.c         standard
+drivers/fabric/net/e1000_net.c               standard
+drivers/fabric/display/vga_display_stub.c    standard
+drivers/fabric/display/mb2_fb.c              standard
+drivers/fabric/display/bochs_vbe.c           standard
+drivers/fabric/storage/ide_storage_stub.c    standard
+drivers/fabric/storage/mbr_part.c            standard

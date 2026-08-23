@@ -1,0 +1,7 @@
+# RodNIX kernel configuration -- x86_64-specific options.
+#
+# Options that only make sense on this architecture. They are added to the
+# machine-independent set in config/MASTER, not substituted for it.
+#
+# Nothing here yet: everything x86_64 currently builds is unconditional,
+# and kernel/conf/files.x86_64 lists it as "standard".

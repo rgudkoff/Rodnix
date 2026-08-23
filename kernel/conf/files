@@ -1,0 +1,50 @@
+# Core kernel: tasks, IPC, syscalls, locking, time, and the fabric.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+kernel/main.c                                standard
+kernel/syscall.c                             standard
+kernel/ipc.c                                 standard
+kernel/security.c                            standard
+kernel/loader.c                              standard
+kernel/kmod.c                                standard
+kernel/unix/uaccess/unix_uaccess.c           standard
+kernel/unix/fd/unix_fd.c                     standard
+kernel/unix/fd/file.c                        standard
+kernel/unix/fs/unix_fs.c                     standard
+kernel/unix/exec/unix_exec.c                 standard
+kernel/unix/process/unix_process.c           standard
+kernel/unix/process/unix_proc.c              standard
+kernel/posix/posix_syscall.c                 standard
+kernel/posix/posix_sys_ids.c                 standard
+kernel/posix/posix_sys_file.c                standard
+kernel/posix/posix_sys_proc.c                standard
+kernel/posix/posix_sys_vm.c                  standard
+kernel/posix/posix_sys_info.c                standard
+kernel/debug.c                               standard
+kernel/task.c                                standard
+kernel/kmutex.c                              standard
+kernel/giant.c                               standard
+kernel/witness.c                             standard
+kernel/hygiene.c                             standard
+kernel/ktime.c                               standard
+kernel/usb/usb.c                             standard
+kernel/linux/linux_errno.c                   standard
+kernel/linux/linux_compat.c                  standard
+kernel/fabric/fabric.c                       standard
+kernel/fabric/dispatcher.c                   standard
+kernel/fabric/spin.c                         standard
+kernel/fabric/service/net_service.c          standard
+kernel/fabric/service/block_service.c        standard
+kernel/fabric/service/platform_services.c    standard
+kernel/fabric/bus/virt.c                     standard
+kernel/fabric/bus/pci.c                      standard
+kernel/fabric/bus/usb.c                      standard
+kernel/fabric/bus/ps2.c                      standard
+kernel/input/input_core.c                    standard
+kernel/gfx/gfx.c                             standard
+kernel/gfx/gfx_console.c                     standard

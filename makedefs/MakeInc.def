@@ -1,0 +1,198 @@
+# Target selection and compiler flags.
+#
+# This file answers "how is it built": which architecture and toolchain, and
+# with which flags. What gets built is in <component>/conf/files; which of it
+# is enabled is in config/MASTER.
+
+# ===== Architecture =====
+
+ARCH      ?= x86_64
+TOOLCHAIN ?= gcc
+
+SUPPORTED_ARCHES     := x86_64 arm64 riscv64
+SUPPORTED_TOOLCHAINS := gcc clang
+
+ifeq ($(filter $(ARCH),$(SUPPORTED_ARCHES)),)
+$(error Unsupported ARCH '$(ARCH)'. Supported values: $(SUPPORTED_ARCHES))
+endif
+
+ifeq ($(filter $(TOOLCHAIN),$(SUPPORTED_TOOLCHAINS)),)
+$(error Unsupported TOOLCHAIN '$(TOOLCHAIN)'. Supported values: $(SUPPORTED_TOOLCHAINS))
+endif
+
+ARCH_DIR := $(ARCH)
+
+ifeq ($(ARCH),x86_64)
+TARGET_TRIPLE := x86_64-elf
+# Prohibit FPU, MMX and SSE inside the kernel: those register files belong to
+# user applications, and nothing here saves or restores them across a trap.
+# Mirrors FreeBSD sys/conf/kern.mk (amd64) and XNU's -msoft-float.
+#   gcc:   -mno-mmx implies -mno-3dnow; -mno-sse implies -mno-sse2/3/ssse3
+#          and -mfpmath=387
+#   clang: -mno-sse does not imply -mno-aes/-mno-avx, so name them too
+ARCH_CFLAGS = -m64 -mcmodel=kernel -mno-red-zone -mno-mmx -mno-sse -msoft-float
+ifeq ($(TOOLCHAIN),clang)
+ARCH_CFLAGS += -mno-aes -mno-avx
+endif
+# Nothing in the kernel unwinds: there are no C++ exceptions and the panic
+# path walks frame pointers, not .eh_frame. FreeBSD drops the tables on amd64
+# for the same reason.
+ARCH_CFLAGS += -fno-asynchronous-unwind-tables
+ARCH_ASFLAGS = -f elf64
+ARCH_LDFLAGS = -m elf_x86_64
+QEMU_SYSTEM  = qemu-system-x86_64
+else ifeq ($(ARCH),arm64)
+TARGET_TRIPLE := aarch64-elf
+ARCH_CFLAGS  =
+ARCH_ASFLAGS =
+ARCH_LDFLAGS =
+QEMU_SYSTEM  = qemu-system-aarch64
+else ifeq ($(ARCH),riscv64)
+TARGET_TRIPLE := riscv64-elf
+ARCH_CFLAGS  =
+ARCH_ASFLAGS =
+ARCH_LDFLAGS =
+QEMU_SYSTEM  = qemu-system-riscv64
+endif
+
+# ===== Toolchain =====
+
+ifeq ($(TOOLCHAIN),gcc)
+CROSS_COMPILE ?= $(TARGET_TRIPLE)-
+CC = $(CROSS_COMPILE)gcc
+LD = $(CROSS_COMPILE)ld
+COMMON_TC_CFLAGS =
+else ifeq ($(TOOLCHAIN),clang)
+CC = clang
+# Prefer ld.lld; fall back to lld (Homebrew LLVM on macOS exposes it as 'lld').
+_LLD := $(or $(shell command -v ld.lld 2>/dev/null),$(shell command -v lld 2>/dev/null),ld.lld)
+LD ?= $(_LLD)
+COMMON_TC_CFLAGS = --target=$(TARGET_TRIPLE)
+endif
+
+ifeq ($(ARCH),x86_64)
+AS = nasm
+else
+AS = $(CC)
+endif
+
+# ===== Configuration =====
+#
+# config/MASTER names the options this kernel is built with. They select
+# sources in the component manifests ("optional <NAME>") and reach the
+# compiler as -D<NAME>, so C code and the build agree on one list.
+
+MASTER_FILES := $(wildcard config/MASTER config/MASTER.$(ARCH))
+OPTIONS      := $(shell $(AWK) -f makedefs/master.awk $(MASTER_FILES))
+
+ifneq ($(filter __CONF_ERROR__,$(OPTIONS)),)
+$(error config/MASTER: parse errors above)
+endif
+
+CONFIG_DEFINES = $(addprefix -D,$(OPTIONS))
+
+# ===== Standard headers =====
+#
+# The kernel is freestanding: it may use the compiler's own headers -- it
+# uses stdint.h, stddef.h, stdbool.h and stdarg.h -- and nothing else. A
+# toolchain that also ships target libc headers, such as a newlib-enabled
+# x86_64-elf-gcc, or clang falling back to /usr/include on a Linux host,
+# would otherwise resolve #include <...> against a libc this kernel has no
+# implementation of, and the mismatch would surface as a link error far from
+# its cause. Note that -nostdlib, which was already here, is a link-time flag
+# and never affected the header search at all.
+#
+# On this host neither compiler searches anything but its own resource
+# directory, so this changes nothing today. It keeps it that way.
+
+ifeq ($(TOOLCHAIN),clang)
+NOSTDINC = -nostdlibinc
+else
+_GCC_INCDIR := $(shell $(CC) -print-file-name=include 2>/dev/null)
+ifneq ($(wildcard $(_GCC_INCDIR)/stdint.h),)
+NOSTDINC = -nostdinc -isystem $(_GCC_INCDIR)
+else
+$(warning cannot locate the freestanding headers of $(CC); leaving the default include path in place)
+NOSTDINC =
+endif
+endif
+
+# ===== Include path =====
+
+INCLUDES = -I./include \
+           -I./fs \
+           -I./init \
+           -I./lib \
+           -I./mm \
+           -I./net \
+           -I./sched \
+           -I./console \
+           -I./trace \
+           -I./shell \
+           -I./idl \
+           -I./kernel/core \
+           -I./kernel/arch \
+           -I./kernel/arch/$(ARCH_DIR) \
+           -I./kernel/fabric \
+           -I./kernel/input
+
+# ===== Flags =====
+#
+# Warnings are kept apart from the rest so a component or a single object can
+# relax them without also losing the code-generation flags, the way XNU splits
+# CFLAGS from CWARNFLAGS.
+
+CWARNFLAGS = -Wall -Wextra
+
+# -fno-strict-aliasing: the kernel reinterprets memory through differently
+#   typed pointers all over the VM and the network stack. At -O2 the compiler
+#   is otherwise entitled to assume it never happens. FreeBSD adds this flag
+#   automatically whenever COPTFLAGS asks for -O2 or higher.
+# -fwrapv: signed overflow is undefined in C, and the optimizer exploits it;
+#   the kernel relies on wraparound instead.
+# -fno-common: a duplicated definition must be a link error, not a silently
+#   merged symbol. Default since GCC 10, named here so it does not depend on
+#   which compiler happens to be installed.
+# -fno-omit-frame-pointer: panic_backtrace() in kernel/debug.c walks the RBP
+#   chain, so a complete chain is a correctness property of the panic path,
+#   not an optimization preference. Both compilers already keep the frame
+#   pointer here -- measured: the flag changes zero instructions -- which is
+#   exactly why it is worth naming, since nothing else records that the
+#   kernel depends on it.
+
+CFLAGS = $(COMMON_TC_CFLAGS) \
+         $(ARCH_CFLAGS) \
+         -std=c11 \
+         -ffreestanding \
+         $(NOSTDINC) \
+         -fno-strict-aliasing \
+         -fwrapv \
+         -fno-common \
+         -fno-omit-frame-pointer \
+         -fno-stack-protector \
+         -fno-builtin \
+         -nostdlib \
+         -O2 \
+         -g \
+         -MMD \
+         -MP \
+         $(CONFIG_DEFINES) \
+         $(INCLUDES)
+
+ASFLAGS = $(ARCH_ASFLAGS)
+LDFLAGS = $(ARCH_LDFLAGS) -T link.ld --no-warn-mismatch -z max-page-size=0x1000
+
+# ===== Output layout =====
+
+BUILD_ROOT = build
+ISO_ROOT   = iso
+BUILD_DIR  = $(BUILD_ROOT)/$(ARCH)
+ISO_DIR    = $(ISO_ROOT)/$(ARCH)
+
+KERNEL_BIN = $(BUILD_DIR)/rodnix.kernel
+ISO_OUT    = $(BUILD_DIR)/rodnix.iso
+
+USERLAND_DIR       = userland
+USERLAND_ROOTFS    = $(USERLAND_DIR)/rootfs
+USERLAND_BUILD_DIR = $(USERLAND_DIR)/build/$(ARCH)
+INITRD_IMG         = $(BUILD_DIR)/initrd.img

@@ -1,0 +1,14 @@
+# Virtual memory and the physical page allocator.
+#
+# Machine-independent sources. Anything that builds for one
+# architecture only belongs in files.<arch> next to this file.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+mm/vm_object.c                               standard
+mm/vm_page.c                                 standard
+mm/vm_phys.c                                 standard
+mm/vm_pager.c                                standard
+mm/vm_map.c                                  standard
+mm/vm_fault.c                                standard

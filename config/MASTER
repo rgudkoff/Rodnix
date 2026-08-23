@@ -1,0 +1,15 @@
+# RodNIX kernel configuration -- machine-independent options.
+#
+# This file answers "what is this kernel", separately from "how is it
+# built" (makedefs/) and "what files exist" (<component>/conf/files).
+# It is the RodNIX counterpart of XNU's config/MASTER and FreeBSD's
+# sys/<arch>/conf/GENERIC.
+#
+# Each line here does two things: it lets a manifest select sources with
+# "optional <NAME>", and it reaches the compiler as -D<NAME>. Turning an
+# option off means commenting the line out, so the file always reads as a
+# list of what is in, never a list of what was taken out.
+#
+# Machine-dependent options belong in config/MASTER.<arch>.
+
+options		IDL_DEMO	# in-kernel IDL round-trip demonstration

@@ -1,0 +1,8 @@
+# Core kernel: tasks, IPC, syscalls, locking, time, and the fabric.
+#
+# Sources built only for riscv64.
+#
+# Paths are relative to the source root. See makedefs/files.awk for
+# the format and config/MASTER for the option names.
+
+kernel/arch/riscv64/interrupts.c             standard
