@@ -30,6 +30,7 @@ KERNEL_C_SRCS += \
 	kernel/hygiene.c \
 	mm/vm_object.c \
 	mm/vm_page.c \
+	mm/vm_phys.c \
 	mm/vm_pager.c \
 	mm/vm_map.c \
 	mm/vm_fault.c \

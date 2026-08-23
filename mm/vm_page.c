@@ -38,9 +38,12 @@ void vm_page_init(uint64_t mem_start, uint64_t mem_end, void* array)
 
     for (uint64_t i = 0; i < g_count; i++) {
         g_pages[i].ref_count = 0;
+        g_pages[i].fq_next = VM_PAGE_NIL;
+        g_pages[i].fq_prev = VM_PAGE_NIL;
         g_pages[i].wire_count = 0;
         g_pages[i].queue = VM_PQ_NONE;
         g_pages[i].zone = 0;
+        g_pages[i].order = VM_NFREEORDER;
     }
 }
 
@@ -63,6 +66,31 @@ uint64_t vm_page_phys(const vm_page_t* m)
         return 0;
     }
     return g_mem_start + ((uint64_t)(m - g_pages) << VM_PAGE_SHIFT);
+}
+
+vm_page_t* vm_page_from_pfn(uint64_t pfn)
+{
+    return vm_page_lookup(pfn << VM_PAGE_SHIFT);
+}
+
+uint64_t vm_page_index(const vm_page_t* m)
+{
+    return (!g_pages || !m) ? 0 : (uint64_t)(m - g_pages);
+}
+
+vm_page_t* vm_page_at_index(uint64_t index)
+{
+    return (g_pages && index < g_count) ? &g_pages[index] : NULL;
+}
+
+uint64_t vm_page_first_pfn(void)
+{
+    return g_mem_start >> VM_PAGE_SHIFT;
+}
+
+uint64_t vm_page_end_pfn(void)
+{
+    return g_mem_end >> VM_PAGE_SHIFT;
 }
 
 int vm_page_hold(uint64_t phys)

@@ -24,6 +24,8 @@
 #include "../kernel/core/giant.h"
 #include "../kernel/core/witness.h"
 #include "../kernel/core/hygiene.h"
+#include "../mm/vm_phys.h"
+#include "../include/common.h"
 #include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
 #include "../kernel/arch/x86_64/smp.h"
@@ -578,6 +580,12 @@ kernel_enable_runtime_interrupts(void)
 
     klog("kernel", "interrupts enabled\n");
     witness_selftest();
+    {
+        const boot_info_t* bi = boot_get_info();
+        if (bi && bi->cmdline[0] && strstr(bi->cmdline, "rdnx.vmphys=selftest")) {
+            vm_phys_selftest();
+        }
+    }
     witness_summary();
     hygiene_report();
     bootlog_mark("interrupts", "enable_done");

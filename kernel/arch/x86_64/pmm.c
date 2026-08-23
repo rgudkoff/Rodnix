@@ -2,7 +2,7 @@
  * @file pmm.c
  * @brief Physical Memory Manager (PMM) implementation for x86_64
  * 
- * This module implements physical memory management using a bitmap-based
+ * This module implements physical memory management using buddy free lists
  * allocator. It tracks free and used physical pages and provides allocation
  * and deallocation functions.
  * 
@@ -17,6 +17,7 @@
 #include "../../../include/error.h"
 #include "../../core/memory.h"
 #include "../../../mm/vm_page.h"
+#include "../../../mm/vm_phys.h"
 #include "../../../trace/bootlog.h"
 #include "../../../include/console.h"
 #include <stddef.h>
@@ -47,15 +48,9 @@
 #define MB2_MMAP_NVS       4
 #define MB2_MMAP_BADRAM    5
 
-/* Fixed bitmap storage cap (matches low-memory placement) */
+/* Retained only to size the bootstrap allocation memory.c makes for us. */
 #define PMM_BITMAP_MAX_SIZE 0x100000ULL
-#define PMM_MAX_FREE_RANGES 128
 #define PMM_MAX_REGIONS     128
-
-typedef struct {
-    uint64_t start;
-    uint64_t count;
-} pmm_free_range_t;
 
 /**
  * @struct pmm_state
@@ -65,9 +60,6 @@ struct pmm_state {
     uint64_t total_pages;        /* Total number of physical pages */
     uint64_t free_pages;         /* Number of free pages */
     uint64_t used_pages;         /* Number of used pages */
-    uint64_t bitmap_start;       /* Physical address of bitmap start */
-    uint64_t bitmap_size;        /* Size of bitmap in bytes */
-    uint32_t* bitmap;            /* Pointer to bitmap (virtual address) */
     uint64_t memory_start;       /* Start of managed memory */
     uint64_t memory_end;         /* End of managed memory */
     /* One entry per physical page, owned by the machine-independent layer
@@ -80,23 +72,7 @@ struct pmm_state {
         uint64_t total_pages;
         uint64_t free_pages;
         uint64_t used_pages;
-        uint32_t free_range_count;
-        pmm_free_range_t free_ranges[PMM_MAX_FREE_RANGES];
     } zones[PMM_ZONE_COUNT];
-
-    /* Set once pmm_init() has built the free lists. Before it, the lists are
-     * still being assembled and every range operation is followed by a full
-     * rebuild anyway; maintaining them incrementally in that window would be
-     * work thrown away. After it, the rebuild is what we are trying not to
-     * do, so the lists are kept up to date one run at a time instead. */
-    bool freelist_live;
-
-    /* Times the allocator fell through to a bitmap scan because the free
-     * lists did not describe enough memory -- they hold PMM_MAX_FREE_RANGES
-     * entries and silently drop the rest. That path is O(total pages) twice
-     * over, so it is the one remaining place a single allocation can cost
-     * milliseconds. Counted rather than assumed not to happen. */
-    uint64_t fallback_allocs;
 
     pmm_region_t usable_regions[PMM_MAX_REGIONS];
     pmm_region_t reserved_regions[PMM_MAX_REGIONS];
@@ -120,62 +96,26 @@ struct mb2_mmap_entry {
  * ============================================================================ */
 
 /**
- * @function pmm_bitmap_set
- * @brief Set a bit in the bitmap (mark page as used)
- * 
- * @param page_index Page index (0-based)
- */
-static void pmm_bitmap_set(uint64_t page_index)
-{
-    uint64_t word_index = page_index / BITS_PER_WORD;
-    uint32_t bit_index = page_index % BITS_PER_WORD;
-    
-    if (word_index < (pmm_state.bitmap_size / sizeof(uint32_t))) {
-        pmm_state.bitmap[word_index] |= (1U << bit_index);
-    }
-}
-
-/**
- * @function pmm_bitmap_clear
- * @brief Clear a bit in the bitmap (mark page as free)
- * 
- * @param page_index Page index (0-based)
- */
-static void pmm_bitmap_clear(uint64_t page_index)
-{
-    uint64_t word_index = page_index / BITS_PER_WORD;
-    uint32_t bit_index = page_index % BITS_PER_WORD;
-    
-    if (word_index < (pmm_state.bitmap_size / sizeof(uint32_t))) {
-        pmm_state.bitmap[word_index] &= ~(1U << bit_index);
-    }
-}
-
-/**
- * @function pmm_bitmap_test
- * @brief Test if a bit is set in the bitmap
- * 
- * @param page_index Page index (0-based)
- * @return true if page is used, false if free
- */
-static bool pmm_bitmap_test(uint64_t page_index)
-{
-    uint64_t word_index = page_index / BITS_PER_WORD;
-    uint32_t bit_index = page_index % BITS_PER_WORD;
-    
-    if (word_index < (pmm_state.bitmap_size / sizeof(uint32_t))) {
-        return (pmm_state.bitmap[word_index] & (1U << bit_index)) != 0;
-    }
-    return true; /* Out of range, consider as used */
-}
-
-/**
  * @function pmm_page_to_index
  * @brief Convert physical address to page index
  * 
  * @param phys Physical address
  * @return Page index
  */
+/*
+ * Is this page in the allocator's hands?
+ *
+ * This replaces the page bitmap, which was a second record of the same fact.
+ * The buddy already knows -- a page is free exactly when some free block
+ * covers it -- and asking costs a walk of at most VM_NFREEORDER aligned bases
+ * rather than a bit test. Bounded, and one source of truth instead of two that
+ * can disagree.
+ */
+static inline bool pmm_page_is_free(uint64_t phys)
+{
+    return vm_phys_is_free(phys);
+}
+
 static uint64_t pmm_page_to_index(uint64_t phys)
 {
     if (phys < pmm_state.memory_start) {
@@ -191,18 +131,7 @@ static uint64_t pmm_page_to_index(uint64_t phys)
  * @param index Page index
  * @return Physical address
  */
-static uint64_t pmm_index_to_page(uint64_t index)
-{
-    return pmm_state.memory_start + (index * PAGE_SIZE);
-}
 
-static void pmm_bitmap_set_all(void)
-{
-    uint64_t bitmap_words = pmm_state.bitmap_size / sizeof(uint32_t);
-    for (uint64_t i = 0; i < bitmap_words; i++) {
-        pmm_state.bitmap[i] = 0xFFFFFFFFU;
-    }
-}
 
 static void pmm_zero_page(uint64_t phys)
 {
@@ -212,10 +141,14 @@ static void pmm_zero_page(uint64_t phys)
     }
 }
 
+/* Where the low zone ends. A buddy block is naturally aligned and this is a
+ * power of two, so no block ever straddles it. */
+#define PMM_LOW_ZONE_LIMIT 0x1000000ULL
+
 static inline pmm_zone_t pmm_zone_for_addr(uint64_t addr)
 {
     /* Simple split: low memory below 16MB, everything else is normal. */
-    if (addr < 0x1000000ULL) {
+    if (addr < PMM_LOW_ZONE_LIMIT) {
         return PMM_ZONE_LOW;
     }
     return PMM_ZONE_NORMAL;
@@ -269,119 +202,9 @@ static void pmm_mark_range_mmio(uint64_t start, uint64_t end)
     }
 }
 
-static void pmm_freelist_clear(void)
-{
-    for (int z = 0; z < PMM_ZONE_COUNT; z++) {
-        pmm_state.zones[z].free_range_count = 0;
-    }
-}
 
-static void pmm_freelist_append(pmm_zone_t zone, uint64_t start, uint64_t count)
-{
-    if (count == 0) {
-        return;
-    }
-    if (pmm_state.zones[zone].free_range_count >= PMM_MAX_FREE_RANGES) {
-        return;
-    }
-    pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[pmm_state.zones[zone].free_range_count++];
-    r->start = start;
-    r->count = count;
-}
 
-static void pmm_freelist_insert(pmm_zone_t zone, uint64_t start, uint64_t count)
-{
-    if (count == 0) {
-        return;
-    }
 
-    uint32_t n = pmm_state.zones[zone].free_range_count;
-    if (n == 0) {
-        pmm_freelist_append(zone, start, count);
-        return;
-    }
-
-    uint32_t pos = 0;
-    while (pos < n && pmm_state.zones[zone].free_ranges[pos].start < start) {
-        pos++;
-    }
-
-    if (n >= PMM_MAX_FREE_RANGES) {
-        return;
-    }
-
-    for (uint32_t i = n; i > pos; i--) {
-        pmm_state.zones[zone].free_ranges[i] = pmm_state.zones[zone].free_ranges[i - 1];
-    }
-    pmm_state.zones[zone].free_ranges[pos].start = start;
-    pmm_state.zones[zone].free_ranges[pos].count = count;
-    pmm_state.zones[zone].free_range_count++;
-
-    /* Merge with previous/next if adjacent */
-    if (pos > 0) {
-        pmm_free_range_t* prev = &pmm_state.zones[zone].free_ranges[pos - 1];
-        pmm_free_range_t* cur = &pmm_state.zones[zone].free_ranges[pos];
-        if (prev->start + prev->count == cur->start) {
-            prev->count += cur->count;
-            for (uint32_t i = pos; i + 1 < pmm_state.zones[zone].free_range_count; i++) {
-                pmm_state.zones[zone].free_ranges[i] = pmm_state.zones[zone].free_ranges[i + 1];
-            }
-            pmm_state.zones[zone].free_range_count--;
-            pos--;
-        }
-    }
-    if (pos + 1 < pmm_state.zones[zone].free_range_count) {
-        pmm_free_range_t* cur = &pmm_state.zones[zone].free_ranges[pos];
-        pmm_free_range_t* next = &pmm_state.zones[zone].free_ranges[pos + 1];
-        if (cur->start + cur->count == next->start) {
-            cur->count += next->count;
-            for (uint32_t i = pos + 1; i + 1 < pmm_state.zones[zone].free_range_count; i++) {
-                pmm_state.zones[zone].free_ranges[i] = pmm_state.zones[zone].free_ranges[i + 1];
-            }
-            pmm_state.zones[zone].free_range_count--;
-        }
-    }
-}
-
-static bool pmm_freelist_remove(pmm_zone_t zone, uint64_t start, uint64_t count)
-{
-    if (count == 0) {
-        return false;
-    }
-    uint32_t n = pmm_state.zones[zone].free_range_count;
-    for (uint32_t i = 0; i < n; i++) {
-        pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
-        if (start >= r->start && start + count <= r->start + r->count) {
-            uint64_t tail_start = start + count;
-            uint64_t tail_count = (r->start + r->count) - tail_start;
-            uint64_t head_count = start - r->start;
-
-            if (head_count > 0 && tail_count > 0) {
-                r->count = head_count;
-                if (pmm_state.zones[zone].free_range_count < PMM_MAX_FREE_RANGES) {
-                    for (uint32_t j = n; j > i + 1; j--) {
-                        pmm_state.zones[zone].free_ranges[j] = pmm_state.zones[zone].free_ranges[j - 1];
-                    }
-                    pmm_state.zones[zone].free_ranges[i + 1].start = tail_start;
-                    pmm_state.zones[zone].free_ranges[i + 1].count = tail_count;
-                    pmm_state.zones[zone].free_range_count++;
-                }
-            } else if (head_count > 0) {
-                r->count = head_count;
-            } else if (tail_count > 0) {
-                r->start = tail_start;
-                r->count = tail_count;
-            } else {
-                for (uint32_t j = i; j + 1 < n; j++) {
-                    pmm_state.zones[zone].free_ranges[j] = pmm_state.zones[zone].free_ranges[j + 1];
-                }
-                pmm_state.zones[zone].free_range_count--;
-            }
-            return true;
-        }
-    }
-    return false;
-}
 
 /*
  * Take a run of pages out of the free lists, however many listed ranges it
@@ -398,76 +221,7 @@ static bool pmm_freelist_remove(pmm_zone_t zone, uint64_t start, uint64_t count)
  * scan jumps to the next listed range rather than stepping page by page
  * through a hole.
  */
-static void pmm_freelist_remove_run(pmm_zone_t zone, uint64_t start, uint64_t count)
-{
-    while (count > 0) {
-        uint32_t n = pmm_state.zones[zone].free_range_count;
-        uint64_t chunk = 0;
-        uint64_t next_listed = 0;
-        bool hit = false;
 
-        for (uint32_t i = 0; i < n; i++) {
-            pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
-            if (start >= r->start && start < r->start + r->count) {
-                uint64_t avail = (r->start + r->count) - start;
-                chunk = (count < avail) ? count : avail;
-                hit = true;
-                break;
-            }
-            if (r->start > start && (next_listed == 0 || r->start < next_listed)) {
-                next_listed = r->start;
-            }
-        }
-
-        if (hit) {
-            pmm_freelist_remove(zone, start, chunk);
-            start += chunk;
-            count -= chunk;
-            continue;
-        }
-
-        if (next_listed == 0 || next_listed >= start + count) {
-            return;   /* nothing left of this run is listed */
-        }
-        count -= (next_listed - start);
-        start = next_listed;
-    }
-}
-
-static void pmm_rebuild_free_lists(void)
-{
-    pmm_freelist_clear();
-
-    uint64_t run_start = 0;
-    uint64_t run_count = 0;
-    pmm_zone_t run_zone = PMM_ZONE_NORMAL;
-
-    for (uint64_t i = 0; i < pmm_state.total_pages; i++) {
-        if (!pmm_bitmap_test(i)) {
-            uint64_t phys = pmm_index_to_page(i);
-            pmm_zone_t zone = pmm_zone_for_addr(phys);
-            if (run_count == 0) {
-                run_start = i;
-                run_count = 1;
-                run_zone = zone;
-            } else if (zone == run_zone && run_start + run_count == i) {
-                run_count++;
-            } else {
-                pmm_freelist_append(run_zone, run_start, run_count);
-                run_start = i;
-                run_count = 1;
-                run_zone = zone;
-            }
-        } else if (run_count > 0) {
-            pmm_freelist_append(run_zone, run_start, run_count);
-            run_count = 0;
-        }
-    }
-
-    if (run_count > 0) {
-        pmm_freelist_append(run_zone, run_start, run_count);
-    }
-}
 
 /*
  * Carve storage for the page array out of physical memory and hand it to the
@@ -492,7 +246,11 @@ static void pmm_setup_page_descs(uint64_t memory_start, uint64_t memory_end,
 {
     uint64_t total_pages = (memory_end - memory_start) / PAGE_SIZE;
     uint64_t desc_size = (uint64_t)vm_page_array_bytes(memory_start, memory_end);
-    uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
+    /* Where the page bitmap used to live. It is gone -- the buddy answers
+     * "is this page free" on its own -- so this reclaims the space rather
+     * than starting after it. */
+    (void)bitmap_size;
+    uint64_t desc_phys = (bitmap_phys + 7) & ~7ULL;
 
     if (desc_size == 0 || desc_phys + desc_size > PMM_DIRECT_MAP_LIMIT) {
         /*
@@ -532,6 +290,14 @@ static void pmm_setup_page_descs(uint64_t memory_start, uint64_t memory_end,
          (unsigned long long)desc_phys);
 }
 
+/*
+ * Hand a range to the allocator.
+ *
+ * Only the pages that were not already free are handed over, and they go in
+ * runs: vm_phys_free_run() decomposes a run into naturally aligned blocks, so
+ * a megabyte costs the handful of blocks it decomposes into rather than a
+ * page at a time.
+ */
 static void pmm_mark_range_free(uint64_t start, uint64_t end)
 {
     if (end <= start) {
@@ -549,55 +315,40 @@ static void pmm_mark_range_free(uint64_t start, uint64_t end)
     start = (start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     end = end & ~(PAGE_SIZE - 1);
 
-    /* Mirror of pmm_mark_range_used(): runs that actually became free are
-     * inserted, and pmm_freelist_insert() merges them with their neighbours,
-     * so the list stays as compact as a rebuild would have left it. */
     uint64_t run_start = 0;
-    uint64_t run_count = 0;
-    pmm_zone_t run_zone = PMM_ZONE_NORMAL;
+    uint64_t run_pages = 0;
 
     for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
-        uint64_t index = pmm_page_to_index(addr);
-        bool flipped = false;
-        if (pmm_bitmap_test(index)) {
-            pmm_bitmap_clear(index);
+        if (!pmm_page_is_free(addr)) {
+            if (run_pages == 0) {
+                run_start = addr;
+            }
+            run_pages++;
             pmm_state.free_pages++;
             pmm_state.used_pages--;
-            if (index < pmm_state.pages_count) {
-                pmm_state.pages[index].queue = VM_PQ_FREE;
-                pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
-                pmm_state.zones[zone].free_pages++;
+            pmm_zone_t zone = pmm_zone_for_addr(addr);
+            pmm_state.zones[zone].free_pages++;
+            if (pmm_state.zones[zone].used_pages > 0) {
                 pmm_state.zones[zone].used_pages--;
             }
-            flipped = true;
-        }
-
-        if (!pmm_state.freelist_live) {
-            continue;
-        }
-
-        pmm_zone_t z = pmm_zone_for_addr(addr);
-        if (flipped && run_count > 0 && z == run_zone &&
-            run_start + run_count == index) {
-            run_count++;
-            continue;
-        }
-        if (run_count > 0) {
-            pmm_freelist_insert(run_zone, run_start, run_count);
-            run_count = 0;
-        }
-        if (flipped) {
-            run_start = index;
-            run_count = 1;
-            run_zone = z;
+        } else if (run_pages > 0) {
+            vm_phys_free_run(run_start, run_pages);
+            run_pages = 0;
         }
     }
-
-    if (run_count > 0) {
-        pmm_freelist_insert(run_zone, run_start, run_count);
+    if (run_pages > 0) {
+        vm_phys_free_run(run_start, run_pages);
     }
 }
 
+/*
+ * Take a range out of the allocator's hands.
+ *
+ * A buddy has no natural way to reserve an arbitrary range -- it deals in
+ * aligned blocks -- so each page is removed by splitting whatever block
+ * contains it, which is what vm_phys_unfree() is for. Bounded per page, and
+ * proportional to the range rather than to the size of memory.
+ */
 static void pmm_mark_range_used(uint64_t start, uint64_t end)
 {
     if (end <= start) {
@@ -616,59 +367,25 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
     end = (end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
 
     /*
-     * Runs of pages that this call actually flipped, applied to the free lists
-     * as we go. The alternative -- and what this replaced -- was to rebuild
-     * every list from the whole bitmap afterwards, which is O(all memory)
-     * whatever the size of the range, and was measured at 2 ms with interrupts
-     * masked for a range of a few megabytes.
-     *
-     * Only pages that changed state are collected: a range that was already
-     * reserved is not in any free list, and asking to remove it would be work
-     * with no effect.
+     * Accounted per zone, so the range is split at the zone boundary and each
+     * part taken in one call. Blocks, not pages: see vm_phys_unfree_range().
      */
-    uint64_t run_start = 0;
-    uint64_t run_count = 0;
-    pmm_zone_t run_zone = PMM_ZONE_NORMAL;
-
-    for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
-        uint64_t index = pmm_page_to_index(addr);
-        bool flipped = false;
-        if (!pmm_bitmap_test(index)) {
-            pmm_bitmap_set(index);
-            pmm_state.free_pages--;
-            pmm_state.used_pages++;
-            if (index < pmm_state.pages_count) {
-                pmm_state.pages[index].queue = VM_PQ_NONE;
-                pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
-                pmm_state.zones[zone].free_pages--;
-                pmm_state.zones[zone].used_pages++;
-            }
-            flipped = true;
+    uint64_t addr = start;
+    while (addr < end) {
+        pmm_zone_t zone = pmm_zone_for_addr(addr);
+        uint64_t chunk_end = end;
+        if (zone == PMM_ZONE_LOW && end > PMM_LOW_ZONE_LIMIT) {
+            chunk_end = PMM_LOW_ZONE_LIMIT;
         }
 
-        if (!pmm_state.freelist_live) {
-            continue;
+        uint64_t took = vm_phys_unfree_range(addr, (chunk_end - addr) / PAGE_SIZE);
+        pmm_state.free_pages -= took;
+        pmm_state.used_pages += took;
+        if (pmm_state.zones[zone].free_pages >= took) {
+            pmm_state.zones[zone].free_pages -= took;
+            pmm_state.zones[zone].used_pages += took;
         }
-
-        pmm_zone_t z = pmm_zone_for_addr(addr);
-        if (flipped && run_count > 0 && z == run_zone &&
-            run_start + run_count == index) {
-            run_count++;
-            continue;
-        }
-        if (run_count > 0) {
-            pmm_freelist_remove_run(run_zone, run_start, run_count);
-            run_count = 0;
-        }
-        if (flipped) {
-            run_start = index;
-            run_count = 1;
-            run_zone = z;
-        }
-    }
-
-    if (run_count > 0) {
-        pmm_freelist_remove_run(run_zone, run_start, run_count);
+        addr = chunk_end;
     }
 }
 
@@ -709,176 +426,78 @@ static void pmm_report_zones(void)
         if (pmm_state.zones[z].total_pages == 0) {
             continue;
         }
-        klog("pmm", "zone %-6s total=%llu free=%llu used=%llu ranges=%u\n",
+        uint64_t blocks = 0;
+        uint32_t largest = 0;
+        for (uint32_t o = 0; o < VM_NFREEORDER; o++) {
+            uint64_t n = vm_phys_free_blocks((uint8_t)z, o);
+            blocks += n;
+            if (n) {
+                largest = o;
+            }
+        }
+        klog("pmm", "zone %-6s total=%llu free=%llu used=%llu "
+             "blocks=%llu largest=%lluKiB\n",
              names[z],
              (unsigned long long)pmm_state.zones[z].total_pages,
              (unsigned long long)pmm_state.zones[z].free_pages,
              (unsigned long long)pmm_state.zones[z].used_pages,
-             (unsigned)pmm_state.zones[z].free_range_count);
+             (unsigned long long)blocks,
+             (unsigned long long)(((1ULL << largest) * PAGE_SIZE) / 1024u));
     }
 }
 
+/*
+ * Fallback initialisation, for a bootloader that supplies no memory map.
+ *
+ * Everything between memory_start and memory_end is assumed usable, which is
+ * exactly as optimistic as it sounds and is why it is the fallback. It used to
+ * be four times this length, most of it clearing a bitmap and narrating the
+ * clearing; the bitmap is gone and the narration went with it.
+ */
 int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
 {
-    extern void kputs(const char* str);
-
-    kputs("[PMM-1] Entry\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-2] Check params\n");
-    __asm__ volatile ("" ::: "memory");
     if (!bitmap_virt || memory_end <= memory_start) {
         return RDNX_E_INVALID;
     }
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-3] Align boundaries\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Align to page boundaries */
+
     memory_start = (memory_start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     memory_end = memory_end & ~(PAGE_SIZE - 1);
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-4] Calculate pages\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Calculate number of pages */
-    kputs("[PMM-4.1] Calc total_bytes\n");
-    __asm__ volatile ("" ::: "memory");
-    uint64_t total_bytes = memory_end - memory_start;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-4.2] Calc total_pages\n");
-    __asm__ volatile ("" ::: "memory");
-    uint64_t total_pages = total_bytes / PAGE_SIZE;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-4.3] Pages calculated\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-5] Calculate bitmap size\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Calculate bitmap size (1 bit per page) */
-    kputs("[PMM-5.1] Calc bitmap_size\n");
-    __asm__ volatile ("" ::: "memory");
-    uint64_t bitmap_size = (total_pages + BITS_PER_BYTE - 1) / BITS_PER_BYTE;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-5.2] Align bitmap_size\n");
-    __asm__ volatile ("" ::: "memory");
-    bitmap_size = (bitmap_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1); /* Align to page */
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-5.3] Bitmap size calculated\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6] Init state\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Initialize state */
-    kputs("[PMM-6.1] Set total_pages\n");
-    __asm__ volatile ("" ::: "memory");
+
+    uint64_t total_pages = (memory_end - memory_start) / PAGE_SIZE;
     pmm_state.total_pages = total_pages;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.2] Set free_pages\n");
-    __asm__ volatile ("" ::: "memory");
-    pmm_state.free_pages = total_pages;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.3] Set used_pages\n");
-    __asm__ volatile ("" ::: "memory");
-    pmm_state.used_pages = 0;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.4] Set bitmap\n");
-    __asm__ volatile ("" ::: "memory");
-    pmm_state.bitmap = (uint32_t*)bitmap_virt;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.5] Set bitmap_size\n");
-    __asm__ volatile ("" ::: "memory");
-    pmm_state.bitmap_size = bitmap_size;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.6] Set memory_start\n");
-    __asm__ volatile ("" ::: "memory");
+    pmm_state.free_pages = 0;
+    pmm_state.used_pages = total_pages;
     pmm_state.memory_start = memory_start;
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-6.7] Set memory_end\n");
-    __asm__ volatile ("" ::: "memory");
     pmm_state.memory_end = memory_end;
-    __asm__ volatile ("" ::: "memory");
 
     pmm_regions_clear();
-
     for (int z = 0; z < PMM_ZONE_COUNT; z++) {
         pmm_state.zones[z].total_pages = 0;
         pmm_state.zones[z].free_pages = 0;
         pmm_state.zones[z].used_pages = 0;
     }
-    
-    kputs("[PMM-6.8] State initialized\n");
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-7] Clear bitmap\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Clear bitmap (mark all pages as free) - efficient clearing */
-    /* Use volatile pointer to prevent optimization issues */
-    volatile uint32_t* bitmap_ptr = (volatile uint32_t*)pmm_state.bitmap;
-    uint64_t bitmap_words = bitmap_size / sizeof(uint32_t);
-    
-    /* Clear in chunks to avoid long loops (batched operations) */
-    const uint64_t chunk_size = 1024; /* Clear 1024 words at a time */
-    uint64_t chunks = bitmap_words / chunk_size;
-    uint64_t remainder = bitmap_words % chunk_size;
-    
-    kputs("[PMM-7.1] Clear chunks\n");
-    __asm__ volatile ("" ::: "memory");
-    for (uint64_t chunk = 0; chunk < chunks; chunk++) {
-        uint64_t start = chunk * chunk_size;
-        for (uint64_t i = 0; i < chunk_size; i++) {
-            bitmap_ptr[start + i] = 0;
-        }
-        __asm__ volatile ("" ::: "memory");
-    }
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-7.2] Clear remainder\n");
-    __asm__ volatile ("" ::: "memory");
-    /* Clear remainder */
-    uint64_t start = chunks * chunk_size;
-    for (uint64_t i = 0; i < remainder; i++) {
-        bitmap_ptr[start + i] = 0;
-    }
-    __asm__ volatile ("" ::: "memory");
-    
-    kputs("[PMM-OK] Done\n");
 
+    vm_phys_init();
     pmm_setup_page_descs(memory_start, memory_end,
-                         (uint64_t)((uintptr_t)bitmap_virt),
-                         bitmap_size);
-    if (pmm_state.pages_count > 0) {
-        for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
-            pmm_state.pages[i].queue = VM_PQ_FREE;
-            pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
-            pmm_state.zones[zone].total_pages++;
-            pmm_state.zones[zone].free_pages++;
-        }
+                         X86_64_VIRT_TO_PHYS(bitmap_virt), 0);
+
+    for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
+        pmm_state.zones[pmm_state.pages[i].zone].total_pages++;
+        pmm_state.zones[pmm_state.pages[i].zone].used_pages++;
     }
+
+    pmm_mark_range_free(memory_start, memory_end);
+
+    /* Whatever the page array occupies is not memory to hand out. */
+    uint64_t desc_phys = X86_64_VIRT_TO_PHYS(bitmap_virt);
+    uint64_t desc_size = (uint64_t)vm_page_array_bytes(memory_start, memory_end);
+    pmm_mark_range_used(desc_phys, desc_phys + desc_size);
+    pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
+                   desc_phys, desc_size);
 
     pmm_add_region(pmm_state.usable_regions, &pmm_state.usable_count,
                    memory_start, memory_end - memory_start);
 
-    pmm_rebuild_free_lists();
-    /*
-     * Same two lines as the mmap path, and their absence here was a real bug:
-     * without freelist_live the incremental maintenance that replaced the full
-     * rebuild never runs, so pmm_reserve_range() would mark pages used in the
-     * bitmap and leave them listed as free, and the allocator would hand out
-     * reserved memory. Invisible because this path only runs when the
-     * bootloader supplies no memory map, which ours always does.
-     */
-    pmm_state.freelist_live = true;
     pmm_report_zones();
     return 0;
 }
@@ -914,12 +533,13 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     pmm_state.total_pages = total_pages;
     pmm_state.free_pages = 0;
     pmm_state.used_pages = total_pages;
-    pmm_state.bitmap = (uint32_t*)bitmap_virt;
-    pmm_state.bitmap_size = bitmap_size;
+    (void)bitmap_virt;
     pmm_state.memory_start = memory_start;
     pmm_state.memory_end = memory_end;
-    /* Mark all pages as used, then free only available ranges */
-    pmm_bitmap_set_all();
+    /* Everything starts in use: a vm_page is created with no free block
+     * covering it, so the available ranges below are the only thing that puts
+     * memory into the allocator. */
+    vm_phys_init();
 
     pmm_regions_clear();
 
@@ -979,20 +599,15 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         free_off += entry_size;
     }
 
-    /* Keep bitmap and descriptors reserved */
-    pmm_mark_range_used(bitmap_phys, bitmap_phys + bitmap_size);
-    pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
-                   bitmap_phys, bitmap_size);
+    /* Keep the page array reserved. */
     if (pmm_state.pages_count > 0) {
         uint64_t desc_size = (uint64_t)vm_page_array_bytes(pmm_state.memory_start, pmm_state.memory_end);
-        uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
+        uint64_t desc_phys = (bitmap_phys + 7) & ~7ULL;
         pmm_mark_range_used(desc_phys, desc_phys + desc_size);
         pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
                        desc_phys, desc_size);
     }
 
-    pmm_rebuild_free_lists();
-    pmm_state.freelist_live = true;
     pmm_report_zones();
     return RDNX_OK;
 }
@@ -1030,6 +645,7 @@ static spinlock_t pmm_spin;
 static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone);
 static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count);
 static void pmm_free_page_locked(uint64_t phys);
+static void pmm_free_pages_locked(uint64_t phys, uint32_t count);
 
 static uint64_t pmm_alloc_page_locked(void){
     uint64_t phys = pmm_alloc_page_in_zone_locked(PMM_ZONE_NORMAL);
@@ -1050,54 +666,7 @@ uint64_t pmm_alloc_page(void)
 
 
 static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone){
-    if (pmm_state.free_pages == 0 || zone >= PMM_ZONE_COUNT) {
-        TRACE_EVENT("oom: pmm_alloc_page");
-        memory_oom_inc_pmm();
-        return 0;
-    }
-
-    uint32_t n = pmm_state.zones[zone].free_range_count;
-    uint64_t index = 0;
-    bool found = false;
-    if (n > 0) {
-        pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[0];
-        index = r->start;
-        found = pmm_freelist_remove(zone, index, 1);
-    }
-    if (!found) {
-        for (uint64_t i = 0; i < pmm_state.total_pages; i++) {
-            if (!pmm_bitmap_test(i)) {
-                uint64_t phys = pmm_index_to_page(i);
-                if (pmm_zone_for_addr(phys) == zone) {
-                    index = i;
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-    if (!found) {
-        TRACE_EVENT("oom: pmm_alloc_page");
-        memory_oom_inc_pmm();
-        return 0;
-    }
-
-    pmm_bitmap_set(index);
-    pmm_state.free_pages--;
-    pmm_state.used_pages++;
-
-    uint64_t phys = pmm_index_to_page(index);
-    pmm_zero_page(phys);
-
-    if (index < pmm_state.pages_count) {
-        pmm_state.pages[index].queue = VM_PQ_NONE;
-        if (pmm_state.zones[zone].free_pages > 0) {
-            pmm_state.zones[zone].free_pages--;
-            pmm_state.zones[zone].used_pages++;
-        }
-    }
-
-    return phys;
+    return pmm_alloc_pages_in_zone_locked(zone, 1);
 }
 
 uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
@@ -1119,31 +688,7 @@ uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
  * @note The address must be page-aligned and within managed range.
  */
 static void pmm_free_page_locked(uint64_t phys){
-    if (phys < pmm_state.memory_start || phys >= pmm_state.memory_end) {
-        return; /* Invalid address */
-    }
-    
-    if ((phys & (PAGE_SIZE - 1)) != 0) {
-        return; /* Not page-aligned */
-    }
-    
-    uint64_t index = pmm_page_to_index(phys);
-    
-    if (pmm_bitmap_test(index)) {
-        /* Mark as free */
-        pmm_bitmap_clear(index);
-        pmm_state.free_pages++;
-        pmm_state.used_pages--;
-        pmm_zone_t zone = pmm_zone_for_addr(phys);
-        if (index < pmm_state.pages_count) {
-            pmm_state.pages[index].queue = VM_PQ_FREE;
-            pmm_state.zones[zone].free_pages++;
-            if (pmm_state.zones[zone].used_pages > 0) {
-                pmm_state.zones[zone].used_pages--;
-            }
-        }
-        pmm_freelist_insert(zone, index, 1);
-    }
+    pmm_free_pages_locked(phys, 1);
 }
 
 void pmm_free_page(uint64_t phys)
@@ -1187,83 +732,26 @@ uint64_t pmm_alloc_pages(uint32_t count)
 
 
 
+/*
+ * The whole point of this stage lives in these few lines.
+ *
+ * What it replaces walked a 128-entry range array and, when that no longer
+ * described enough memory, scanned every page of the bitmap and then rebuilt
+ * every list from it -- twice O(all memory), for one page, with interrupts
+ * masked. Here the cost is at most VM_NFREEORDER splits, whatever the state of
+ * memory, which is the difference between an allocator with a worst case and
+ * one without.
+ */
 static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
     if (count == 0 || zone >= PMM_ZONE_COUNT) {
         return 0;
     }
-    if (pmm_state.free_pages < count) {
+
+    uint64_t phys = vm_phys_alloc((uint8_t)zone, count);
+    if (!phys) {
+        TRACE_EVENT("oom: pmm_alloc_pages");
+        memory_oom_inc_pmm();
         return 0;
-    }
-
-    uint32_t n = pmm_state.zones[zone].free_range_count;
-    for (uint32_t i = 0; i < n; i++) {
-        pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
-        if (r->count >= count) {
-            uint64_t start = r->start;
-            if (!pmm_freelist_remove(zone, start, count)) {
-                return 0;
-            }
-            for (uint32_t p = 0; p < count; p++) {
-                uint64_t idx = start + p;
-                pmm_bitmap_set(idx);
-                if (idx < pmm_state.pages_count) {
-                    pmm_state.pages[idx].queue = VM_PQ_NONE;
-                }
-            }
-
-            pmm_state.free_pages -= count;
-            pmm_state.used_pages += count;
-            if (pmm_state.zones[zone].free_pages >= count) {
-                pmm_state.zones[zone].free_pages -= count;
-                pmm_state.zones[zone].used_pages += count;
-            }
-
-            uint64_t phys = pmm_index_to_page(start);
-            for (uint32_t p = 0; p < count; p++) {
-                pmm_zero_page(phys + (uint64_t)p * PAGE_SIZE);
-            }
-
-            return pmm_index_to_page(start);
-        }
-    }
-
-    /*
-     * Fallback path: if free-list metadata is stale/trimmed, scan bitmap
-     * directly for a contiguous run in the requested zone.
-     */
-    uint64_t run_start = 0;
-    uint32_t run_count = 0;
-    bool found = false;
-    for (uint64_t i = 0; i < pmm_state.total_pages; i++) {
-        if (pmm_bitmap_test(i)) {
-            run_count = 0;
-            continue;
-        }
-        uint64_t phys = pmm_index_to_page(i);
-        if (pmm_zone_for_addr(phys) != zone) {
-            run_count = 0;
-            continue;
-        }
-        if (run_count == 0) {
-            run_start = i;
-        }
-        run_count++;
-        if (run_count >= count) {
-            found = true;
-            break;
-        }
-    }
-
-    if (!found) {
-        return 0;
-    }
-
-    for (uint32_t p = 0; p < count; p++) {
-        uint64_t idx = run_start + p;
-        pmm_bitmap_set(idx);
-        if (idx < pmm_state.pages_count) {
-            pmm_state.pages[idx].queue = VM_PQ_NONE;
-        }
     }
 
     pmm_state.free_pages -= count;
@@ -1273,31 +761,9 @@ static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
         pmm_state.zones[zone].used_pages += count;
     }
 
-    uint64_t phys = pmm_index_to_page(run_start);
-    for (uint32_t p = 0; p < count; p++) {
-        pmm_zero_page(phys + (uint64_t)p * PAGE_SIZE);
+    for (uint32_t i = 0; i < count; i++) {
+        pmm_zero_page(phys + ((uint64_t)i * PAGE_SIZE));
     }
-
-    /*
-     * Re-sync free-list metadata after bitmap fallback allocation.
-     *
-     * Still a full rebuild, and still O(all memory) under a masked lock --
-     * this is the one path where a single allocation can cost milliseconds.
-     * It survives because it is the recovery for a description that has gone
-     * incomplete, and shrinking the window means giving the free lists a
-     * bound that does not depend on how fragmented memory is. That is a
-     * different change.
-     *
-     * Made loud rather than left latent: on this workload it never fires, and
-     * "never observed" is only worth something if we would notice.
-     */
-    pmm_state.fallback_allocs++;
-    if (pmm_state.fallback_allocs == 1) {
-        kprintf("[pmm] free lists exhausted (%u ranges) — falling back to a "
-                "bitmap scan; this rebuilds every list under a masked lock\n",
-                (unsigned)PMM_MAX_FREE_RANGES);
-    }
-    pmm_rebuild_free_lists();
     return phys;
 }
 
@@ -1315,13 +781,9 @@ static void pmm_reserve_range_locked(uint64_t start, uint64_t end){
     if (end <= start) {
         return;
     }
-
     pmm_mark_range_used(start, end);
     pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
                    start, end - start);
-    /* No rebuild: pmm_mark_range_used() has already taken the affected runs
-     * out of the free lists, at a cost proportional to the range rather than
-     * to the size of memory. */
 }
 
 void pmm_reserve_range(uint64_t start, uint64_t end)
@@ -1357,8 +819,44 @@ void pmm_release_range(uint64_t start, uint64_t end)
  * @param count Number of pages to free
  */
 static void pmm_free_pages_locked(uint64_t phys, uint32_t count){
+    if (count == 0 || (phys & (PAGE_SIZE - 1)) != 0) {
+        return;
+    }
+    if (phys < pmm_state.memory_start ||
+        phys + ((uint64_t)count * PAGE_SIZE) > pmm_state.memory_end) {
+        return;
+    }
+
+    /* Freeing what is already free would corrupt the buddy lists, so each page
+     * is checked. The check is the same bounded search the allocator uses, not
+     * a second record of the same fact. */
+    uint64_t run_start = 0;
+    uint64_t run_pages = 0;
     for (uint32_t i = 0; i < count; i++) {
-        pmm_free_page_locked(phys + i * PAGE_SIZE);
+        uint64_t addr = phys + ((uint64_t)i * PAGE_SIZE);
+        if (pmm_page_is_free(addr)) {
+            DEBUG_WARN("pmm: double free of page %llx", (unsigned long long)addr);
+            if (run_pages > 0) {
+                vm_phys_free_run(run_start, run_pages);
+                run_pages = 0;
+            }
+            continue;
+        }
+        if (run_pages == 0) {
+            run_start = addr;
+        }
+        run_pages++;
+
+        pmm_state.free_pages++;
+        pmm_state.used_pages--;
+        pmm_zone_t zone = pmm_zone_for_addr(addr);
+        pmm_state.zones[zone].free_pages++;
+        if (pmm_state.zones[zone].used_pages > 0) {
+            pmm_state.zones[zone].used_pages--;
+        }
+    }
+    if (run_pages > 0) {
+        vm_phys_free_run(run_start, run_pages);
     }
 }
 
@@ -1415,24 +913,36 @@ int pmm_get_zone_stats(pmm_zone_t zone, pmm_zone_stats_t* out)
     return RDNX_OK;
 }
 
+/*
+ * Free memory as the allocator actually holds it: one entry per free block,
+ * largest first. It used to report the 128-entry range array, which silently
+ * described only part of memory once it overflowed.
+ */
 int pmm_get_free_regions(pmm_zone_t zone, pmm_region_t* out, uint32_t max,
                          uint32_t* out_count)
 {
-    if (!out_count || zone >= PMM_ZONE_COUNT) {
+    if (!out || !out_count || zone >= PMM_ZONE_COUNT) {
         return RDNX_E_INVALID;
     }
-    uint32_t n = pmm_state.zones[zone].free_range_count;
-    if (!out || max == 0) {
-        *out_count = n;
-        return RDNX_OK;
+
+    uint32_t n = 0;
+    uint64_t f = spinlock_lock_irqsave(&pmm_spin);
+    for (int order = VM_NFREEORDER - 1; order >= 0 && n < max; order--) {
+        for (uint32_t i = vm_phys_block_first((uint8_t)zone, (uint32_t)order);
+             i != VM_PAGE_NIL && n < max;
+             i = vm_phys_block_next(i)) {
+            vm_page_t* m = vm_page_at_index(i);
+            if (!m) {
+                break;
+            }
+            out[n].base = vm_page_phys(m);
+            out[n].length = (1ULL << order) * PAGE_SIZE;
+            n++;
+        }
     }
-    uint32_t count = (n < max) ? n : max;
-    for (uint32_t i = 0; i < count; i++) {
-        const pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
-        out[i].base = pmm_index_to_page(r->start);
-        out[i].length = r->count * PAGE_SIZE;
-    }
-    *out_count = count;
+    spinlock_unlock_irqrestore(&pmm_spin, f);
+
+    *out_count = n;
     return RDNX_OK;
 }
 

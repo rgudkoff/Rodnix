@@ -43,11 +43,28 @@ enum {
     VM_PQ_LAUNDRY,    /* dirty: needs writing before it can be reused */
 };
 
+/* Neighbour links are array indices rather than pointers: half the width, and
+ * the array is the only thing they can point into anyway. */
+#define VM_PAGE_NIL 0xFFFFFFFFu
+
+/* Buddy orders. A block is 2^order pages, so this caps a block at 16 MB --
+ * which is also where the low memory zone ends, and that is not a coincidence:
+ * an order-12 block is 16 MB aligned, so no block can straddle the boundary
+ * and coalescing never has to check. */
+#define VM_NFREEORDER 13
+
 typedef struct vm_page {
     /* Mappings and object references that hold this page. Atomic rather than
      * lock-protected: it is read and written on the fault path from every
      * processor, and the only ordering it needs is its own. */
     uint32_t ref_count;
+
+    /* Free list neighbours. Doubly linked because coalescing removes a buddy
+     * from the middle of a list, and a singly linked list would make that a
+     * walk -- which would put an unbounded term back into the one path this
+     * stage exists to bound. */
+    uint32_t fq_next;
+    uint32_t fq_prev;
 
     /* Nonzero means the page may never be taken back, whatever the pressure.
      * Nothing sets it yet; it is what the realtime promise will be built on. */
@@ -55,6 +72,14 @@ typedef struct vm_page {
 
     uint8_t queue;   /* VM_PQ_* */
     uint8_t zone;    /* physical zone, as the allocator sees it */
+
+    /* Size of the free block this page heads, or VM_NFREEORDER for a page that
+     * heads nothing -- allocated, or in the middle of somebody else's block.
+     * The two cases are told apart by searching upwards for a head that covers
+     * this page, which is bounded by VM_NFREEORDER. Same encoding as FreeBSD's
+     * vm_page.order, and for the same reason: marking every page of a block
+     * would make freeing a large block cost its size. */
+    uint8_t order;
 } vm_page_t;
 
 /*
@@ -78,6 +103,15 @@ bool vm_page_ready(void);
  * boot path runs before the array exists. */
 vm_page_t* vm_page_lookup(uint64_t phys);
 uint64_t   vm_page_phys(const vm_page_t* m);
+
+/* By absolute page frame number, i.e. phys >> 12. The allocator works in these
+ * because buddy alignment is relative to physical zero, not to wherever
+ * managed memory happens to begin. */
+vm_page_t* vm_page_from_pfn(uint64_t pfn);
+uint64_t   vm_page_index(const vm_page_t* m);
+vm_page_t* vm_page_at_index(uint64_t index);
+uint64_t   vm_page_first_pfn(void);
+uint64_t   vm_page_end_pfn(void);
 
 /*
  * Take and drop a reference. The last drop returns the page to the physical
