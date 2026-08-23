@@ -38,6 +38,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "../kernel/core/witness.h"
+#include "../kernel/core/hygiene.h"
 
 /* ============================================================================
  * Shell Constants
@@ -978,6 +979,22 @@ struct shell_command {
  * out from under Giant. Printed after a workload it is a specification; before
  * one it is nearly empty, which is itself the honest answer.
  */
+/*
+ * The latency windows this kernel actually produced.
+ *
+ * The number that matters to the product is here rather than in any
+ * throughput figure: at 48 kHz with a 64-sample buffer the period is 1.33 ms,
+ * so a worst-case masked window is a direct statement about whether audio can
+ * run at that buffer size.
+ */
+static int shell_cmd_hygiene(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    hygiene_report();
+    return 0;
+}
+
 static int shell_cmd_witness(int argc, char** argv)
 {
     (void)argc;
@@ -1011,6 +1028,7 @@ static const struct shell_command commands[] = {
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
     {"run",     shell_cmd_run,     "Run userland program"},
     {"witness", shell_cmd_witness, "Show the learned lock order graph"},
+    {"hygiene", shell_cmd_hygiene, "Show worst interrupt/preemption latency windows"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };

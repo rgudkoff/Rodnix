@@ -33,6 +33,7 @@
 #include <stdint.h>
 
 #include "cpu_topology.h"
+#include "../../core/hygiene.h"
 
 struct task;
 struct thread;
@@ -218,18 +219,33 @@ static inline uint32_t percpu_apic_id(void)
 }
 
 /* Preemption control. Nesting counts, so a lock taken inside another lock
- * does not re-enable switching when the inner one is dropped. */
+ * does not re-enable switching when the inner one is dropped.
+ *
+ * The outermost transition -- 0 to 1 and back -- is also the boundary of a
+ * latency window: for as long as the count is nonzero this processor will not
+ * switch away, whoever is waiting. Measuring it here rather than at each of a
+ * hundred lock sites is the whole reason the count exists in one place.
+ * hygiene_enabled() is a plain global read so the cost when it is off is a
+ * predictable branch. */
 static inline void percpu_preempt_disable(void)
 {
-    percpu_self()->preempt_count++;
+    struct percpu* p = percpu_self();
+    if (p->preempt_count++ == 0 && hygiene_enabled()) {
+        hygiene_preempt_begin();
+    }
     __asm__ volatile ("" ::: "memory");
 }
 
 static inline void percpu_preempt_enable(void)
 {
     __asm__ volatile ("" ::: "memory");
-    if (percpu_self()->preempt_count > 0) {
-        percpu_self()->preempt_count--;
+    struct percpu* p = percpu_self();
+    if (p->preempt_count > 0) {
+        if (--p->preempt_count == 0 && hygiene_enabled()) {
+            /* After the count has reached zero, so the reporting path may take
+             * locks of its own without re-entering this window. */
+            hygiene_preempt_end();
+        }
     }
 }
 

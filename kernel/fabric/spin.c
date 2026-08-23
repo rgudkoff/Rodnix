@@ -6,6 +6,7 @@
 #include "spin.h"
 #include "../core/cpu.h"
 #include "../core/witness.h"
+#include "../core/hygiene.h"
 #include "../arch/percpu.h"
 #include "../../include/debug.h"
 #include "../../include/console.h"
@@ -15,25 +16,77 @@
  * contention.
  *
  * A spinlock here protects tens of instructions; the longest legitimate hold
- * in this kernel is a filesystem metadata update, still microseconds. Four
- * hundred million pauses is seconds even under emulation -- four orders of
- * magnitude of headroom -- so a spin that reaches it is not slow, it is
- * stuck.
+ * in this kernel is a filesystem metadata update, still microseconds. One
+ * second is six orders of magnitude of headroom, so a spin that reaches it is
+ * not slow, it is stuck.
  *
- * This exists because the alternative is what we have been debugging: a
- * machine that stops with nothing on the wire. A deadlock is the one failure
- * that produces no output at all, which makes it the one most worth spending
- * a counter on. FreeBSD reaches the same conclusion in _mtx_lock_spin_failed.
+ * It is a second of *time*, from the TSC, and not a count of pause
+ * instructions. The first version of this counted pauses, which was wrong in
+ * two ways worth naming: a pause costs a different number of cycles under
+ * emulation than on hardware, so the "seconds of headroom" in its comment
+ * were unfounded; and an interrupt landing mid-spin was charged to the lock,
+ * so a busy machine could trip a threshold that a quiet one would not. XNU
+ * makes the same distinction explicitly -- its spin state carries hwss_irq_*
+ * alongside the deadline, and its hygiene paths re-check the net duration
+ * before panicking. This does both.
+ *
+ * The whole thing exists because a deadlock is the one failure that produces
+ * no output at all, which makes it the one most worth spending a counter on.
+ * FreeBSD reaches the same conclusion in _mtx_lock_spin_failed.
  */
-#define SPIN_TIMEOUT_PAUSES 400000000ULL
+#define SPIN_TIMEOUT_US       1000000ULL
+/* Backstop for the window before the TSC is calibrated, where a deadline
+ * cannot be computed at all. Deliberately huge: its job is to stop an infinite
+ * hang, not to measure anything. */
+#define SPIN_TIMEOUT_PAUSES   4000000000ULL
+/* rdtsc is not free, so the deadline is only consulted every so many spins.
+ * An uncontended acquire never reaches the check at all. */
+#define SPIN_CHECK_MASK       0xFFFu
+
+#define SPIN_NO_DEADLINE      0xFFFFFFFFFFFFFFFFULL
+
+static uint64_t g_spin_timeout_ticks;
+
+static uint64_t spin_timeout_ticks(void)
+{
+    uint64_t t = g_spin_timeout_ticks;
+    if (t == 0) {
+        uint64_t hz = cpu_get_frequency();
+        /* Resolved lazily rather than from an init hook: the first contended
+         * spin is long after calibration, and a lock that is taken before it
+         * still gets the backstop. */
+        t = hz ? ((hz / 1000000ULL) * SPIN_TIMEOUT_US) : SPIN_NO_DEADLINE;
+        g_spin_timeout_ticks = t;
+    }
+    return t;
+}
+
+/* State of one waiting session. Nothing is sampled until the spin has already
+ * gone on long enough to be worth timing. */
+struct spin_wait {
+    uint64_t spins;
+    uint64_t started;    /* TSC at the first check; 0 until then */
+    uint64_t irq_base;   /* handler time on this CPU at that moment */
+};
 
 __attribute__((noreturn))
 static void spin_timeout(spinlock_t* lock, const char* name,
-                         const char* file, int line)
+                         const char* file, int line,
+                         uint64_t gross, uint64_t net)
 {
     uint32_t owner = lock->owner_plus_one;
+    uint64_t hz = cpu_get_frequency();
+    uint64_t us = hz ? ((net * 1000000ULL) / hz) : 0;
+    uint64_t irq_us = hz ? (((gross - net) * 1000000ULL) / hz) : 0;
+
     kprintf("\n[SPIN] cpu%u stuck on %s (%s:%d)\n",
             (unsigned)cpu_get_id(), name ? name : "?", file, line);
+    if (hz) {
+        kprintf("[SPIN] waiting %lluus, of which %lluus was interrupt time\n",
+                (unsigned long long)us, (unsigned long long)irq_us);
+    } else {
+        kprintf("[SPIN] TSC not calibrated -- pause-count backstop fired\n");
+    }
     if (owner) {
         kprintf("[SPIN] held by cpu%u\n", (unsigned)(owner - 1u));
     } else {
@@ -43,6 +96,41 @@ static void spin_timeout(spinlock_t* lock, const char* name,
     witness_dump_graph();
     panicf("spinlock %s: spin timeout on cpu%u",
            name ? name : "?", (unsigned)cpu_get_id());
+}
+
+/* One iteration of waiting. Returns having either paused, or panicked. */
+static inline void spin_wait_step(struct spin_wait* w, spinlock_t* lock,
+                                  const char* name, const char* file, int line)
+{
+    __asm__ volatile ("pause");
+
+    if ((++w->spins & SPIN_CHECK_MASK) != 0) {
+        return;
+    }
+
+    if (w->started == 0) {
+        w->started = cpu_get_time();
+        w->irq_base = hygiene_irq_ticks();
+        return;
+    }
+
+    uint64_t limit = spin_timeout_ticks();
+    if (limit != SPIN_NO_DEADLINE) {
+        uint64_t gross = cpu_get_time() - w->started;
+        if (gross >= limit) {
+            /* Second check on the net duration, so an interrupt storm during
+             * the wait is not reported as a stuck lock. */
+            uint64_t irq = hygiene_irq_ticks() - w->irq_base;
+            uint64_t net = (gross > irq) ? (gross - irq) : 0;
+            if (net >= limit) {
+                spin_timeout(lock, name, file, line, gross, net);
+            }
+        }
+    }
+
+    if (w->spins >= SPIN_TIMEOUT_PAUSES) {
+        spin_timeout(lock, name, file, line, 0, 0);
+    }
 }
 
 void spinlock_init(spinlock_t* lock)
@@ -87,12 +175,9 @@ void spinlock_lock_named(spinlock_t* lock, const char* name,
     /* Before the acquire, so a reversal is reported rather than entered. */
     (void)witness_check(&lock->witness_id, name, file, line);
 
-    uint64_t spins = 0;
+    struct spin_wait w = { 0, 0, 0 };
     while (__sync_lock_test_and_set(&lock->locked, 1)) {
-        __asm__ volatile ("pause");
-        if (++spins == SPIN_TIMEOUT_PAUSES) {
-            spin_timeout(lock, name, file, line);
-        }
+        spin_wait_step(&w, lock, name, file, line);
     }
     lock->owner_plus_one = me;
     witness_acquired(&lock->witness_id, lock, name, file, line);
@@ -136,11 +221,20 @@ bool spinlock_trylock_named(spinlock_t* lock, const char* name,
 }
 
 
+/* IF in RFLAGS. Whether it was set before the cli is what says this is the
+ * outermost mask -- the one that actually starts a window -- rather than a
+ * nested one that extends nothing. */
+#define RFLAGS_IF (1ULL << 9)
+
 uint64_t spinlock_lock_irqsave_named(spinlock_t* lock, const char* name,
                                      const char* file, int line)
 {
     uint64_t flags;
     __asm__ volatile ("pushfq\n\tpopq %0\n\tcli" : "=r"(flags) :: "memory");
+
+    if ((flags & RFLAGS_IF) && hygiene_enabled()) {
+        hygiene_int_begin(file, line);
+    }
 
     if (lock) {
         uint32_t me = cpu_get_id() + 1u;
@@ -151,12 +245,9 @@ uint64_t spinlock_lock_irqsave_named(spinlock_t* lock, const char* name,
 
         (void)witness_check(&lock->witness_id, name, file, line);
 
-        uint64_t spins = 0;
+        struct spin_wait w = { 0, 0, 0 };
         while (__sync_lock_test_and_set(&lock->locked, 1)) {
-            __asm__ volatile ("pause");
-            if (++spins == SPIN_TIMEOUT_PAUSES) {
-                spin_timeout(lock, name, file, line);
-            }
+            spin_wait_step(&w, lock, name, file, line);
         }
         lock->owner_plus_one = me;
         witness_acquired(&lock->witness_id, lock, name, file, line);
@@ -172,6 +263,12 @@ void spinlock_unlock_irqrestore(spinlock_t* lock, uint64_t flags)
         witness_release(lock);
         lock->owner_plus_one = 0;
         __sync_lock_release(&lock->locked);
+    }
+    /* Closed before the flags go back, so the measurement covers the whole
+     * masked region and the reporting inside it does not run with interrupts
+     * unexpectedly on. */
+    if ((flags & RFLAGS_IF) && hygiene_enabled()) {
+        hygiene_int_end();
     }
     __asm__ volatile ("pushq %0\n\tpopfq" :: "r"(flags) : "memory", "cc");
 }

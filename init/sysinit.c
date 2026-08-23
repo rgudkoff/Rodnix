@@ -23,6 +23,7 @@
 #include "../kernel/arch/percpu.h"
 #include "../kernel/core/giant.h"
 #include "../kernel/core/witness.h"
+#include "../kernel/core/hygiene.h"
 #include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
 #include "../kernel/arch/x86_64/smp.h"
@@ -56,7 +57,15 @@ static int
 sysinit_cpu(void)
 {
     extern int cpu_init(void);
-    return cpu_init();
+    int rc = cpu_init();
+    /*
+     * After cpu_init() rather than with the other early registrations, and
+     * that ordering is load-bearing: cpu_init() is what calibrates the TSC,
+     * and without a frequency a latency threshold cannot be stated in time at
+     * all. Registered at SI_ORDER_FIRST, percpu_init runs before this.
+     */
+    hygiene_init();
+    return rc;
 }
 
 static int
@@ -570,6 +579,7 @@ kernel_enable_runtime_interrupts(void)
     klog("kernel", "interrupts enabled\n");
     witness_selftest();
     witness_summary();
+    hygiene_report();
     bootlog_mark("interrupts", "enable_done");
     __asm__ volatile ("" ::: "memory");
 }

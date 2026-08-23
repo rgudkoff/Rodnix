@@ -10,6 +10,7 @@
  */
 
 #include "../../../include/console.h"
+#include "../../core/hygiene.h"
 
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
@@ -576,5 +577,27 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
 /* The one entry point from assembly, for every vector. */
 interrupt_frame_t* interrupt_entry(interrupt_frame_t* regs)
 {
-    return interrupt_dispatch(regs);
+    /*
+     * The gate cleared IF, so a handler's running time is time this processor
+     * is unavailable to everyone else -- the same latency window as a masked
+     * region, just entered by hardware. Measured here because this is the one
+     * place every vector passes through.
+     *
+     * The syscall gate is left out on purpose: the fast SYSCALL path does not
+     * come through here, so counting only the int 0x80 half would produce a
+     * number for "syscall duration" that is true of some syscalls and not
+     * others. Syscall latency wants its own measurement at its own two
+     * entries, and is currently unmeasured.
+     */
+    uint32_t vector = regs->int_no;
+    bool measured = hygiene_enabled() && vector != SYSCALL_VECTOR;
+
+    if (measured) {
+        hygiene_irq_enter(vector);
+    }
+    interrupt_frame_t* out = interrupt_dispatch(regs);
+    if (measured) {
+        hygiene_irq_exit(vector);
+    }
+    return out;
 }
