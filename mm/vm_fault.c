@@ -1,7 +1,7 @@
 #include "vm_fault.h"
 #include "vm_map.h"
 #include "vm_pager.h"
-#include "vm_page_ref.h"
+#include "vm_page.h"
 #include "../kernel/arch/paging.h"
 #include "../kernel/arch/config.h"
 #include "../include/console.h"
@@ -76,7 +76,7 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
                                        va,
                                        new_phys,
                                        vm_pte_flags_from_prot(e->prot));
-        (void)vm_page_ref_release(current_phys); /* Drop this mapping's old COW reference. */
+        (void)vm_page_drop(current_phys); /* Drop this mapping's old COW reference. */
         return RDNX_OK;
     }
 
@@ -90,7 +90,7 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
             phys = vm_object_get_resident_page(e->object, obj_page_idx);
             if (phys) {
                 has_obj_page = 1;
-                (void)vm_page_ref_retain(phys); /* New mapping reference. */
+                (void)vm_page_hold(phys); /* New mapping reference. */
             }
         }
         if (!has_obj_page) {

@@ -1,5 +1,5 @@
 #include "vm_pager.h"
-#include "vm_page_ref.h"
+#include "vm_page.h"
 #include "../kernel/arch/pmm.h"
 #include "../kernel/arch/config.h"
 #include "../include/common.h"
@@ -12,6 +12,6 @@ uint64_t vm_pager_alloc_zero_page(void)
     }
     void* dst = ARCH_PHYS_TO_VIRT(phys);
     memset(dst, 0, ARCH_PAGE_SIZE_4KB);
-    (void)vm_page_ref_add_new(phys);
+    (void)vm_page_hold(phys);
     return phys;
 }

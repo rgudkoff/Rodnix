@@ -29,7 +29,7 @@ KERNEL_C_SRCS += \
 	kernel/witness.c \
 	kernel/hygiene.c \
 	mm/vm_object.c \
-	mm/vm_page_ref.c \
+	mm/vm_page.c \
 	mm/vm_pager.c \
 	mm/vm_map.c \
 	mm/vm_fault.c \

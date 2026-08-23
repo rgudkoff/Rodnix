@@ -1,5 +1,5 @@
 #include "vm_object.h"
-#include "vm_page_ref.h"
+#include "vm_page.h"
 #include "../lib/heap.h"
 #include "../kernel/arch/config.h"
 #include "../include/common.h"
@@ -69,7 +69,7 @@ void vm_object_unref(vm_object_t* obj)
             for (uint64_t i = 0; i < obj->page_count; i++) {
                 uint64_t phys = obj->resident_pages[i];
                 if (phys) {
-                    (void)vm_page_ref_release(phys); /* Drop vm_object ownership ref. */
+                    (void)vm_page_drop(phys); /* Drop vm_object ownership ref. */
                     obj->resident_pages[i] = 0;
                 }
             }
@@ -106,9 +106,9 @@ int vm_object_set_resident_page(vm_object_t* obj, uint64_t page_index, uint64_t 
         return RDNX_OK;
     }
     if (old) {
-        (void)vm_page_ref_release(old);
+        (void)vm_page_drop(old);
     }
-    (void)vm_page_ref_retain(phys);
+    (void)vm_page_hold(phys);
     obj->resident_pages[page_index] = phys;
     return RDNX_OK;
 }

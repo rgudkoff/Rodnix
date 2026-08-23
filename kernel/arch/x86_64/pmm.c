@@ -16,6 +16,8 @@
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
 #include "../../core/memory.h"
+#include "../../../mm/vm_page.h"
+#include "../../../trace/bootlog.h"
 #include "../../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>
@@ -50,23 +52,10 @@
 #define PMM_MAX_FREE_RANGES 128
 #define PMM_MAX_REGIONS     128
 
-/* Page descriptor states */
-typedef enum {
-    PMM_PAGE_FREE = 0,
-    PMM_PAGE_USED = 1
-} pmm_page_state_t;
-
 typedef struct {
     uint64_t start;
     uint64_t count;
 } pmm_free_range_t;
-
-typedef struct {
-    uint64_t phys;
-    uint8_t zone;
-    uint8_t state;
-    uint16_t reserved;
-} pmm_page_desc_t;
 
 /**
  * @struct pmm_state
@@ -81,8 +70,12 @@ struct pmm_state {
     uint32_t* bitmap;            /* Pointer to bitmap (virtual address) */
     uint64_t memory_start;       /* Start of managed memory */
     uint64_t memory_end;         /* End of managed memory */
-    pmm_page_desc_t* pages;      /* Page descriptors */
-    uint64_t pages_count;        /* Number of page descriptors */
+    /* One entry per physical page, owned by the machine-independent layer
+     * (mm/vm_page.h). This layer allocates the storage -- it is the one that
+     * knows where physical memory is and how to address it -- and then only
+     * writes the two fields that describe residency. */
+    vm_page_t* pages;
+    uint64_t pages_count;
     struct {
         uint64_t total_pages;
         uint64_t free_pages;
@@ -476,33 +469,67 @@ static void pmm_rebuild_free_lists(void)
     }
 }
 
+/*
+ * Carve storage for the page array out of physical memory and hand it to the
+ * machine-independent layer.
+ *
+ * It has to be carved rather than allocated: the allocator cannot run until
+ * this exists, and this cannot exist until there is somewhere to put it. Both
+ * references bootstrap the same way.
+ *
+ * The old limit was the first 16 MB, which meant a machine with 4 GB got no
+ * descriptors at all -- silently, and the allocator then ran without any of
+ * the per-page state it thought it had. The real constraint is the higher-half
+ * direct map, which boot.S builds for the first gigabyte (PDPT1[510] -> PD0):
+ * above that, X86_64_PHYS_TO_VIRT does not name mapped memory. That is a
+ * separate limit worth lifting on its own, and it is not this one.
+ */
+#define PMM_DIRECT_MAP_LIMIT 0x40000000ULL   /* 1 GiB, per boot.S */
+
 static void pmm_setup_page_descs(uint64_t memory_start, uint64_t memory_end,
                                  uint64_t bitmap_phys,
                                  uint64_t bitmap_size)
 {
-    uint64_t total_bytes = memory_end - memory_start;
-    uint64_t total_pages = total_bytes / PAGE_SIZE;
-    uint64_t desc_size = total_pages * sizeof(pmm_page_desc_t);
+    uint64_t total_pages = (memory_end - memory_start) / PAGE_SIZE;
+    uint64_t desc_size = (uint64_t)vm_page_array_bytes(memory_start, memory_end);
     uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
 
-    /* If descriptors do not fit safely in low memory, skip for now. */
-    if (desc_phys + desc_size > 0x1000000ULL) {
-        pmm_state.pages = NULL;
-        pmm_state.pages_count = 0;
-        return;
+    if (desc_size == 0 || desc_phys + desc_size > PMM_DIRECT_MAP_LIMIT) {
+        /*
+         * Fatal, where the old code carried on.
+         *
+         * It could carry on because reference counts lived in a side table
+         * that worked whether or not the descriptors existed. They live in
+         * this array now, so without it nothing counts references, nothing is
+         * ever freed, and the machine dies of a leak somewhere else entirely.
+         * Stopping here says which thing was missing.
+         *
+         * At eight bytes per page the array is memory/512, so this is
+         * reachable somewhere past a couple of hundred gigabytes -- and then
+         * the thing to fix is the size of the direct map, not this check.
+         */
+        panicf("pmm: page array needs %llu KiB at %llx, past the %llu MiB "
+               "direct map",
+               (unsigned long long)(desc_size / 1024u),
+               (unsigned long long)desc_phys,
+               (unsigned long long)(PMM_DIRECT_MAP_LIMIT / (1024u * 1024u)));
     }
 
-    /* Descriptors are placed in low memory; access via higher-half direct map. */
-    pmm_state.pages = (pmm_page_desc_t*)X86_64_PHYS_TO_VIRT(desc_phys);
+    void* kva = X86_64_PHYS_TO_VIRT(desc_phys);
+    vm_page_init(memory_start, memory_end, kva);
+
+    pmm_state.pages = (vm_page_t*)kva;
     pmm_state.pages_count = total_pages;
 
     for (uint64_t i = 0; i < total_pages; i++) {
-        uint64_t phys = memory_start + (i * PAGE_SIZE);
-        pmm_state.pages[i].phys = phys;
-        pmm_state.pages[i].zone = (uint8_t)pmm_zone_for_addr(phys);
-        pmm_state.pages[i].state = PMM_PAGE_USED;
-        pmm_state.pages[i].reserved = 0;
+        pmm_state.pages[i].zone =
+            (uint8_t)pmm_zone_for_addr(memory_start + (i * PAGE_SIZE));
     }
+
+    klog("pmm", "%llu pages managed, %llu KiB of page state at %llx\n",
+         (unsigned long long)total_pages,
+         (unsigned long long)(desc_size / 1024u),
+         (unsigned long long)desc_phys);
 }
 
 static void pmm_mark_range_free(uint64_t start, uint64_t end)
@@ -537,7 +564,7 @@ static void pmm_mark_range_free(uint64_t start, uint64_t end)
             pmm_state.free_pages++;
             pmm_state.used_pages--;
             if (index < pmm_state.pages_count) {
-                pmm_state.pages[index].state = PMM_PAGE_FREE;
+                pmm_state.pages[index].queue = VM_PQ_FREE;
                 pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
                 pmm_state.zones[zone].free_pages++;
                 pmm_state.zones[zone].used_pages--;
@@ -611,7 +638,7 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
             pmm_state.free_pages--;
             pmm_state.used_pages++;
             if (index < pmm_state.pages_count) {
-                pmm_state.pages[index].state = PMM_PAGE_USED;
+                pmm_state.pages[index].queue = VM_PQ_NONE;
                 pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[index].zone;
                 pmm_state.zones[zone].free_pages--;
                 pmm_state.zones[zone].used_pages++;
@@ -665,6 +692,32 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
  * @note The bitmap must be allocated and mapped before calling this function.
  * @note All pages in the range are initially marked as free.
  */
+/*
+ * Per-zone totals, reported once because until now they were never maintained.
+ *
+ * Every update to them sat behind "if (index < pmm_state.pages_count)", and on
+ * this machine the descriptor array was placed above 16 MB and therefore never
+ * created -- so the guard was false for the whole life of the system and the
+ * zone counters stayed at zero. The array exists now, so the counters mean
+ * something; printing them is how we find out whether they mean the right
+ * thing.
+ */
+static void pmm_report_zones(void)
+{
+    static const char* const names[PMM_ZONE_COUNT] = { "low", "normal", "mmio" };
+    for (int z = 0; z < PMM_ZONE_COUNT; z++) {
+        if (pmm_state.zones[z].total_pages == 0) {
+            continue;
+        }
+        klog("pmm", "zone %-6s total=%llu free=%llu used=%llu ranges=%u\n",
+             names[z],
+             (unsigned long long)pmm_state.zones[z].total_pages,
+             (unsigned long long)pmm_state.zones[z].free_pages,
+             (unsigned long long)pmm_state.zones[z].used_pages,
+             (unsigned)pmm_state.zones[z].free_range_count);
+    }
+}
+
 int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
 {
     extern void kputs(const char* str);
@@ -806,7 +859,7 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
                          bitmap_size);
     if (pmm_state.pages_count > 0) {
         for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
-            pmm_state.pages[i].state = PMM_PAGE_FREE;
+            pmm_state.pages[i].queue = VM_PQ_FREE;
             pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
             pmm_state.zones[zone].total_pages++;
             pmm_state.zones[zone].free_pages++;
@@ -817,6 +870,16 @@ int pmm_init(uint64_t memory_start, uint64_t memory_end, void* bitmap_virt)
                    memory_start, memory_end - memory_start);
 
     pmm_rebuild_free_lists();
+    /*
+     * Same two lines as the mmap path, and their absence here was a real bug:
+     * without freelist_live the incremental maintenance that replaced the full
+     * rebuild never runs, so pmm_reserve_range() would mark pages used in the
+     * bitmap and leave them listed as free, and the allocator would hand out
+     * reserved memory. Invisible because this path only runs when the
+     * bootloader supplies no memory map, which ours always does.
+     */
+    pmm_state.freelist_live = true;
+    pmm_report_zones();
     return 0;
 }
 
@@ -896,7 +959,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
         }
 
         for (uint64_t i = 0; i < pmm_state.pages_count; i++) {
-            pmm_state.pages[i].state = PMM_PAGE_USED;
+            pmm_state.pages[i].queue = VM_PQ_NONE;
             pmm_zone_t zone = (pmm_zone_t)pmm_state.pages[i].zone;
             pmm_state.zones[zone].total_pages++;
             pmm_state.zones[zone].used_pages++;
@@ -921,7 +984,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
                    bitmap_phys, bitmap_size);
     if (pmm_state.pages_count > 0) {
-        uint64_t desc_size = pmm_state.pages_count * sizeof(pmm_page_desc_t);
+        uint64_t desc_size = (uint64_t)vm_page_array_bytes(pmm_state.memory_start, pmm_state.memory_end);
         uint64_t desc_phys = (bitmap_phys + bitmap_size + 7) & ~7ULL;
         pmm_mark_range_used(desc_phys, desc_phys + desc_size);
         pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
@@ -930,6 +993,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
 
     pmm_rebuild_free_lists();
     pmm_state.freelist_live = true;
+    pmm_report_zones();
     return RDNX_OK;
 }
 
@@ -1026,7 +1090,7 @@ static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone){
     pmm_zero_page(phys);
 
     if (index < pmm_state.pages_count) {
-        pmm_state.pages[index].state = PMM_PAGE_USED;
+        pmm_state.pages[index].queue = VM_PQ_NONE;
         if (pmm_state.zones[zone].free_pages > 0) {
             pmm_state.zones[zone].free_pages--;
             pmm_state.zones[zone].used_pages++;
@@ -1072,7 +1136,7 @@ static void pmm_free_page_locked(uint64_t phys){
         pmm_state.used_pages--;
         pmm_zone_t zone = pmm_zone_for_addr(phys);
         if (index < pmm_state.pages_count) {
-            pmm_state.pages[index].state = PMM_PAGE_FREE;
+            pmm_state.pages[index].queue = VM_PQ_FREE;
             pmm_state.zones[zone].free_pages++;
             if (pmm_state.zones[zone].used_pages > 0) {
                 pmm_state.zones[zone].used_pages--;
@@ -1143,7 +1207,7 @@ static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
                 uint64_t idx = start + p;
                 pmm_bitmap_set(idx);
                 if (idx < pmm_state.pages_count) {
-                    pmm_state.pages[idx].state = PMM_PAGE_USED;
+                    pmm_state.pages[idx].queue = VM_PQ_NONE;
                 }
             }
 
@@ -1198,7 +1262,7 @@ static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
         uint64_t idx = run_start + p;
         pmm_bitmap_set(idx);
         if (idx < pmm_state.pages_count) {
-            pmm_state.pages[idx].state = PMM_PAGE_USED;
+            pmm_state.pages[idx].queue = VM_PQ_NONE;
         }
     }
 

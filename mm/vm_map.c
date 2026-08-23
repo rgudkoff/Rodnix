@@ -1,7 +1,7 @@
 #include "vm_map.h"
 #include "../kernel/fabric/spin.h"
 #include "vm_pager.h"
-#include "vm_page_ref.h"
+#include "vm_page.h"
 #include "../kernel/arch/paging.h"
 #include "../kernel/arch/interrupt_frame.h"
 #include "../kernel/arch/config.h"
@@ -199,7 +199,7 @@ static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, uint64_t p
                 uint64_t phys = paging_get_physical_pml4(pml4_phys, va) & ~(VM_PAGE_SIZE - 1u);
                 if (phys != 0) {
                     (void)paging_unmap_page_pml4(pml4_phys, va);
-                    (void)vm_page_ref_release(phys);
+                    (void)vm_page_drop(phys);
                 }
             }
         }
@@ -681,7 +681,7 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t chi
                 vm_map_destroy(cmap);
                 return RDNX_E_GENERIC;
             }
-            (void)vm_page_ref_retain(phys); /* Child mapping reference. */
+            (void)vm_page_hold(phys); /* Child mapping reference. */
 
             if (cow) {
                 (void)paging_map_page_4kb_pml4((uint64_t)(uintptr_t)parent->address_space, va, phys, flags);

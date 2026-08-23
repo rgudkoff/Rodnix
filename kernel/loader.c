@@ -15,7 +15,7 @@
 #include "unix/proc.h"
 #include "security.h"
 #include "../mm/vm_map.h"
-#include "../mm/vm_page_ref.h"
+#include "../mm/vm_page.h"
 #include "../lib/heap.h"
 #include "../trace/bootlog.h"
 #include "../include/console.h"
@@ -126,9 +126,9 @@ static int loader_map_segment(uint64_t pml4_phys,
         if (!phys) {
             return RDNX_E_NOMEM;
         }
-        (void)vm_page_ref_add_new(phys);
+        (void)vm_page_hold(phys);
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
-            (void)vm_page_ref_release(phys);
+            (void)vm_page_drop(phys);
             return RDNX_E_GENERIC;
         }
 
@@ -181,20 +181,20 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
             for (uint32_t j = 0; j < i; j++) {
                 paging_unmap_page_pml4(pml4_phys,
                     out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
-                (void)vm_page_ref_release(out_img->stack_phys[j]);
+                (void)vm_page_drop(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
             return RDNX_E_NOMEM;
         }
-        (void)vm_page_ref_add_new(phys);
+        (void)vm_page_hold(phys);
         uint64_t flags = PTE_PRESENT | PTE_USER | PTE_RW;
         if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
             /* Free the unmap-failed page, then rollback prior pages */
-            (void)vm_page_ref_release(phys);
+            (void)vm_page_drop(phys);
             for (uint32_t j = 0; j < i; j++) {
                 paging_unmap_page_pml4(pml4_phys,
                     out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
-                (void)vm_page_ref_release(out_img->stack_phys[j]);
+                (void)vm_page_drop(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
             return RDNX_E_GENERIC;

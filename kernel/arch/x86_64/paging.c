@@ -276,7 +276,7 @@ uint64_t paging_create_user_pml4(void)
 /**
  * Free the page-table structure for a user address space.
  * Only the page-table pages themselves (PML4/PDPT/PD/PT) are freed here;
- * user data pages are already released by vm_map_remove() → vm_page_ref_release().
+ * user data pages are already released by vm_map_remove() → vm_page_drop().
  * Kernel-half entries (PML4[256..511]) are shared and must NOT be freed.
  */
 static void paging_free_user_pml4_locked(uint64_t pml4_phys){
