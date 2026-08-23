@@ -14,7 +14,7 @@ typedef struct {
 } loader_segment_t;
 
 typedef struct {
-    uint64_t pml4_phys;
+    struct pmap* pmap;
     uint64_t entry;
     uint64_t user_stack;
     uint64_t stack_bottom;

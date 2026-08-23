@@ -196,6 +196,9 @@ clean:
 check-deps:
 	@bash scripts/check-deps.sh
 
+check-mm-boundary:
+	@bash scripts/ci/check_mm_boundary.sh
+
 check-abi:
 	@python3 scripts/check_bsd_abi_headers.py
 

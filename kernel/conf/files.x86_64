@@ -21,6 +21,7 @@ kernel/arch/x86_64/smp.c                     standard
 kernel/arch/x86_64/gdt.c                     standard
 kernel/arch/x86_64/pmm.c                     standard
 kernel/arch/x86_64/paging.c                  standard
+kernel/arch/x86_64/pmap.c                    standard
 kernel/arch/x86_64/pit.c                     standard
 kernel/arch/x86_64/memory.c                  standard
 kernel/arch/x86_64/boot.c                    standard

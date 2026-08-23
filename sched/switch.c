@@ -1,39 +1,28 @@
 #include "internal.h"
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
-#include "../kernel/arch/paging.h"
+#include "../mm/pmap.h"
 #include "../kernel/arch/x86_64/gdt.h"
 #include "../kernel/core/cpu.h"
 #include "../include/debug.h"
 #include "../include/console.h"
 
-static uint64_t scheduler_kernel_pml4 = 0;
-
-static inline uint64_t scheduler_read_cr3(void)
-{
-    uint64_t cr3 = 0;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
-    return cr3;
-}
-
+/*
+ * Run the incoming thread on its own address space, or on the kernel's if it
+ * has none. Which page table root that is, and whether switching to it costs
+ * anything, is the pmap's business -- this used to read CR3 and compare
+ * physical addresses here, which is a fact about x86 in a file that schedules
+ * threads.
+ */
 static void scheduler_switch_address_space(thread_t* next)
 {
-    if (!scheduler_kernel_pml4) {
-        scheduler_kernel_pml4 = scheduler_read_cr3();
-    }
     if (!next) {
         return;
     }
-
-    uint64_t target_pml4 = scheduler_kernel_pml4;
-    if (next->task && next->task->address_space) {
-        target_pml4 = (uint64_t)(uintptr_t)next->task->address_space;
-    }
-
-    uint64_t current_pml4 = scheduler_read_cr3();
-    if (target_pml4 && current_pml4 != target_pml4) {
-        paging_switch_pml4(target_pml4);
-    }
+    pmap_t target = (next->task && next->task->address_space)
+                        ? next->task->address_space
+                        : pmap_kernel();
+    pmap_activate(target);
 }
 
 /*

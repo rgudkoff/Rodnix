@@ -2,7 +2,7 @@
 #include "../kernel/fabric/spin.h"
 #include "vm_pager.h"
 #include "vm_page.h"
-#include "../kernel/arch/paging.h"
+#include "pmap.h"
 #include "../kernel/arch/interrupt_frame.h"
 #include "../kernel/arch/config.h"
 #include "../lib/heap.h"
@@ -83,14 +83,14 @@ static inline uint64_t vm_align_up(uint64_t v)
     return (v + VM_PAGE_SIZE - 1u) & ~(VM_PAGE_SIZE - 1u);
 }
 
-static vm_map_t* vm_map_create(uint64_t pml4_phys)
+static vm_map_t* vm_map_create(pmap_t pmap)
 {
     vm_map_t* map = (vm_map_t*)kmalloc(sizeof(vm_map_t));
     if (!map) {
         return NULL;
     }
     memset(map, 0, sizeof(*map));
-    map->pml4_phys = pml4_phys;
+    map->pmap = pmap;
     return map;
 }
 
@@ -131,18 +131,6 @@ static int vm_map_overlap(vm_map_t* map, uint64_t start, uint64_t end)
     return 0;
 }
 
-static uint64_t vm_pte_flags_from_prot(uint32_t prot)
-{
-    uint64_t flags = PTE_PRESENT | PTE_USER;
-    if (prot & VM_PROT_WRITE) {
-        flags |= PTE_RW;
-    }
-    if ((prot & VM_PROT_EXEC) == 0) {
-        flags |= PTE_NX;
-    }
-    return flags;
-}
-
 static int vm_map_add(vm_map_t* map,
                       uint64_t start,
                       uint64_t len,
@@ -177,7 +165,7 @@ static int vm_map_add(vm_map_t* map,
     return RDNX_OK;
 }
 
-static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, uint64_t pml4_phys)
+static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, pmap_t pmap)
 {
     uint64_t s = vm_align_down(start);
     uint64_t e = vm_align_up(start + len);
@@ -194,11 +182,11 @@ static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, uint64_t p
             continue;
         }
 
-        if (pml4_phys == map->pml4_phys) {
+        if (pmap == map->pmap) {
             for (uint64_t va = rs; va < re; va += VM_PAGE_SIZE) {
-                uint64_t phys = paging_get_physical_pml4(pml4_phys, va) & ~(VM_PAGE_SIZE - 1u);
+                uint64_t phys = pmap_extract(pmap, va);
                 if (phys != 0) {
-                    (void)paging_unmap_page_pml4(pml4_phys, va);
+                    pmap_remove(pmap, va, va + VM_PAGE_SIZE);
                     (void)vm_page_drop(phys);
                 }
             }
@@ -291,8 +279,8 @@ static uint64_t vm_find_gap(vm_map_t* map, uint64_t hint, uint64_t len)
     return 0;
 }
 
-static int vm_task_prepare_exec_locked(task_t* task, uint64_t user_pml4_phys){
-    if (!task || !user_pml4_phys) {
+static int vm_task_prepare_exec_locked(task_t* task, pmap_t user_pmap){
+    if (!task || !user_pmap) {
         return RDNX_E_INVALID;
     }
 
@@ -301,7 +289,7 @@ static int vm_task_prepare_exec_locked(task_t* task, uint64_t user_pml4_phys){
         task->vm_map = NULL;
     }
 
-    vm_map_t* map = vm_map_create(user_pml4_phys);
+    vm_map_t* map = vm_map_create(user_pmap);
     if (!map) {
         return RDNX_E_NOMEM;
     }
@@ -313,10 +301,10 @@ static int vm_task_prepare_exec_locked(task_t* task, uint64_t user_pml4_phys){
     return RDNX_OK;
 }
 
-int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys)
+int vm_task_prepare_exec(task_t* task, pmap_t user_pmap)
 {
     vm_layer_lock();
-    int _r = vm_task_prepare_exec_locked(task, user_pml4_phys);
+    int _r = vm_task_prepare_exec_locked(task, user_pmap);
     vm_layer_unlock();
     return _r;
 }
@@ -372,7 +360,7 @@ long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot,
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
         /* Fixed mappings replace overlapping ranges in place. */
-        (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
+        (void)vm_map_remove(map, addr, alen, task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
         addr = vm_find_gap(map, hint, alen);
@@ -418,12 +406,12 @@ long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
         return (long)rc;
     }
 
-    uint64_t pte_flags = vm_pte_flags_from_prot(prot);
     /* Disable caching for MMIO / framebuffer regions. */
-    pte_flags |= PTE_PCD;
-    uint64_t pml4 = (uint64_t)(uintptr_t)task->address_space;
+
+
     for (uint64_t off = 0; off < alen; off += VM_PAGE_SIZE) {
-        paging_map_page_4kb_pml4(pml4, addr + off, phys_base + off, pte_flags);
+        pmap_enter(task->address_space, addr + off, phys_base + off, prot,
+                   PMAP_ENTER_USER | PMAP_ENTER_NOCACHE);
     }
 
     task->vm_mmap_hint = addr + alen;
@@ -448,7 +436,7 @@ long vm_task_mmap_object(task_t* task,
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
         /* MAP_FIXED replaces existing mappings in target range. */
-        (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
+        (void)vm_map_remove(map, addr, alen, task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
         addr = vm_find_gap(map, hint, alen);
@@ -483,7 +471,7 @@ long vm_task_mmap_file(task_t* task,
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
         /* MAP_FIXED replaces existing mappings in target range. */
-        (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
+        (void)vm_map_remove(map, addr, alen, task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
         addr = vm_find_gap(map, hint, alen);
@@ -532,7 +520,7 @@ long vm_task_mmap_file_backing(task_t* task,
 
     if ((flags & VM_MAP_F_FIXED) != 0) {
         addr = vm_align_down(addr_hint);
-        (void)vm_map_remove(map, addr, alen, (uint64_t)(uintptr_t)task->address_space);
+        (void)vm_map_remove(map, addr, alen, task->address_space);
     } else {
         uint64_t hint = addr_hint ? addr_hint : task->vm_mmap_hint;
         addr = vm_find_gap(map, hint, alen);
@@ -560,7 +548,7 @@ static int vm_task_munmap_locked(task_t* task, uint64_t addr, uint64_t len){
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_INVALID;
     }
-    return vm_map_remove((vm_map_t*)task->vm_map, addr, len, (uint64_t)(uintptr_t)task->address_space);
+    return vm_map_remove((vm_map_t*)task->vm_map, addr, len, task->address_space);
 }
 
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
@@ -609,7 +597,7 @@ long vm_task_brk(task_t* task, uint64_t new_break)
         }
     } else if (new_end < task->vm_brk_end) {
         uint64_t len = task->vm_brk_end - new_end;
-        (void)vm_map_remove(map, new_end, len, (uint64_t)(uintptr_t)task->address_space);
+        (void)vm_map_remove(map, new_end, len, task->address_space);
     }
 
     task->vm_brk_end = new_end;
@@ -630,12 +618,12 @@ static int vm_entry_is_cow_candidate(const vm_map_entry_t* e)
     return 1;
 }
 
-static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t child_pml4_phys){
-    if (!parent || !child || !parent->vm_map || !parent->address_space || !child_pml4_phys) {
+static int vm_task_fork_clone_locked(task_t* parent, task_t* child, pmap_t child_pmap){
+    if (!parent || !child || !parent->vm_map || !parent->address_space || !child_pmap) {
         return RDNX_E_INVALID;
     }
     vm_map_t* pmap = (vm_map_t*)parent->vm_map;
-    vm_map_t* cmap = vm_map_create(child_pml4_phys);
+    vm_map_t* cmap = vm_map_create(child_pmap);
     if (!cmap) {
         return RDNX_E_NOMEM;
     }
@@ -661,7 +649,7 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t chi
         }
 
         for (uint64_t va = pe.start; va < pe.end; va += VM_PAGE_SIZE) {
-            uint64_t phys = paging_get_physical(va) & ~(VM_PAGE_SIZE - 1u);
+            uint64_t phys = pmap_extract(parent->address_space, va);
             if (!phys) {
                 continue;
             }
@@ -669,22 +657,19 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t chi
             if (cow) {
                 eff_prot &= ~VM_PROT_WRITE;
             }
-            uint64_t flags = PTE_PRESENT | PTE_USER;
-            if (eff_prot & VM_PROT_WRITE) {
-                flags |= PTE_RW;
-            }
-            if ((eff_prot & VM_PROT_EXEC) == 0) {
-                flags |= PTE_NX;
-            }
 
-            if (paging_map_page_4kb_pml4(child_pml4_phys, va, phys, flags) != RDNX_OK) {
+            if (pmap_enter(child_pmap, va, phys, eff_prot,
+                           PMAP_ENTER_USER) != RDNX_OK) {
                 vm_map_destroy(cmap);
                 return RDNX_E_GENERIC;
             }
             (void)vm_page_hold(phys); /* Child mapping reference. */
 
             if (cow) {
-                (void)paging_map_page_4kb_pml4((uint64_t)(uintptr_t)parent->address_space, va, phys, flags);
+                /* Take write away from the parent too, or the copy is not on
+                 * write. */
+                (void)pmap_enter(parent->address_space, va, phys, eff_prot,
+                                 PMAP_ENTER_USER);
             }
         }
     }
@@ -697,10 +682,10 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t chi
     return RDNX_OK;
 }
 
-int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
+int vm_task_fork_clone(task_t* parent, task_t* child, pmap_t child_pmap)
 {
     vm_layer_lock();
-    int _r = vm_task_fork_clone_locked(parent, child, child_pml4_phys);
+    int _r = vm_task_fork_clone_locked(parent, child, child_pmap);
     vm_layer_unlock();
     return _r;
 }
@@ -718,13 +703,13 @@ static void vm_task_destroy_locked(task_t* task){
             (void)vm_map_remove(map,
                                 e.start,
                                 e.end - e.start,
-                                (uint64_t)(uintptr_t)task->address_space);
+                                task->address_space);
         }
         vm_map_destroy(map);
         task->vm_map = NULL;
     }
     if (task->address_space) {
-        paging_free_user_pml4((uint64_t)(uintptr_t)task->address_space);
+        pmap_destroy(task->address_space);
         task->address_space = NULL;
     }
     task->vm_brk_base = 0;
@@ -830,14 +815,13 @@ static int vm_task_mprotect_locked(task_t* task, uint64_t addr, uint64_t len, ui
         }
 
         me->prot = prot;
-        uint64_t pte_flags = vm_pte_flags_from_prot(prot);
-        for (uint64_t va = rs; va < re; va += VM_PAGE_SIZE) {
-            uint64_t phys = paging_get_physical_pml4((uint64_t)(uintptr_t)task->address_space, va);
+            for (uint64_t va = rs; va < re; va += VM_PAGE_SIZE) {
+            uint64_t phys = pmap_extract(task->address_space, va);
             phys &= ~(VM_PAGE_SIZE - 1u);
             if (!phys) {
                 continue;
             }
-            (void)paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space, va, phys, pte_flags);
+            (void)pmap_enter(task->address_space, va, phys, prot, PMAP_ENTER_USER);
         }
         changed = 1;
     }

@@ -26,6 +26,7 @@
 #include "../kernel/core/hygiene.h"
 #include "../mm/vm_phys.h"
 #include "../kernel/core/ktime.h"
+#include "../mm/pmap.h"
 #include "../include/common.h"
 #include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
@@ -67,6 +68,9 @@ sysinit_cpu(void)
      * against rather than its own interrupts. */
     ktime_init();
     ktime_report();
+    /* The kernel pmap has to exist before anything can be told to run on an
+     * address space, and its root is simply whatever CR3 already holds. */
+    pmap_bootstrap();
     /*
      * After cpu_init() rather than with the other early registrations, and
      * that ordering is load-bearing: cpu_init() is what calibrates the TSC,

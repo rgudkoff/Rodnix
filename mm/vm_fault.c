@@ -2,23 +2,11 @@
 #include "vm_map.h"
 #include "vm_pager.h"
 #include "vm_page.h"
-#include "../kernel/arch/paging.h"
+#include "pmap.h"
 #include "../kernel/arch/config.h"
 #include "../include/console.h"
 #include "../include/common.h"
 #include "../include/error.h"
-
-static uint64_t vm_pte_flags_from_prot(uint32_t prot)
-{
-    uint64_t flags = PTE_PRESENT | PTE_USER;
-    if (prot & VM_PROT_WRITE) {
-        flags |= PTE_RW;
-    }
-    if ((prot & VM_PROT_EXEC) == 0) {
-        flags |= PTE_NX;
-    }
-    return flags;
-}
 
 static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
 {
@@ -63,7 +51,7 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
         return RDNX_E_DENIED;
     }
 
-    uint64_t current_phys = paging_get_physical(va) & ~(VM_PAGE_SIZE - 1u);
+    uint64_t current_phys = pmap_extract(task->address_space, va);
 
     if (current_phys != 0 && is_write &&
         ((e->flags & VM_MAP_F_COW) || vm_entry_uses_private_object_cow(e))) {
@@ -72,10 +60,8 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
             return RDNX_E_NOMEM;
         }
         memcpy(ARCH_PHYS_TO_VIRT(new_phys), ARCH_PHYS_TO_VIRT(current_phys), VM_PAGE_SIZE);
-        (void)paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,
-                                       va,
-                                       new_phys,
-                                       vm_pte_flags_from_prot(e->prot));
+        (void)pmap_enter(task->address_space, va, new_phys, e->prot,
+                         PMAP_ENTER_USER);
         (void)vm_page_drop(current_phys); /* Drop this mapping's old COW reference. */
         return RDNX_OK;
     }
@@ -122,10 +108,8 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
              * the shared vm_object resident page. */
             eff_prot &= ~VM_PROT_WRITE;
         }
-        int rc = paging_map_page_4kb_pml4((uint64_t)(uintptr_t)task->address_space,
-                                          va,
-                                          phys,
-                                          vm_pte_flags_from_prot(eff_prot));
+        int rc = pmap_enter(task->address_space, va, phys, eff_prot,
+                            PMAP_ENTER_USER);
         if (rc != RDNX_OK) {
             return rc;
         }

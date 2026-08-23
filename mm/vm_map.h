@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "../kernel/core/task.h"
 #include "vm_object.h"
+#include "pmap.h"
 
 #define VM_PAGE_SIZE 0x1000ULL
 #define VM_MAP_MAX_ENTRIES 128
@@ -31,12 +32,12 @@ typedef struct vm_map_entry {
 } vm_map_entry_t;
 
 typedef struct vm_map {
-    uint64_t pml4_phys;
+    pmap_t pmap;
     uint32_t entry_count;
     vm_map_entry_t entries[VM_MAP_MAX_ENTRIES];
 } vm_map_t;
 
-int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys);
+int vm_task_prepare_exec(task_t* task, pmap_t user_pmap);
 int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags);
 int vm_task_set_brk_base(task_t* task, uint64_t brk_base);
 long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags);
@@ -76,7 +77,7 @@ int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len);
 int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags);
 int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot);
 long vm_task_brk(task_t* task, uint64_t new_break);
-int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys);
+int vm_task_fork_clone(task_t* parent, task_t* child, pmap_t child_pmap);
 void vm_task_destroy(task_t* task);
 
 vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr);

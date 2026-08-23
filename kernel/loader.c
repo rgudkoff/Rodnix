@@ -16,6 +16,8 @@
 #include "security.h"
 #include "../mm/vm_map.h"
 #include "../mm/vm_page.h"
+#include "../mm/pmap.h"
+#include "../mm/vm_map.h"
 #include "../lib/heap.h"
 #include "../trace/bootlog.h"
 #include "../include/console.h"
@@ -91,7 +93,7 @@ static int loader_read_file(const char* path, uint8_t** out_buf, size_t* out_siz
     return RDNX_OK;
 }
 
-static int loader_map_segment(uint64_t pml4_phys,
+static int loader_map_segment(pmap_t pmap,
                               const uint8_t* image,
                               size_t image_size,
                               const elf64_phdr_t* ph,
@@ -113,12 +115,12 @@ static int loader_map_segment(uint64_t pml4_phys,
     uint64_t page_start = align_down(seg_start, USER_PAGE_SIZE);
     uint64_t page_end = align_up(seg_end, USER_PAGE_SIZE);
 
-    uint64_t flags = PTE_PRESENT | PTE_USER;
+    uint32_t prot = VM_PROT_READ;
     if (ph->p_flags & PF_W) {
-        flags |= PTE_RW;
+        prot |= VM_PROT_WRITE;
     }
-    if ((ph->p_flags & PF_X) == 0) {
-        flags |= PTE_NX;
+    if (ph->p_flags & PF_X) {
+        prot |= VM_PROT_EXEC;
     }
 
     for (uint64_t va = page_start; va < page_end; va += USER_PAGE_SIZE) {
@@ -127,7 +129,7 @@ static int loader_map_segment(uint64_t pml4_phys,
             return RDNX_E_NOMEM;
         }
         (void)vm_page_hold(phys);
-        if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
+        if (pmap_enter(pmap, va, phys, prot, PMAP_ENTER_USER) != RDNX_OK) {
             (void)vm_page_drop(phys);
             return RDNX_E_GENERIC;
         }
@@ -166,7 +168,7 @@ static int loader_map_segment(uint64_t pml4_phys,
     return RDNX_OK;
 }
 
-static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
+static int loader_map_stack(pmap_t pmap, loader_image_t* out_img)
 {
     if (!out_img) {
         return RDNX_E_INVALID;
@@ -179,21 +181,23 @@ static int loader_map_stack(uint64_t pml4_phys, loader_image_t* out_img)
         if (!phys) {
             /* Rollback pages already mapped (P1-5a) */
             for (uint32_t j = 0; j < i; j++) {
-                paging_unmap_page_pml4(pml4_phys,
-                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmap_remove(pmap,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE,
+                    out_img->stack_bottom + (uint64_t)(j + 1) * USER_PAGE_SIZE);
                 (void)vm_page_drop(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
             return RDNX_E_NOMEM;
         }
         (void)vm_page_hold(phys);
-        uint64_t flags = PTE_PRESENT | PTE_USER | PTE_RW;
-        if (paging_map_page_4kb_pml4(pml4_phys, va, phys, flags) != RDNX_OK) {
+        if (pmap_enter(pmap, va, phys, VM_PROT_READ | VM_PROT_WRITE,
+                       PMAP_ENTER_USER) != RDNX_OK) {
             /* Free the unmap-failed page, then rollback prior pages */
             (void)vm_page_drop(phys);
             for (uint32_t j = 0; j < i; j++) {
-                paging_unmap_page_pml4(pml4_phys,
-                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE);
+                pmap_remove(pmap,
+                    out_img->stack_bottom + (uint64_t)j * USER_PAGE_SIZE,
+                    out_img->stack_bottom + (uint64_t)(j + 1) * USER_PAGE_SIZE);
                 (void)vm_page_drop(out_img->stack_phys[j]);
                 out_img->stack_phys[j] = 0;
             }
@@ -394,8 +398,8 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         return RDNX_E_INVALID;
     }
 
-    uint64_t pml4_phys = paging_create_user_pml4();
-    if (!pml4_phys) {
+    pmap_t pmap = pmap_create();
+    if (!pmap) {
         return RDNX_E_NOMEM;
     }
 
@@ -409,7 +413,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         if (ph[i].p_vaddr >= ARCH_KERNEL_VIRT_BASE) {
             return RDNX_E_INVALID;
         }
-        int ret = loader_map_segment(pml4_phys, image, size, &ph[i], out);
+        int ret = loader_map_segment(pmap, image, size, &ph[i], out);
         if (ret != RDNX_OK) {
             return ret;
         }
@@ -419,7 +423,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         }
     }
 
-    out->pml4_phys = pml4_phys;
+    out->pmap = pmap;
     out->entry = eh->e_entry;
     out->abi = (eh->e_osabi == ELFOSABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
     out->user_stack = 0;
@@ -428,7 +432,7 @@ static int loader_load_elf(const uint8_t* image, size_t size, loader_image_t* ou
         out->stack_phys[i] = 0;
     }
 
-    int ret = loader_map_stack(pml4_phys, out);
+    int ret = loader_map_stack(pmap, out);
     if (ret != RDNX_OK) {
         return ret;
     }
@@ -573,11 +577,11 @@ int loader_execve_ex(const char* path,
         proc_set_ids(proc, new_uid, new_gid, new_euid, new_egid);
     }
 
-    usermode_set_pml4(img.pml4_phys);
+    usermode_set_pmap(img.pmap);
     if (cur && cur->task) {
-        cur->task->address_space = (void*)(uintptr_t)img.pml4_phys;
+        cur->task->address_space = img.pmap;
         task_set_abi(cur->task, (task_abi_t)img.abi);
-        if (vm_task_prepare_exec(cur->task, img.pml4_phys) == RDNX_OK) {
+        if (vm_task_prepare_exec(cur->task, img.pmap) == RDNX_OK) {
             for (uint32_t i = 0; i < img.seg_count; i++) {
                 const loader_segment_t* s = &img.segs[i];
                 (void)vm_task_map_fixed(cur->task,

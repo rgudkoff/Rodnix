@@ -586,13 +586,13 @@ uint64_t unix_proc_fork(void)
         return (uint64_t)RDNX_E_GENERIC;
     }
 
-    uint64_t child_pml4 = paging_create_user_pml4();
-    if (!child_pml4) {
+    pmap_t child_pmap = pmap_create();
+    if (!child_pmap) {
         task_destroy(child);
         return (uint64_t)RDNX_E_NOMEM;
     }
-    child->address_space = (void*)(uintptr_t)child_pml4;
-    if (vm_task_fork_clone(parent, child, child_pml4) != RDNX_OK) {
+    child->address_space = child_pmap;
+    if (vm_task_fork_clone(parent, child, child_pmap) != RDNX_OK) {
         task_destroy(child);
         return (uint64_t)RDNX_E_GENERIC;
     }

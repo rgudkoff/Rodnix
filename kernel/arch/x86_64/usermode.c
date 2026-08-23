@@ -4,6 +4,7 @@
  */
 
 #include "usermode.h"
+#include "pmap_x86.h"
 #include "../../core/giant.h"
 #include "paging.h"
 #include "pmm.h"
@@ -26,9 +27,16 @@ static const uint8_t user_stub_code[] = {
 
 static uint64_t user_pml4_phys = 0;
 
-void usermode_set_pml4(uint64_t pml4_phys)
+static void usermode_set_pml4(uint64_t pml4_phys)
 {
     user_pml4_phys = pml4_phys;
+}
+
+/* The one place outside the pmap that needs its root: the return to ring 3
+ * loads CR3 from a trap frame it has already built. */
+void usermode_set_pmap(struct pmap* pmap)
+{
+    usermode_set_pml4(pmap_x86_root(pmap));
 }
 
 int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)

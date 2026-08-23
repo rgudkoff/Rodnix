@@ -113,7 +113,11 @@ typedef struct waitq {
 typedef struct task {
     uint64_t task_id;          /* Уникальный ID задачи */
     uint64_t parent_task_id;   /* Родительская задача (0 для kernel/orphan) */
-    void* address_space;       /* Адресное пространство (vm_map) */
+    /* Адресное пространство как непрозрачный pmap_t, а не физический адрес
+     * корня таблиц: см. mm/pmap.h. Раньше здесь лежал void*, в котором на
+     * самом деле хранился pml4_phys, и всякий, кому нужно было отобразить
+     * страницу, приводил его обратно к числу и собирал запись сам. */
+    struct pmap* address_space;
     void* vm_map;              /* VM map (unix-style user virtual memory map) */
     /* Раскладка пользовательского адресного пространства: владелец — mm/vm_map.c
      * (vm_task_brk/vm_task_mmap*). Осознанно оставлено в задаче, чтобы VM-слой
