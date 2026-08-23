@@ -37,6 +37,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../kernel/core/witness.h"
 
 /* ============================================================================
  * Shell Constants
@@ -968,6 +969,24 @@ struct shell_command {
     const char* description;        /* Command description */
 };
 
+
+/*
+ * The lock order this kernel actually uses, as learned at runtime.
+ *
+ * Worth a command rather than only a panic message: nobody here can currently
+ * say what the order is, and the answer is a prerequisite for taking anything
+ * out from under Giant. Printed after a workload it is a specification; before
+ * one it is nearly empty, which is itself the honest answer.
+ */
+static int shell_cmd_witness(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    witness_dump_graph();
+    witness_dump_held();
+    return 0;
+}
+
 /* Built-in commands table */
 static const struct shell_command commands[] = {
     {"help",    shell_cmd_help,    "Show help information"},
@@ -991,6 +1010,7 @@ static const struct shell_command commands[] = {
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
     {"run",     shell_cmd_run,     "Run userland program"},
+    {"witness", shell_cmd_witness, "Show the learned lock order graph"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };

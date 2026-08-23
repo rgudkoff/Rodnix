@@ -26,6 +26,7 @@ KERNEL_C_SRCS += \
 	kernel/task.c \
 	kernel/kmutex.c \
 	kernel/giant.c \
+	kernel/witness.c \
 	mm/vm_object.c \
 	mm/vm_page_ref.c \
 	mm/vm_pager.c \

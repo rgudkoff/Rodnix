@@ -22,6 +22,7 @@
 #include "../kernel/arch/cpu_topology.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/core/giant.h"
+#include "../kernel/core/witness.h"
 #include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
 #include "../kernel/arch/x86_64/smp.h"
@@ -66,6 +67,10 @@ sysinit_percpu(void)
      * follows -- the GDT and TSS slot, the current task and thread -- can
      * ask honestly. */
     percpu_init_bsp();
+    /* Before giant_init(), because Giant's guard is a spinlock and witness
+     * should see the very first acquire in the system rather than start
+     * halfway through a boot with a partial graph. */
+    witness_init();
     giant_init();
     return RDNX_OK;
 }
@@ -563,6 +568,8 @@ kernel_enable_runtime_interrupts(void)
     }
 
     klog("kernel", "interrupts enabled\n");
+    witness_selftest();
+    witness_summary();
     bootlog_mark("interrupts", "enable_done");
     __asm__ volatile ("" ::: "memory");
 }
