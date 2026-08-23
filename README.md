@@ -11,6 +11,24 @@ The current primary target is `x86_64` under `QEMU`.
 
 Current release baseline: `0.1.22`.
 
+## Who RodNIX Is For
+
+RodNIX is built for creators — people who make music, video, and adjacent
+real-time media work.
+
+That audience defines the engineering target. A general-purpose Unix optimizes
+for throughput and fairness; a system for creators has to hold a bounded upper
+latency, because one missed audio deadline is an audible click, and to sustain
+high-bandwidth I/O for video. Where the two goals conflict, RodNIX chooses
+predictable latency over average throughput.
+
+Consequences that are visible across this tree:
+
+- the scheduler is built around QoS buckets and bounded response time, not
+  fair-share averages;
+- user↔kernel transitions are minimized deliberately, to cut jitter;
+- interrupt, VM, and I/O paths are judged by their worst case, not their mean.
+
 ## What Is In This Tree
 
 RodNIX already contains working implementations of:

@@ -11,6 +11,13 @@ This roadmap is intentionally high level. Detailed execution plans live in:
 It should be read together with `README.md`, `ARCHITECTURE.md`, and
 `INSTALL.md`.
 
+## Target audience
+
+RodNIX is built for creators — music, video, and adjacent real-time media work.
+Roadmap items are therefore prioritized by what deterministic latency requires:
+bounded scheduling response, jitter-free interrupt and timer paths, real-time
+memory that does not fault, and sustained media I/O.
+
 ## Current baseline (already done)
 - [x] x86_64 long mode and high-half kernel boot
 - [x] Stable early paging + PMM groundwork
@@ -65,4 +72,4 @@ system on the first concurrent syscall.
 - [ ] Release Candidate cycle with blocker-only policy
 - [ ] Hardware support matrix for target deployment profile
 - [ ] Security response process and supported-version policy
-- [ ] RodNIX 1.0 GA for a constrained initial market segment
+- [ ] RodNIX 1.0 GA for the initial creator-workflow segment

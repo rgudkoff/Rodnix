@@ -7,6 +7,27 @@ explicit subsystem boundaries, observable behavior, and controlled ABI
 evolution. The working implementation is focused on `x86_64` today, with
 placeholders for other 64-bit ISAs.
 
+## Target Audience
+
+RodNIX targets creators: music production, video, and adjacent real-time media
+work. That choice sets the primary optimization target for every subsystem
+described below — deterministic latency first, average throughput second.
+
+Concretely, an architectural decision in RodNIX is evaluated by its worst-case
+behavior:
+
+- scheduling — bounded time-to-run for latency-critical threads, ahead of
+  fair-share efficiency;
+- interrupts — short, predictable handlers, with work pushed out of hard IRQ
+  context;
+- memory — a real-time path must not be surprised by a page fault, so wiring
+  and pre-fault policy matter more than peak allocator throughput;
+- I/O — sustained bandwidth with a bounded tail, ahead of best-case rates.
+
+This is also why the principles below are stated as hard boundaries: the value
+RodNIX intends to deliver is predictability, and predictability is lost exactly
+where boundaries are fuzzy.
+
 ## Core Principles
 
 1. 64-bit only
