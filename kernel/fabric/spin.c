@@ -170,8 +170,12 @@ void spinlock_lock_named(spinlock_t* lock, const char* name,
      * processor that wants it.
      *
      * It also pins this processor, which is what lets witness keep its
-     * held-lock set per-CPU and unlocked. */
-    percpu_preempt_disable();
+     * held-lock set per-CPU and unlocked.
+     *
+     * The site goes with it: a preemption window is opened by whichever lock
+     * took the count from zero, and that lock's call site is the only name
+     * worth putting in a latency report. */
+    percpu_preempt_disable_at(file, line);
 
     /* Same self-deadlock check as the irqsave variant. A recursive acquire
      * is a hang with no output otherwise, and every lock converted from the
@@ -217,7 +221,7 @@ bool spinlock_trylock_named(spinlock_t* lock, const char* name,
     /* Same contract as spinlock_lock() on success, so the caller can release
      * it with spinlock_unlock(): preemption stays off only if the lock was
      * actually taken. */
-    percpu_preempt_disable();
+    percpu_preempt_disable_at(file, line);
     if (__sync_lock_test_and_set(&lock->locked, 1) == 0) {
         lock->owner_plus_one = cpu_get_id() + 1u;
         /* Recorded as held but contributing no order: a try never waits, so

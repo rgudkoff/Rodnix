@@ -70,6 +70,8 @@ struct hygiene_cpu {
     int int_line;
 
     uint64_t preempt_start;
+    const char* preempt_site;
+    int preempt_line;
     uint64_t preempt_irq_base;   /* irq_ticks when the window opened */
 
     uint64_t irq_start;
@@ -278,12 +280,8 @@ static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
                 (unsigned long long)hyg_us(net),
                 (unsigned long long)hyg_us(gross),
                 (unsigned long long)hyg_us(threshold));
-        /*
-         * A masked window is named by where it was opened; an interrupt
-         * handler by its vector. The preemption window has neither -- it is
-         * opened by an inline in percpu.h, so the site would be that one line
-         * for every caller. Naming it would be worse than leaving it blank.
-         */
+        /* A masked or preemption window is named by where it was opened; an
+         * interrupt handler by its vector. */
         if (kind == HYG_IRQ) {
             kprintf("  vector 0x%02x", (unsigned)aux);
         } else if (site) {
@@ -335,7 +333,7 @@ void hygiene_int_end(void)
     hyg_close(c, HYG_INT, gross, gross, c->int_site, c->int_line, 0);
 }
 
-void hygiene_preempt_begin(void)
+void hygiene_preempt_begin(const char* site, int line)
 {
     if (!g_hygiene_on) {
         return;
@@ -344,6 +342,8 @@ void hygiene_preempt_begin(void)
     if (c->preempt_start) {
         c->w_preempt.stale_count++;
     }
+    c->preempt_site = site;
+    c->preempt_line = line;
     c->preempt_irq_base = c->irq_ticks;
     c->preempt_start = hyg_now();
 }
@@ -364,7 +364,7 @@ void hygiene_preempt_end(void)
     /* Interrupts stayed enabled through this window, so handlers did run in
      * it. They are not this window's doing and are not charged to it. */
     uint64_t net = (gross > irq) ? (gross - irq) : 0;
-    hyg_close(c, HYG_PREEMPT, gross, net, NULL, 0, 0);
+    hyg_close(c, HYG_PREEMPT, gross, net, c->preempt_site, c->preempt_line, 0);
 }
 
 void hygiene_irq_enter(uint32_t vector)

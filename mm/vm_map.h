@@ -83,7 +83,8 @@ vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr);
 
 /* The VM layer's lock. Public so the fault path, which lives in its own
  * file, can take the same one. */
-uint64_t vm_layer_lock(void);
-void vm_layer_unlock(uint64_t flags);
+void vm_layer_lock_at(const char* file, int line);
+#define vm_layer_lock() vm_layer_lock_at(__FILE__, __LINE__)
+void vm_layer_unlock(void);
 
 #endif /* _RODNIX_VM_MAP_H */

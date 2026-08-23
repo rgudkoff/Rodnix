@@ -227,13 +227,18 @@ static inline uint32_t percpu_apic_id(void)
  * hundred lock sites is the whole reason the count exists in one place.
  * hygiene_enabled() is a plain global read so the cost when it is off is a
  * predictable branch. */
-static inline void percpu_preempt_disable(void)
+static inline void percpu_preempt_disable_at(const char* file, int line)
 {
     struct percpu* p = percpu_self();
     if (p->preempt_count++ == 0 && hygiene_enabled()) {
-        hygiene_preempt_begin();
+        hygiene_preempt_begin(file, line);
     }
     __asm__ volatile ("" ::: "memory");
+}
+
+static inline void percpu_preempt_disable(void)
+{
+    percpu_preempt_disable_at(NULL, 0);
 }
 
 static inline void percpu_preempt_enable(void)

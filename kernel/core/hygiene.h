@@ -78,8 +78,10 @@ static inline bool hygiene_enabled(void)
 void hygiene_int_begin(const char* site, int line);
 void hygiene_int_end(void);
 
-/* Preemption disabled. Outermost only: count 0 -> 1 and 1 -> 0. */
-void hygiene_preempt_begin(void);
+/* Preemption disabled. Outermost only: count 0 -> 1 and 1 -> 0. The site is
+ * the lock that closed the window, which is the only useful name for it --
+ * the count itself lives in one inline that every caller shares. */
+void hygiene_preempt_begin(const char* site, int line);
 void hygiene_preempt_end(void);
 
 /* One interrupt, entry to exit. Also the source of the per-CPU handler time

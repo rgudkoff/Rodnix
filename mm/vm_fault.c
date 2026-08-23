@@ -157,9 +157,9 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
 
 int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_fault_handle_locked(task, fault_addr, err_code, rip);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 

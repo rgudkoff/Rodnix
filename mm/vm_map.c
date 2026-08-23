@@ -32,14 +32,40 @@ static void (*g_fb_release_hook)(uint32_t display_idx) = NULL;
  */
 static spinlock_t vm_lock;
 
-uint64_t vm_layer_lock(void)
+void vm_layer_lock_at(const char* file, int line)
 {
-    return spinlock_lock_irqsave(&vm_lock);
+    /*
+     * Preemption off, interrupts left alone.
+     *
+     * It used to mask, and that was the wrong trade for work of this shape.
+     * Two of these entry points do work proportional to the size of a process
+     * -- vm_task_destroy() unmaps every page it owns, vm_task_fork_clone()
+     * walks every page of the parent -- so the hold is inherently long, and
+     * masking made it a hole in which this processor answered nothing at all.
+     * Measured at 744-1303 us, against the 1.33 ms an audio buffer gets.
+     *
+     * Masking would be required only if an interrupt handler could take this
+     * lock, and none does: no driver reaches the VM layer, and the one
+     * interrupt-context entry -- the page fault -- arrives through a gate that
+     * has already cleared IF, so the mask here was never what protected it.
+     *
+     * The hold is still long, and preemption is still off for it. That is a
+     * far weaker property -- interrupts are served, only thread switching
+     * waits -- and it is now visible in the preemption window rather than
+     * hidden in the interrupt one. The real answer is a lock per address
+     * space, which is the push-down work, not this change.
+     *
+     * The caller's site rather than this line: a wrapper collapses every
+     * acquire in the subsystem into one file:line, so a report naming it says
+     * only "the VM lock", which we already knew. vm_layer_lock() is a macro
+     * that supplies the real one.
+     */
+    spinlock_lock_named(&vm_lock, "&vm_lock", file, line);
 }
 
-void vm_layer_unlock(uint64_t flags)
+void vm_layer_unlock(void)
 {
-    spinlock_unlock_irqrestore(&vm_lock, flags);
+    spinlock_unlock(&vm_lock);
 }
 
 void vm_set_fb_release_hook(void (*fn)(uint32_t display_idx))
@@ -289,9 +315,9 @@ static int vm_task_prepare_exec_locked(task_t* task, uint64_t user_pml4_phys){
 
 int vm_task_prepare_exec(task_t* task, uint64_t user_pml4_phys)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_prepare_exec_locked(task, user_pml4_phys);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -306,9 +332,9 @@ static int vm_task_map_fixed_locked(task_t* task, uint64_t start, uint64_t len, 
 
 int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_map_fixed_locked(task, start, len, prot, flags);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -326,9 +352,9 @@ static int vm_task_set_brk_base_locked(task_t* task, uint64_t brk_base){
 
 int vm_task_set_brk_base(task_t* task, uint64_t brk_base)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_set_brk_base_locked(task, brk_base);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -539,9 +565,9 @@ static int vm_task_munmap_locked(task_t* task, uint64_t addr, uint64_t len){
 
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_munmap_locked(task, addr, len);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -673,9 +699,9 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, uint64_t chi
 
 int vm_task_fork_clone(task_t* parent, task_t* child, uint64_t child_pml4_phys)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_fork_clone_locked(parent, child, child_pml4_phys);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -709,9 +735,9 @@ static void vm_task_destroy_locked(task_t* task){
 
 void vm_task_destroy(task_t* task)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     vm_task_destroy_locked(task);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
 }
 
 
@@ -768,9 +794,9 @@ static int vm_task_msync_locked(task_t* task, uint64_t addr, uint64_t len, uint3
 
 int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_msync_locked(task, addr, len, flags);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
@@ -821,9 +847,9 @@ static int vm_task_mprotect_locked(task_t* task, uint64_t addr, uint64_t len, ui
 
 int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot)
 {
-    uint64_t _f = vm_layer_lock();
+    vm_layer_lock();
     int _r = vm_task_mprotect_locked(task, addr, len, prot);
-    vm_layer_unlock(_f);
+    vm_layer_unlock();
     return _r;
 }
 
