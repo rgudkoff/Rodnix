@@ -5,6 +5,7 @@
 
 #include "ipc.h"
 #include "core/interrupts.h"
+#include "core/ktime.h"
 #include "../sched/scheduler.h"
 #include "fabric/spin.h"
 #include "../lib/heap.h"
@@ -408,17 +409,11 @@ int ipc_send(port_t* port, ipc_message_t* message, uint64_t timeout)
     return RDNX_OK;
 }
 
+/* Same story as waitq_deadline_from_timeout_ms(): the tick arithmetic here was
+ * the same tenfold error, copied. */
 static uint64_t ipc_get_deadline_ticks(uint64_t timeout_ms)
 {
-    if (timeout_ms == 0) {
-        return 0;
-    }
-    uint64_t now = scheduler_get_ticks();
-    uint64_t ticks = (timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1)) / SCHEDULER_TIME_SLICE_MS;
-    if (ticks == 0) {
-        ticks = 1;
-    }
-    return now + ticks;
+    return ktime_deadline_ms(timeout_ms);
 }
 
 int ipc_receive(port_t* port, ipc_message_t* message, uint64_t timeout)
@@ -642,7 +637,7 @@ int port_set_receive(port_set_t* set, ipc_message_t* message, uint64_t timeout)
                 scheduler_clear_inherit(port->owner_thread);
             }
         }
-        if (deadline && scheduler_get_ticks() >= deadline) {
+        if (deadline && ktime_ns() >= deadline) {
             return -1;
         }
         int wret = waitq_wait_until(&set->waiters, deadline);

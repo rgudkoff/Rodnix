@@ -140,6 +140,13 @@ struct percpu {
     bool online;
 
     bool irq_checked;            /* percpu_irq_selftest() has run here */
+
+    /* Absolute TSC value this processor's timer is next due to fire at.
+     * Per-CPU because each processor arms its own LAPIC timer, and absolute
+     * because a rate is only kept by scheduling against the previous deadline
+     * rather than against whenever the handler happened to run. */
+    uint64_t timer_deadline;
+    uint64_t timer_missed;       /* periods skipped after falling behind */
 } __attribute__((aligned(64)));
 
 /* Mirrored by the PCPU_* defines in isr_stubs.S and syscall_fast_entry.S. */

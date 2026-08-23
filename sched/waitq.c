@@ -4,6 +4,7 @@
  */
 
 #include "waitq.h"
+#include "../kernel/core/ktime.h"
 #include "../kernel/core/giant.h"
 #include "../kernel/core/interrupts.h"
 #include "../kernel/fabric/spin.h"
@@ -31,36 +32,41 @@ static void waitq_disarm_timeout(thread_t* t)
     }
     TAILQ_REMOVE(&waitq_timeouts, t, wait_timeout_link);
     t->wait_timeout_armed = 0;
-    t->wait_deadline_tick = 0;
+    t->wait_deadline_ns = 0;
     t->wait_timeout_link.tqe_next = NULL;
     t->wait_timeout_link.tqe_prev = NULL;
 }
 
-static void waitq_arm_timeout(thread_t* t, uint64_t deadline_ticks)
+static void waitq_arm_timeout(thread_t* t, uint64_t deadline_ns)
 {
-    if (!t || deadline_ticks == 0) {
+    if (!t || deadline_ns == 0) {
         return;
     }
     waitq_timeouts_init_once();
     if (t->wait_timeout_armed) {
         waitq_disarm_timeout(t);
     }
-    t->wait_deadline_tick = deadline_ticks;
+    t->wait_deadline_ns = deadline_ns;
     TAILQ_INSERT_TAIL(&waitq_timeouts, t, wait_timeout_link);
     t->wait_timeout_armed = 1;
 }
 
+/*
+ * A deadline in real time, not in ticks.
+ *
+ * What this replaced divided the timeout by SCHEDULER_TIME_SLICE_MS -- ten --
+ * rather than by the tick period, so at a 1000 Hz tick every sleep and every
+ * timeout in the kernel was ten times shorter than asked for. On top of that,
+ * ticks are lost whenever the handler does not fit in its period, which was
+ * measured at 20 % on this machine, so the remaining number was not reliable
+ * either.
+ *
+ * Absolute nanoseconds have neither problem: a lost tick delays when the
+ * deadline is noticed, not when it falls.
+ */
 static uint64_t waitq_deadline_from_timeout_ms(uint64_t timeout_ms)
 {
-    if (timeout_ms == 0) {
-        return 0;
-    }
-    uint64_t now = scheduler_get_ticks();
-    uint64_t ticks = (timeout_ms + (SCHEDULER_TIME_SLICE_MS - 1)) / SCHEDULER_TIME_SLICE_MS;
-    if (ticks == 0) {
-        ticks = 1;
-    }
-    return now + ticks;
+    return ktime_deadline_ms(timeout_ms);
 }
 
 /*
@@ -199,7 +205,7 @@ uint32_t waitq_timed_count(void)
     return count;
 }
 
-int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks)
+int waitq_wait_until(waitq_t* q, uint64_t deadline_ns)
 {
     if (!q) {
         return RDNX_E_INVALID;
@@ -217,8 +223,8 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ticks)
             return qret;
         }
     }
-    if (deadline_ticks) {
-        waitq_arm_timeout(self, deadline_ticks);
+    if (deadline_ns) {
+        waitq_arm_timeout(self, deadline_ns);
     }
 
     /*
@@ -249,16 +255,18 @@ int waitq_wait(waitq_t* q, uint64_t timeout_ms)
 
 void waitq_tick(uint64_t now_ticks)
 {
+    (void)now_ticks;
+    uint64_t now_ns = ktime_ns();
     waitq_timeouts_init_once();
     uint64_t tflags = spinlock_lock_irqsave(&waitq_spin);
     thread_t* it = NULL;
     thread_t* next = NULL;
     TAILQ_FOREACH_SAFE(it, &waitq_timeouts, wait_timeout_link, next) {
-        if (!it->wait_timeout_armed || it->wait_deadline_tick == 0) {
+        if (!it->wait_timeout_armed || it->wait_deadline_ns == 0) {
             waitq_disarm_timeout(it);
             continue;
         }
-        if (it->wait_deadline_tick > now_ticks) {
+        if (it->wait_deadline_ns > now_ns) {
             continue;
         }
 

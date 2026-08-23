@@ -6,6 +6,7 @@
 #include "core/hygiene.h"
 #include "core/boot.h"
 #include "core/cpu.h"
+#include "core/ktime.h"
 #include "arch/percpu.h"
 #include "../include/console.h"
 #include "../include/debug.h"
@@ -114,15 +115,12 @@ static inline struct hygiene_cpu* hyg_cpu(void)
 
 static inline uint64_t hyg_now(void)
 {
-    return cpu_get_time();
+    return ktime_raw();
 }
 
 static uint64_t hyg_us(uint64_t ticks)
 {
-    if (!g_tsc_hz) {
-        return 0;
-    }
-    return (ticks * 1000000ULL) / g_tsc_hz;
+    return ktime_raw_to_ns(ticks) / 1000ULL;
 }
 
 /* ---- command line ---------------------------------------------------- */
@@ -180,23 +178,23 @@ void hygiene_init(void)
         }
     }
 
-    g_tsc_hz = cpu_get_frequency();
+    g_tsc_hz = ktime_hz();
     if (g_mode == HYGIENE_OFF) {
         return;
     }
-    if (g_tsc_hz == 0) {
+    if (!ktime_ready()) {
         /*
-         * Without a calibrated TSC a threshold cannot be stated in time, and a
-         * threshold in units nobody can name is worse than no threshold: it
-         * would produce numbers that look like measurements.
+         * Without a time source a threshold cannot be stated in time at all,
+         * and a threshold in units nobody can name is worse than no threshold:
+         * it would produce numbers that look like measurements.
          */
-        kprintf("[hygiene] no calibrated TSC — latency windows unmeasured\n");
+        kprintf("[hygiene] no time source — latency windows unmeasured\n");
         return;
     }
 
-    g_thr_int     = (g_us_int     * g_tsc_hz) / 1000000ULL;
-    g_thr_preempt = (g_us_preempt * g_tsc_hz) / 1000000ULL;
-    g_thr_irq     = (g_us_irq     * g_tsc_hz) / 1000000ULL;
+    g_thr_int     = ktime_ns_to_raw(g_us_int     * 1000ULL);
+    g_thr_preempt = ktime_ns_to_raw(g_us_preempt * 1000ULL);
+    g_thr_irq     = ktime_ns_to_raw(g_us_irq     * 1000ULL);
 
     g_hygiene_on = true;
 }
@@ -227,7 +225,7 @@ static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
 
     w->total_count++;
 
-    if (g_tsc_hz && net / (g_tsc_hz / 1000000ULL) > HYGIENE_IMPLAUSIBLE_US) {
+    if (hyg_us(net) > HYGIENE_IMPLAUSIBLE_US) {
         w->implausible_count++;
         return;
     }
@@ -460,9 +458,8 @@ void hygiene_report(void)
         return;
     }
 
-    kprintf("[hygiene] mode=%s tsc=%lluMHz\n",
-            g_mode == HYGIENE_PANIC ? "panic" : "trace",
-            (unsigned long long)(g_tsc_hz / 1000000ULL));
+    kprintf("[hygiene] mode=%s clock=%s\n",
+            g_mode == HYGIENE_PANIC ? "panic" : "trace", ktime_source());
 
     for (uint32_t i = 0; i < HYGIENE_MAX_CPUS; i++) {
         struct hygiene_cpu* c = &g_hyg[i];

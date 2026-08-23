@@ -418,7 +418,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->wait_timeout_link.tqe_next = NULL;
     thread->wait_timeout_link.tqe_prev = NULL;
     thread->waitq_owner = NULL;
-    thread->wait_deadline_tick = 0;
+    thread->wait_deadline_ns = 0;
     thread->wait_timeout_armed = 0;
     thread->wait_timed_out = 0;
     thread->joiner = NULL;
@@ -496,7 +496,7 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     thread->wait_timeout_link.tqe_next = NULL;
     thread->wait_timeout_link.tqe_prev = NULL;
     thread->waitq_owner = NULL;
-    thread->wait_deadline_tick = 0;
+    thread->wait_deadline_ns = 0;
     thread->wait_timeout_armed = 0;
     thread->wait_timed_out = 0;
     thread->joiner = NULL;
@@ -580,7 +580,7 @@ thread_t* thread_create_user_thread(task_t* task,
     thread->wait_timeout_link.tqe_next = NULL;
     thread->wait_timeout_link.tqe_prev = NULL;
     thread->waitq_owner = NULL;
-    thread->wait_deadline_tick = 0;
+    thread->wait_deadline_ns = 0;
     thread->wait_timeout_armed = 0;
     thread->wait_timed_out = 0;
     thread->joiner = NULL;

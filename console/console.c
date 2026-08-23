@@ -4,6 +4,7 @@
  */
 
 #include "../include/console.h"
+#include "../kernel/core/ktime.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/fabric/spin.h"
 #include "../include/gfx_console.h"
@@ -341,6 +342,21 @@ static bool rtc_write_datetime(uint32_t year,
     return true;
 }
 
+/*
+ * Uptime in microseconds, and therefore CLOCK_MONOTONIC as userland sees it.
+ *
+ * Read from ktime, which counts a hardware counter calibrated against a
+ * reference whose rate is fixed by definition. Everything below it is a
+ * fallback for a machine where that counter does not exist.
+ *
+ * What it replaced counted timer *interrupts* and divided by the rate the
+ * timer had been asked for. That is only a clock if every interrupt arrives,
+ * and they do not: when the handler does not fit in the period the hardware
+ * coalesces them, which was measured here at 20 % lost at 1000 Hz. Every
+ * userland measurement of elapsed time -- every sleep, every benchmark, every
+ * timeout -- was that much short, and the clock had no way to notice, because
+ * a tick that never arrived leaves nothing behind.
+ */
 static uint64_t console_get_uptime_us_internal(void)
 {
     extern const char* kernel_timer_source_name(void);
@@ -349,17 +365,13 @@ static uint64_t console_get_uptime_us_internal(void)
     extern uint64_t pit_get_uptime_us(void);
     extern uint32_t pit_get_frequency(void);
     extern uint64_t scheduler_get_ticks(void);
-    const char* timer_src = kernel_timer_source_name();
 
     uint64_t now_us = 0;
 
-    if (timer_src && timer_src[0] == 'l') {
-        uint32_t hz = apic_timer_get_frequency();
-        if (hz > 0) {
-            uptime_source_name = "lapic";
-            now_us = ((uint64_t)apic_timer_get_ticks() * 1000000ULL) / (uint64_t)hz;
-            goto done;
-        }
+    if (ktime_ready()) {
+        uptime_source_name = ktime_source();
+        now_us = ktime_ns() / 1000ULL;
+        goto done;
     }
 
     {
@@ -372,11 +384,23 @@ static uint64_t console_get_uptime_us_internal(void)
     }
 
     {
+        const char* timer_src = kernel_timer_source_name();
+        if (timer_src && timer_src[0] == 'l') {
+            uint32_t hz = apic_timer_get_frequency();
+            if (hz > 0) {
+                uptime_source_name = "lapic ticks (approximate)";
+                now_us = ((uint64_t)apic_timer_get_ticks() * 1000000ULL) / (uint64_t)hz;
+                goto done;
+            }
+        }
+    }
+
+    {
         uint32_t hz = pit_get_frequency();
         if (hz == 0) {
             hz = 100;
         }
-        uptime_source_name = "scheduler";
+        uptime_source_name = "scheduler ticks (approximate)";
         now_us = (scheduler_get_ticks() * 1000000ULL) / (uint64_t)hz;
     }
 

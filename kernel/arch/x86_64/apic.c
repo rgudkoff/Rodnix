@@ -12,6 +12,9 @@
  */
 
 #include "types.h"
+#include "percpu.h"
+#include "../../core/ktime.h"
+#include "../../../trace/bootlog.h"
 #include "config.h"
 #include "paging.h"
 #include "pic.h"
@@ -1101,6 +1104,21 @@ void apic_disable_irq(uint8_t irq)
  * 
  * @note Minimal work in interrupt handler
  */
+bool apic_timer_is_deadline(void)
+{
+    return apic_timer_tsc_deadline;
+}
+
+uint64_t apic_timer_period_tsc(void)
+{
+    return apic_timer_tsc_per_period;
+}
+
+uint64_t apic_timer_missed(void)
+{
+    return percpu_self()->timer_missed;
+}
+
 void apic_timer_handler(interrupt_context_t* ctx)
 {
     (void)ctx;
@@ -1109,12 +1127,36 @@ void apic_timer_handler(interrupt_context_t* ctx)
     __sync_fetch_and_add(&apic_timer_ticks, 1u);
 
     /*
-     * TSC-Deadline mode is one-shot: reprogram the next deadline immediately.
-     * We add tsc_per_period to the *current* TSC (not the previous deadline)
-     * so any handler latency doesn't accumulate across ticks.
+     * TSC-Deadline is one-shot, so the next deadline is set here.
+     *
+     * It is set from the previous deadline, not from the current TSC. The code
+     * this replaces did the latter and its comment claimed that was what kept
+     * handler latency from accumulating; it is exactly backwards. Adding the
+     * period to "now" makes every tick last one period *plus* however long it
+     * took to get here, so the delay is added to the rate rather than absorbed
+     * by it -- and the error is systematic, not jitter.
+     *
+     * Measured: the timer ran at 800 Hz having been asked for 1000, a 25 %
+     * period inflation from roughly 250 us of entry latency. Everything the
+     * kernel measures in ticks -- sleeps, timeouts, time slices -- was that
+     * much longer than it believed, and nothing said so.
      */
     if (apic_timer_tsc_deadline) {
-        wrmsr64(MSR_IA32_TSC_DEADLINE, rdtsc64() + apic_timer_tsc_per_period);
+        struct percpu* pcpu = percpu_self();
+        uint64_t next = pcpu->timer_deadline + apic_timer_tsc_per_period;
+        uint64_t now = rdtsc64();
+
+        /* Behind by a whole period or more. Catching up would mean firing a
+         * burst of interrupts back to back, which costs more time and makes
+         * the arrears worse. Skip to the next period from now and count it:
+         * a missed tick is a latency event and should be visible as one. */
+        if ((int64_t)(next - now) <= 0) {
+            next = now + apic_timer_tsc_per_period;
+            pcpu->timer_missed++;
+        }
+
+        pcpu->timer_deadline = next;
+        wrmsr64(MSR_IA32_TSC_DEADLINE, next);
     }
 }
 
@@ -1133,92 +1175,73 @@ void apic_timer_handler(interrupt_context_t* ctx)
  * @note Use PIT as reference for calibration
  * @note Avoids division operations - uses bit shifts
  */
+/*
+ * Measure the LAPIC timer's input clock against ktime.
+ *
+ * The version this replaces counted 8254 *interrupts* and divided by the
+ * nominal 10 ms each was supposed to represent. Under emulation those
+ * interrupts arrive late and coalesce, so the window was longer than the count
+ * claimed and every derived frequency came out high -- which put this timer at
+ * 800 Hz having been asked for 1000, and left every sleep, timeout and time
+ * slice in the kernel a quarter longer than intended. Nothing noticed for
+ * months, because nothing checked.
+ *
+ * ktime is calibrated by polling, not by interrupt, which is why it can be the
+ * reference here.
+ */
 static int apic_timer_calibrate(void)
 {
-    extern int pit_init(uint32_t frequency);
-    extern void pit_enable(void);
-    extern void pit_disable(void);
-    extern uint32_t pit_get_ticks(void);
-
-    /*
-     * Calibrate LAPIC timer frequency using PIT as reference.
-     *
-     * LAPIC timer runs from the CPU bus clock (not the TSC), so its frequency
-     * varies per machine and must be measured. We use PIT at 100 Hz (10ms/tick)
-     * as a known time source. Measuring over 5 PIT ticks (50ms) reduces the
-     * quantisation error from ±10% (single tick) to ±2%.
-     */
-#define CALIB_PIT_TICKS 5u   /* 5 × 10ms = 50ms calibration window */
-
-    if (pit_init(100) != 0) {
+    if (!ktime_ready()) {
         return -1;
     }
 
-    /* Mask and configure LAPIC timer: one-shot, divide-by-16 */
+    /* One-shot, divide by 16, counting down from the top. */
     uint32_t lvt_timer = apic_read_register(APIC_LVT_TIMER);
     lvt_timer |= APIC_LVT_MASKED;
     apic_write_register(APIC_LVT_TIMER, lvt_timer);
-    apic_write_register(APIC_TIMER_DIV, 0b0011);  /* ÷16 */
+    apic_write_register(APIC_TIMER_DIV, 0b0011);
     lvt_timer &= ~(APIC_LVT_TIMER_PERIODIC | APIC_LVT_MASKED);
     apic_write_register(APIC_LVT_TIMER, lvt_timer);
-
-    /* Start LAPIC countdown from max value */
     apic_write_register(APIC_TIMER_INITCNT, 0xFFFFFFFFu);
 
-    pit_enable();
-
-    /* Temporarily enable interrupts so PIT ticks arrive */
-    uint64_t rflags;
-    __asm__ volatile ("pushfq; pop %0" : "=r"(rflags));
-    bool if_was_set = (rflags & (1ULL << 9)) != 0;
-    if (!if_was_set) {
-        __asm__ volatile ("sti");
-    }
-
-    /* Wait for the first PIT tick edge so we start on a clean boundary */
-    uint32_t pit_prev = pit_get_ticks();
-    uint32_t spin = 0;
-    while (pit_get_ticks() == pit_prev) {
-        __asm__ volatile ("pause");
-        if (++spin > 20000000U) { break; }
-    }
-
-    /* Snapshot LAPIC counter at start of measurement window */
+    const uint64_t window_ns = 50000000ULL;   /* 50 ms */
+    uint64_t t0 = ktime_raw();
     uint32_t lapic_start = apic_read_register(APIC_TIMER_CURRCNT);
-    uint32_t ticks_elapsed = 0;
 
-    /* Count CALIB_PIT_TICKS full PIT ticks */
-    while (ticks_elapsed < CALIB_PIT_TICKS) {
-        uint32_t cur = pit_get_ticks();
-        if (cur != pit_prev) {
-            pit_prev = cur;
-            ticks_elapsed++;
-        }
+    uint64_t guard = 0;
+    while (ktime_raw_to_ns(ktime_raw() - t0) < window_ns) {
         __asm__ volatile ("pause");
+        if (++guard > 4000000000ULL) {
+            break;
+        }
     }
 
     uint32_t lapic_end = apic_read_register(APIC_TIMER_CURRCNT);
+    uint64_t elapsed_ns = ktime_raw_to_ns(ktime_raw() - t0);
 
-    if (!if_was_set) {
-        __asm__ volatile ("cli");
-    }
-    pit_disable();
-
-    /* LAPIC counts down, so elapsed = start - end */
-    uint32_t lapic_ticks = lapic_start - lapic_end;
-
-    /* lapic_ticks happened in (CALIB_PIT_TICKS * 10) ms */
-    uint32_t calib_ms = CALIB_PIT_TICKS * 10u;
-    apic_timer_ticks_per_ms = lapic_ticks / calib_ms;
-
-    if (apic_timer_ticks_per_ms == 0 || spin > 20000000U) {
-        apic_timer_ticks_per_ms = 10000u; /* safe fallback: ~10 MHz bus */
+    if (lapic_end > lapic_start || elapsed_ns == 0) {
+        /* Counted up, or wrapped, or stood still. Any of those and the number
+         * would be a guess; say so rather than produce one. */
+        klog("timer", "LAPIC counter unusable (%u -> %u over %lluns)\n",
+             lapic_start, lapic_end, (unsigned long long)elapsed_ns);
+        return -1;
     }
 
-    kprintf("[APIC-TIMER-CALIB] lapic_ticks=%u over %ums → %u ticks/ms\n",
-            lapic_ticks, calib_ms, apic_timer_ticks_per_ms);
+    uint64_t lapic_hz = ((uint64_t)(lapic_start - lapic_end) * 1000000000ULL)
+                        / elapsed_ns;
+    apic_timer_ticks_per_ms = (uint32_t)(lapic_hz / 1000ULL);
+    if (apic_timer_ticks_per_ms == 0) {
+        return -1;
+    }
+
+    klog("timer", "LAPIC input %llu.%03llu MHz "
+         "(%u ticks/ms), measured over %lluus against %s\n",
+            (unsigned long long)(lapic_hz / 1000000ULL),
+            (unsigned long long)((lapic_hz / 1000ULL) % 1000ULL),
+            apic_timer_ticks_per_ms,
+            (unsigned long long)(elapsed_ns / 1000ULL),
+            ktime_source());
     return 0;
-#undef CALIB_PIT_TICKS
 }
 
 /**
@@ -1256,8 +1279,7 @@ int apic_timer_init(uint32_t frequency)
      * 2. TSC-Deadline + PIT-calibrated TSC freq   — zero drift, ~±2% freq error
      * 3. Periodic LAPIC                           — PIT-calibrated, fallback
      */
-    extern uint64_t cpu_get_frequency(void);
-    uint64_t tsc_hz = cpu_get_frequency();  /* 0 if CPUID 0x15 not available */
+    uint64_t tsc_hz = ktime_hz();
 
     if (apic_tsc_deadline_supported()) {
         if (tsc_hz == 0u) {
@@ -1292,7 +1314,7 @@ int apic_timer_init(uint32_t frequency)
 
         apic_timer_tsc_per_period = tsc_hz / (uint64_t)frequency;
         apic_timer_tsc_deadline   = true;
-        kprintf("[APIC-TIMER-INIT] mode=TSC-Deadline hz=%u tsc_freq=%llu tsc_per_period=%llu\n",
+        klog("timer", "mode=TSC-Deadline hz=%u tsc=%lluHz period=%llu tsc\n",
                 frequency,
                 (unsigned long long)tsc_hz,
                 (unsigned long long)apic_timer_tsc_per_period);
@@ -1311,8 +1333,8 @@ int apic_timer_init(uint32_t frequency)
             kprintf("[APIC-TIMER-INIT] LAPIC timer regs unavailable\n");
             return -1;
         }
-        kprintf("[APIC-TIMER-INIT] mode=periodic hz=%u ticks_per_ms=%u\n",
-                frequency, apic_timer_ticks_per_ms);
+        klog("timer", "mode=periodic hz=%u ticks_per_ms=%u\n",
+             frequency, apic_timer_ticks_per_ms);
     }
 
     /* Claim the vector only now that a working mode has been established.
@@ -1357,7 +1379,11 @@ void apic_timer_start(void)
         lvt &= ~APIC_LVT_MASKED;
         apic_write_register(APIC_LVT_TIMER, lvt);
         __asm__ volatile ("" ::: "memory");
-        wrmsr64(MSR_IA32_TSC_DEADLINE, rdtsc64() + apic_timer_tsc_per_period);
+        {
+            uint64_t first = rdtsc64() + apic_timer_tsc_per_period;
+            percpu_self()->timer_deadline = first;
+            wrmsr64(MSR_IA32_TSC_DEADLINE, first);
+        }
         kprintf("[APIC-TIMER-START] mode=TSC-Deadline period=%llu tsc\n",
                 (unsigned long long)apic_timer_tsc_per_period);
     } else {

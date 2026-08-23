@@ -176,7 +176,14 @@ typedef struct thread {
     TAILQ_ENTRY(thread) wait_link;  /* Узел waitq-очереди */
     TAILQ_ENTRY(thread) wait_timeout_link; /* Узел глобального timeout-list ожидания */
     struct waitq* waitq_owner;      /* Текущая waitq, если поток ожидает */
-    uint64_t wait_deadline_tick;    /* Дедлайн ожидания в тиках (0=без дедлайна) */
+    /* Дедлайн ожидания в наносекундах ktime (0 = без дедлайна).
+     *
+     * В тиках он держаться не может: тики теряются, когда обработчик не
+     * успевает за периодом — измерено 20% потерь на 1000 Гц, — и тогда сон
+     * длится дольше запрошенного ровно на долю потерянных. Абсолютное время
+     * от этого не зависит: потеря тика сдвигает момент проверки, а не сам
+     * дедлайн. */
+    uint64_t wait_deadline_ns;
     uint8_t wait_timeout_armed;     /* Поток находится в timeout-list ожидания */
     uint8_t wait_timed_out;         /* Поток разбужен по timeout waitq */
     struct thread* joiner;     /* Поток, ожидающий завершения */

@@ -28,6 +28,7 @@ KERNEL_C_SRCS += \
 	kernel/giant.c \
 	kernel/witness.c \
 	kernel/hygiene.c \
+	kernel/ktime.c \
 	mm/vm_object.c \
 	mm/vm_page.c \
 	mm/vm_phys.c \
@@ -71,6 +72,7 @@ KERNEL_ARCH_X86_64_C_SRCS := \
 	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/ktime_arch.c \
 	kernel/arch/x86_64/cpu_topology.c \
 	kernel/arch/x86_64/percpu.c \
 	kernel/arch/x86_64/irqstat.c \

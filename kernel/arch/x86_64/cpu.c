@@ -4,6 +4,7 @@
  */
 
 #include "../../core/cpu.h"
+#include "../../core/ktime.h"
 #include "../../core/task.h"
 #include "types.h"
 #include "gdt.h"
@@ -51,37 +52,6 @@ static inline uint64_t cpu_rdtsc(void)
 #define TSC_CAL_MS           10u
 #define TSC_CAL_DIVISOR      ((TSC_CAL_PIT_BASE_HZ * TSC_CAL_MS + 999u) / 1000u)
 
-static uint64_t tsc_calibrate_via_pit(void)
-{
-    /* Save port 0x61 state */
-    uint8_t p61 = cpu_inb(0x61);
-
-    /* Disable gate2 (bit 0 = 0), keep speaker muted (bit 1 = 0) */
-    cpu_outb(0x61, (uint8_t)(p61 & 0xFCu));
-
-    /* Channel 2, lobyte/hibyte, mode 0 (one-shot), binary */
-    cpu_outb(0x43, 0xB0u);
-    cpu_outb(0x42, (uint8_t)(TSC_CAL_DIVISOR & 0xFFu));
-    cpu_outb(0x42, (uint8_t)((TSC_CAL_DIVISOR >> 8) & 0xFFu));
-
-    uint64_t tsc_start = cpu_rdtsc();
-
-    /* Enable gate2 (bit 0 = 1) to start the countdown */
-    cpu_outb(0x61, (uint8_t)((p61 & 0xFCu) | 0x01u));
-
-    /* Spin until OUT2 (bit 5 of port 0x61) goes high */
-    while ((cpu_inb(0x61) & 0x20u) == 0u) {
-        __asm__ volatile ("pause");
-    }
-
-    uint64_t tsc_end = cpu_rdtsc();
-
-    /* Restore port 0x61 */
-    cpu_outb(0x61, p61);
-
-    /* delta TSC ticks / 10ms → Hz */
-    return ((tsc_end - tsc_start) * 1000ULL) / (uint64_t)TSC_CAL_MS;
-}
 
 static inline void cpuid_exec(uint32_t leaf, uint32_t subleaf,
                               uint32_t* eax, uint32_t* ebx, uint32_t* ecx, uint32_t* edx)
@@ -127,7 +97,11 @@ int cpu_init(void)
         return 0;
     }
 
-    /* Enable SSE/SSE2 for compiler-generated XMM instructions */
+    /* Kernel code is built -mno-mmx -mno-sse -msoft-float and never touches
+     * these register files, but user applications do, and nothing else turns
+     * them on. Leave CR0.EM clear and CR4.OSFXSR set so a process reaching
+     * for SSE gets SSE rather than #UD. CR0.TS stays clear: there is no lazy
+     * FPU switching here, so #NM in the kernel means a real bug. */
     uint64_t cr0, cr4;
     __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
     cr0 &= ~(1ULL << 2);  /* Clear EM (x87 emulation) */
@@ -247,9 +221,13 @@ int cpu_init(void)
             freq_hz = ((uint64_t)f15_ecx * (uint64_t)f15_ebx) / (uint64_t)f15_eax;
         }
     }
-    if (freq_hz == 0) {
-        freq_hz = tsc_calibrate_via_pit();
-    }
+    /*
+     * Whatever CPUID had to say, the authority on how fast the counter runs is
+     * ktime -- it measures against a reference whose rate is fixed by
+     * definition and then checks the answer. Keeping a second calibration here
+     * meant two numbers that could disagree, and one of them being wrong with
+     * nothing to compare it to is how the timer came to run at 800 Hz.
+     */
     cpu_freq_hz = freq_hz;
 
     cpu_info_cache.cpu_id = 0;
@@ -444,7 +422,8 @@ void cpu_idle(void)
 
 uint64_t cpu_get_frequency(void)
 {
-    return cpu_freq_hz;
+    uint64_t hz = ktime_hz();
+    return hz ? hz : cpu_freq_hz;
 }
 
 uint64_t cpu_get_time(void)

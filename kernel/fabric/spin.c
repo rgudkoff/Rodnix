@@ -7,6 +7,7 @@
 #include "../core/cpu.h"
 #include "../core/witness.h"
 #include "../core/hygiene.h"
+#include "../core/ktime.h"
 #include "../arch/percpu.h"
 #include "../../include/debug.h"
 #include "../../include/console.h"
@@ -61,11 +62,11 @@ static uint64_t spin_timeout_ticks(void)
 {
     uint64_t t = g_spin_timeout_ticks;
     if (t == 0) {
-        uint64_t hz = cpu_get_frequency();
         /* Resolved lazily rather than from an init hook: the first contended
-         * spin is long after calibration, and a lock that is taken before it
-         * still gets the backstop. */
-        t = hz ? ((hz / 1000000ULL) * SPIN_TIMEOUT_US) : SPIN_NO_DEADLINE;
+         * spin is long after the clock is established, and a lock taken before
+         * it still has the pause-count backstop. */
+        t = ktime_ready() ? ktime_ns_to_raw(SPIN_TIMEOUT_US * 1000ULL)
+                          : SPIN_NO_DEADLINE;
         g_spin_timeout_ticks = t;
     }
     return t;
@@ -85,17 +86,16 @@ static void spin_timeout(spinlock_t* lock, const char* name,
                          uint64_t gross, uint64_t net)
 {
     uint32_t owner = lock->owner_plus_one;
-    uint64_t hz = cpu_get_frequency();
-    uint64_t us = hz ? ((net * 1000000ULL) / hz) : 0;
-    uint64_t irq_us = hz ? (((gross - net) * 1000000ULL) / hz) : 0;
+    uint64_t us = ktime_raw_to_ns(net) / 1000ULL;
+    uint64_t irq_us = ktime_raw_to_ns(gross - net) / 1000ULL;
 
     kprintf("\n[SPIN] cpu%u stuck on %s (%s:%d)\n",
             (unsigned)cpu_get_id(), name ? name : "?", file, line);
-    if (hz) {
+    if (ktime_ready()) {
         kprintf("[SPIN] waiting %lluus, of which %lluus was interrupt time\n",
                 (unsigned long long)us, (unsigned long long)irq_us);
     } else {
-        kprintf("[SPIN] TSC not calibrated -- pause-count backstop fired\n");
+        kprintf("[SPIN] no clock -- pause-count backstop fired\n");
     }
     if (owner) {
         kprintf("[SPIN] held by cpu%u\n", (unsigned)(owner - 1u));
@@ -119,14 +119,14 @@ static inline void spin_wait_step(struct spin_wait* w, spinlock_t* lock,
     }
 
     if (w->started == 0) {
-        w->started = cpu_get_time();
+        w->started = ktime_raw();
         w->irq_base = hygiene_irq_ticks();
         return;
     }
 
     uint64_t limit = spin_timeout_ticks();
     if (limit != SPIN_NO_DEADLINE) {
-        uint64_t gross = cpu_get_time() - w->started;
+        uint64_t gross = ktime_raw() - w->started;
         if (gross >= limit) {
             /* Second check on the net duration, so an interrupt storm during
              * the wait is not reported as a stuck lock. */

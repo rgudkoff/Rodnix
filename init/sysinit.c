@@ -25,6 +25,7 @@
 #include "../kernel/core/witness.h"
 #include "../kernel/core/hygiene.h"
 #include "../mm/vm_phys.h"
+#include "../kernel/core/ktime.h"
 #include "../include/common.h"
 #include "../kernel/arch/x86_64/tlb.h"
 #include "../kernel/arch/gdt.h"
@@ -32,6 +33,7 @@
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
+static uint32_t g_tick_hz = 1000;
 static bool g_timer_use_apic = false;
 
 static int
@@ -60,6 +62,11 @@ sysinit_cpu(void)
 {
     extern int cpu_init(void);
     int rc = cpu_init();
+    /* Before hygiene, which cannot state a threshold in time without it, and
+     * before the timer, which needs a trustworthy reference to calibrate
+     * against rather than its own interrupts. */
+    ktime_init();
+    ktime_report();
     /*
      * After cpu_init() rather than with the other early registrations, and
      * that ordering is load-bearing: cpu_init() is what calibrates the TSC,
@@ -201,22 +208,42 @@ sysinit_timer(void)
     extern int apic_timer_init(uint32_t frequency);
     extern int pit_init(uint32_t frequency);
 
+    /* Tick rate, overridable with rdnx.hz=N. A knob rather than a constant
+     * because the rate a machine can actually service is a property of the
+     * machine: under emulation a 1000 Hz tick asks for a handler every
+     * millisecond and does not get one. */
+    uint32_t hz = 1000;
+    {
+        const boot_info_t* bi = boot_get_info();
+        const char* p = (bi && bi->cmdline[0]) ? strstr(bi->cmdline, "rdnx.hz=") : NULL;
+        if (p) {
+            uint32_t v = 0;
+            for (p += 8; *p >= '0' && *p <= '9'; p++) {
+                v = v * 10u + (uint32_t)(*p - '0');
+            }
+            if (v >= 10u && v <= 10000u) {
+                hz = v;
+            }
+        }
+    }
+    g_tick_hz = hz;
+
     bool use_apic_timer = false;
     if (apic_is_available()) {
-        if (apic_timer_init(1000) == 0) {
+        if (apic_timer_init(hz) == 0) {
             use_apic_timer = true;
         } else if (bootlog_is_verbose()) {
             klog("timer", "LAPIC timer init failed, trying PIT\n");
         }
     }
     if (!use_apic_timer) {
-        if (pit_init(1000) != 0) {
+        if (pit_init(hz) != 0) {
             return RDNX_E_GENERIC;
         }
     }
 
     g_timer_use_apic = use_apic_timer;
-    klog("timer", "source: %s @ 1000 Hz\n", use_apic_timer ? "LAPIC" : "PIT");
+    klog("timer", "source: %s @ %u Hz\n", use_apic_timer ? "LAPIC" : "PIT", hz);
     bootlog_mark("timer", use_apic_timer ? "lapic" : "pit");
     return RDNX_OK;
 }
@@ -576,6 +603,42 @@ kernel_enable_runtime_interrupts(void)
                 klog("timer", "LAPIC stalled and PIT fallback failed\n");
             }
         }
+    }
+
+    /*
+     * Check the timer against the clock, permanently.
+     *
+     * This is the check whose absence let the timer run at 800 Hz having been
+     * asked for 1000 -- for as long as the kernel has existed, with every
+     * sleep, timeout and time slice a quarter longer than intended and nothing
+     * saying so. ktime is calibrated by polling a counter whose rate is fixed
+     * by definition; the timer is counted by its own interrupts. When those
+     * two disagree, the disagreement is the finding.
+     */
+    if (g_timer_use_apic) {
+        extern uint32_t apic_timer_get_ticks(void);
+        uint64_t guard = 0;
+        uint32_t t0 = apic_timer_get_ticks();
+        while (apic_timer_get_ticks() == t0 && ++guard < 400000000ULL) {
+            __asm__ volatile ("pause");
+        }
+        t0 = apic_timer_get_ticks();
+        uint64_t raw0 = ktime_raw();
+        guard = 0;
+        while (ktime_raw_to_ns(ktime_raw() - raw0) < 200000000ULL &&
+               ++guard < 4000000000ULL) {
+            __asm__ volatile ("pause");
+        }
+        uint64_t raw1 = ktime_raw();
+        uint32_t dt = apic_timer_get_ticks() - t0;
+
+        int64_t ppm = ktime_check_rate("LAPIC timer", dt, raw0, raw1, g_tick_hz);
+        klog("timer", "%u interrupts in %lluus -> %lluHz (%lld ppm)\n",
+             (unsigned)dt,
+             (unsigned long long)(ktime_raw_to_ns(raw1 - raw0) / 1000ULL),
+             (unsigned long long)(((uint64_t)dt * 1000000000ULL) /
+                                  (ktime_raw_to_ns(raw1 - raw0) ? ktime_raw_to_ns(raw1 - raw0) : 1)),
+             (long long)ppm);
     }
 
     klog("kernel", "interrupts enabled\n");

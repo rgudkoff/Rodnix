@@ -513,6 +513,45 @@ static void run_contract_mode_if_enabled(void)
                 ok = 0;
             }
         }
+
+        /*
+         * A sleep must last about as long as it was asked to. Obvious enough
+         * that nobody checked, and it was wrong twice over: timeouts were
+         * computed by dividing by the time slice instead of the tick period,
+         * making every one of them ten times short, and the clock they were
+         * compared against lost a fifth of its ticks.
+         *
+         * Half to double is a wide gate on purpose -- this runs under an
+         * emulator where a scheduling delay of tens of milliseconds is normal
+         * -- and it is still narrow enough that neither of those two would
+         * have got through it.
+         */
+        if (time_ok) {
+            struct timespec s0, s1;
+            if (clock_gettime(CLOCK_MONOTONIC, &s0) == 0) {
+                struct timespec req;
+                req.tv_sec = 0;
+                req.tv_nsec = 200000000L;
+                (void)nanosleep(&req, 0);
+                if (clock_gettime(CLOCK_MONOTONIC, &s1) == 0) {
+                    uint64_t a = (uint64_t)s0.tv_sec * 1000000ULL + (uint64_t)s0.tv_nsec / 1000ULL;
+                    uint64_t b = (uint64_t)s1.tv_sec * 1000000ULL + (uint64_t)s1.tv_nsec / 1000ULL;
+                    uint64_t slept = (b > a) ? (b - a) : 0;
+                    if (slept >= 100000ULL && slept <= 400000ULL) {
+                        ct_log("CT-042", "PASS", "200ms sleep lasts about 200ms");
+                    } else {
+                        ct_log("CT-042", "FAIL", "200ms sleep was the wrong length");
+                        ok = 0;
+                    }
+                } else {
+                    ct_log("CT-042", "FAIL", "clock_gettime after sleep failed");
+                    ok = 0;
+                }
+            } else {
+                ct_log("CT-042", "FAIL", "clock_gettime before sleep failed");
+                ok = 0;
+            }
+        }
     }
 
     {
