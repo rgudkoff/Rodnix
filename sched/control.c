@@ -158,6 +158,23 @@ void scheduler_wake(thread_t* thread)
     if (thread->state == THREAD_STATE_DEAD) {
         return;
     }
+
+    /*
+     * Already running -- on this processor or another -- so there is nothing
+     * to wake.
+     *
+     * The branches below used to catch this case and force the thread READY
+     * and into the run queue while a processor was executing it. On one
+     * processor that was unreachable: the only RUNNING thread was the caller.
+     * With several it means a thread sitting in the queue that some CPU is
+     * mid-way through running, which showed up as "ready_dequeue: thread N
+     * state=2" and leaves two processors contending for one thread and one
+     * kernel stack.
+     */
+    if (thread->state == THREAD_STATE_RUNNING) {
+        return;
+    }
+
     if (thread->state == THREAD_STATE_BLOCKED) {
         if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
             uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;

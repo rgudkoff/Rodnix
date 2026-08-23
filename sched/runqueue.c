@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/core/cpu.h"
 #include "../kernel/fabric/spin.h"
 #include "../../arch/gdt.h"
 #include "../../../include/debug.h"
