@@ -16,6 +16,7 @@
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
 #include "../../core/memory.h"
+#include "../../../include/console.h"
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -89,6 +90,20 @@ struct pmm_state {
         uint32_t free_range_count;
         pmm_free_range_t free_ranges[PMM_MAX_FREE_RANGES];
     } zones[PMM_ZONE_COUNT];
+
+    /* Set once pmm_init() has built the free lists. Before it, the lists are
+     * still being assembled and every range operation is followed by a full
+     * rebuild anyway; maintaining them incrementally in that window would be
+     * work thrown away. After it, the rebuild is what we are trying not to
+     * do, so the lists are kept up to date one run at a time instead. */
+    bool freelist_live;
+
+    /* Times the allocator fell through to a bitmap scan because the free
+     * lists did not describe enough memory -- they hold PMM_MAX_FREE_RANGES
+     * entries and silently drop the rest. That path is O(total pages) twice
+     * over, so it is the one remaining place a single allocation can cost
+     * milliseconds. Counted rather than assumed not to happen. */
+    uint64_t fallback_allocs;
 
     pmm_region_t usable_regions[PMM_MAX_REGIONS];
     pmm_region_t reserved_regions[PMM_MAX_REGIONS];
@@ -375,6 +390,57 @@ static bool pmm_freelist_remove(pmm_zone_t zone, uint64_t start, uint64_t count)
     return false;
 }
 
+/*
+ * Take a run of pages out of the free lists, however many listed ranges it
+ * happens to straddle.
+ *
+ * pmm_freelist_remove() only handles a run that lies inside one range and
+ * reports failure otherwise. Used on its own that would be a correctness bug
+ * rather than a missed optimisation: a run spanning two ranges would be
+ * removed from neither, and the allocator would go on handing out pages that
+ * are now reserved.
+ *
+ * A page that no range covers is skipped. That is not an error -- the lists
+ * are a bounded description of memory and drop what does not fit -- so the
+ * scan jumps to the next listed range rather than stepping page by page
+ * through a hole.
+ */
+static void pmm_freelist_remove_run(pmm_zone_t zone, uint64_t start, uint64_t count)
+{
+    while (count > 0) {
+        uint32_t n = pmm_state.zones[zone].free_range_count;
+        uint64_t chunk = 0;
+        uint64_t next_listed = 0;
+        bool hit = false;
+
+        for (uint32_t i = 0; i < n; i++) {
+            pmm_free_range_t* r = &pmm_state.zones[zone].free_ranges[i];
+            if (start >= r->start && start < r->start + r->count) {
+                uint64_t avail = (r->start + r->count) - start;
+                chunk = (count < avail) ? count : avail;
+                hit = true;
+                break;
+            }
+            if (r->start > start && (next_listed == 0 || r->start < next_listed)) {
+                next_listed = r->start;
+            }
+        }
+
+        if (hit) {
+            pmm_freelist_remove(zone, start, chunk);
+            start += chunk;
+            count -= chunk;
+            continue;
+        }
+
+        if (next_listed == 0 || next_listed >= start + count) {
+            return;   /* nothing left of this run is listed */
+        }
+        count -= (next_listed - start);
+        start = next_listed;
+    }
+}
+
 static void pmm_rebuild_free_lists(void)
 {
     pmm_freelist_clear();
@@ -455,8 +521,17 @@ static void pmm_mark_range_free(uint64_t start, uint64_t end)
     }
     start = (start + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     end = end & ~(PAGE_SIZE - 1);
+
+    /* Mirror of pmm_mark_range_used(): runs that actually became free are
+     * inserted, and pmm_freelist_insert() merges them with their neighbours,
+     * so the list stays as compact as a rebuild would have left it. */
+    uint64_t run_start = 0;
+    uint64_t run_count = 0;
+    pmm_zone_t run_zone = PMM_ZONE_NORMAL;
+
     for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
         uint64_t index = pmm_page_to_index(addr);
+        bool flipped = false;
         if (pmm_bitmap_test(index)) {
             pmm_bitmap_clear(index);
             pmm_state.free_pages++;
@@ -467,7 +542,32 @@ static void pmm_mark_range_free(uint64_t start, uint64_t end)
                 pmm_state.zones[zone].free_pages++;
                 pmm_state.zones[zone].used_pages--;
             }
+            flipped = true;
         }
+
+        if (!pmm_state.freelist_live) {
+            continue;
+        }
+
+        pmm_zone_t z = pmm_zone_for_addr(addr);
+        if (flipped && run_count > 0 && z == run_zone &&
+            run_start + run_count == index) {
+            run_count++;
+            continue;
+        }
+        if (run_count > 0) {
+            pmm_freelist_insert(run_zone, run_start, run_count);
+            run_count = 0;
+        }
+        if (flipped) {
+            run_start = index;
+            run_count = 1;
+            run_zone = z;
+        }
+    }
+
+    if (run_count > 0) {
+        pmm_freelist_insert(run_zone, run_start, run_count);
     }
 }
 
@@ -487,8 +587,25 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
     }
     start = start & ~(PAGE_SIZE - 1);
     end = (end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    /*
+     * Runs of pages that this call actually flipped, applied to the free lists
+     * as we go. The alternative -- and what this replaced -- was to rebuild
+     * every list from the whole bitmap afterwards, which is O(all memory)
+     * whatever the size of the range, and was measured at 2 ms with interrupts
+     * masked for a range of a few megabytes.
+     *
+     * Only pages that changed state are collected: a range that was already
+     * reserved is not in any free list, and asking to remove it would be work
+     * with no effect.
+     */
+    uint64_t run_start = 0;
+    uint64_t run_count = 0;
+    pmm_zone_t run_zone = PMM_ZONE_NORMAL;
+
     for (uint64_t addr = start; addr < end; addr += PAGE_SIZE) {
         uint64_t index = pmm_page_to_index(addr);
+        bool flipped = false;
         if (!pmm_bitmap_test(index)) {
             pmm_bitmap_set(index);
             pmm_state.free_pages--;
@@ -499,7 +616,32 @@ static void pmm_mark_range_used(uint64_t start, uint64_t end)
                 pmm_state.zones[zone].free_pages--;
                 pmm_state.zones[zone].used_pages++;
             }
+            flipped = true;
         }
+
+        if (!pmm_state.freelist_live) {
+            continue;
+        }
+
+        pmm_zone_t z = pmm_zone_for_addr(addr);
+        if (flipped && run_count > 0 && z == run_zone &&
+            run_start + run_count == index) {
+            run_count++;
+            continue;
+        }
+        if (run_count > 0) {
+            pmm_freelist_remove_run(run_zone, run_start, run_count);
+            run_count = 0;
+        }
+        if (flipped) {
+            run_start = index;
+            run_count = 1;
+            run_zone = z;
+        }
+    }
+
+    if (run_count > 0) {
+        pmm_freelist_remove_run(run_zone, run_start, run_count);
     }
 }
 
@@ -787,6 +929,7 @@ int pmm_init_from_mmap(uint64_t memory_start, uint64_t memory_end,
     }
 
     pmm_rebuild_free_lists();
+    pmm_state.freelist_live = true;
     return RDNX_OK;
 }
 
@@ -1071,7 +1214,25 @@ static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
         pmm_zero_page(phys + (uint64_t)p * PAGE_SIZE);
     }
 
-    /* Re-sync free-list metadata after bitmap fallback allocation. */
+    /*
+     * Re-sync free-list metadata after bitmap fallback allocation.
+     *
+     * Still a full rebuild, and still O(all memory) under a masked lock --
+     * this is the one path where a single allocation can cost milliseconds.
+     * It survives because it is the recovery for a description that has gone
+     * incomplete, and shrinking the window means giving the free lists a
+     * bound that does not depend on how fragmented memory is. That is a
+     * different change.
+     *
+     * Made loud rather than left latent: on this workload it never fires, and
+     * "never observed" is only worth something if we would notice.
+     */
+    pmm_state.fallback_allocs++;
+    if (pmm_state.fallback_allocs == 1) {
+        kprintf("[pmm] free lists exhausted (%u ranges) — falling back to a "
+                "bitmap scan; this rebuilds every list under a masked lock\n",
+                (unsigned)PMM_MAX_FREE_RANGES);
+    }
     pmm_rebuild_free_lists();
     return phys;
 }
@@ -1094,7 +1255,9 @@ static void pmm_reserve_range_locked(uint64_t start, uint64_t end){
     pmm_mark_range_used(start, end);
     pmm_add_region(pmm_state.reserved_regions, &pmm_state.reserved_count,
                    start, end - start);
-    pmm_rebuild_free_lists();
+    /* No rebuild: pmm_mark_range_used() has already taken the affected runs
+     * out of the free lists, at a cost proportional to the range rather than
+     * to the size of memory. */
 }
 
 void pmm_reserve_range(uint64_t start, uint64_t end)
@@ -1111,7 +1274,6 @@ static void pmm_release_range_locked(uint64_t start, uint64_t end){
         return;
     }
     pmm_mark_range_free(start, end);
-    pmm_rebuild_free_lists();
 }
 
 void pmm_release_range(uint64_t start, uint64_t end)

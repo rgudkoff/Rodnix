@@ -42,6 +42,16 @@
 /* rdtsc is not free, so the deadline is only consulted every so many spins.
  * An uncontended acquire never reaches the check at all. */
 #define SPIN_CHECK_MASK       0xFFFu
+/*
+ * A deadline alone is not enough to declare a lock stuck, because the clock
+ * can move while the processor does not: under emulation the host may
+ * deschedule the whole guest, and the TSC counts through it. Measured -- a
+ * twelve second gap in which the timer tick advanced by zero. A spin that has
+ * genuinely lasted a second has executed far more pause instructions than
+ * this; one that only looks like it has executed almost none. Both conditions
+ * must hold.
+ */
+#define SPIN_MIN_SPINS        10000000ULL
 
 #define SPIN_NO_DEADLINE      0xFFFFFFFFFFFFFFFFULL
 
@@ -122,7 +132,7 @@ static inline void spin_wait_step(struct spin_wait* w, spinlock_t* lock,
              * the wait is not reported as a stuck lock. */
             uint64_t irq = hygiene_irq_ticks() - w->irq_base;
             uint64_t net = (gross > irq) ? (gross - irq) : 0;
-            if (net >= limit) {
+            if (net >= limit && w->spins >= SPIN_MIN_SPINS) {
                 spin_timeout(lock, name, file, line, gross, net);
             }
         }

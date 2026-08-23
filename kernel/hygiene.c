@@ -13,10 +13,26 @@
 
 #define HYGIENE_MAX_CPUS 64
 
+/*
+ * Above this, a window is not believed.
+ *
+ * Nothing in this kernel legitimately holds a processor for a second: the spin
+ * timeout panics at one, the longest real window measured is single-digit
+ * milliseconds, and a genuine second-long stall would be a deadlock, which has
+ * its own detector. So a duration past this bound says the clock moved without
+ * the machine moving, and the honest thing is to drop it rather than report
+ * the largest number the emulator happened to produce.
+ */
+#define HYGIENE_IMPLAUSIBLE_US 1000000ULL
+
 /* How many over-threshold windows are printed before the mechanism goes quiet
  * and only keeps counting. A latency bug that fires once a millisecond would
  * otherwise be reported by drowning the evidence of everything else. */
 #define HYGIENE_REPORT_BUDGET 8
+
+/* Raise with rdnx.hygiene.reports=N when the question is which sites offend
+ * rather than whether any do. The default is small because the streamed lines
+ * are for noticing, and the aggregate report is for reading. */
 
 struct hygiene_window {
     uint64_t worst_gross;
@@ -26,6 +42,24 @@ struct hygiene_window {
     uint32_t worst_aux;      /* vector, for the interrupt window */
     uint64_t over_count;
     uint64_t total_count;
+    /* Windows found still open when the next one started. A window is opened
+     * and closed by a matched pair, so this can only be nonzero if the pair
+     * was broken -- which makes every duration after it meaningless. Counted
+     * rather than assumed absent: the first version of this file guarded the
+     * bookkeeping with the reporting guard, so a window closing while a report
+     * printed was never closed at all, and the next close charged it seconds
+     * of unrelated time. The number looked like a finding. */
+    uint64_t stale_count;
+    /* Windows whose measured duration cannot be true. The clock can move
+     * while the machine does not: under emulation the host may deschedule the
+     * whole guest, and the TSC keeps counting through it. Measured here as
+     * windows of twelve seconds during which the timer tick advanced by
+     * exactly zero -- no instruction ran, so nothing was held for twelve
+     * seconds. Folding those into the worst case would put a number in the
+     * report that no code is responsible for. Discarded, and counted, because
+     * a discarded measurement that nobody can see is indistinguishable from a
+     * measurement that was never taken. */
+    uint64_t implausible_count;
 };
 
 struct hygiene_cpu {
@@ -131,6 +165,8 @@ void hygiene_init(void)
             g_us_preempt = hyg_atoi(rest);
         } else if (hyg_prefix(p, "rdnx.hygiene.irq=", &rest)) {
             g_us_irq = hyg_atoi(rest);
+        } else if (hyg_prefix(p, "rdnx.hygiene.reports=", &rest)) {
+            g_report_budget = (uint32_t)hyg_atoi(rest);
         } else if (hyg_prefix(p, "rdnx.hygiene=", &rest)) {
             if (rest[0] == 'o' && rest[1] == 'f') {
                 g_mode = HYGIENE_OFF;
@@ -188,6 +224,11 @@ static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
     }
 
     w->total_count++;
+
+    if (g_tsc_hz && net / (g_tsc_hz / 1000000ULL) > HYGIENE_IMPLAUSIBLE_US) {
+        w->implausible_count++;
+        return;
+    }
 
     if (net > w->worst_net) {
         w->worst_net = net;
@@ -261,8 +302,14 @@ void hygiene_int_begin(const char* site, int line)
         return;
     }
     struct hygiene_cpu* c = hyg_cpu();
-    if (c->busy || c->int_start) {
-        return;
+    /*
+     * Deliberately not guarded by c->busy. The guard belongs on the reporting,
+     * which re-enters through the console, and not on the bookkeeping, which
+     * has to stay paired whatever else is happening -- an unpaired open is how
+     * a window comes to span seconds.
+     */
+    if (c->int_start) {
+        c->w_int.stale_count++;
     }
     c->int_site = site;
     c->int_line = line;
@@ -275,7 +322,7 @@ void hygiene_int_end(void)
         return;
     }
     struct hygiene_cpu* c = hyg_cpu();
-    if (c->busy || !c->int_start) {
+    if (!c->int_start) {
         return;
     }
     uint64_t gross = hyg_now() - c->int_start;
@@ -294,8 +341,8 @@ void hygiene_preempt_begin(void)
         return;
     }
     struct hygiene_cpu* c = hyg_cpu();
-    if (c->busy || c->preempt_start) {
-        return;
+    if (c->preempt_start) {
+        c->w_preempt.stale_count++;
     }
     c->preempt_irq_base = c->irq_ticks;
     c->preempt_start = hyg_now();
@@ -307,7 +354,7 @@ void hygiene_preempt_end(void)
         return;
     }
     struct hygiene_cpu* c = hyg_cpu();
-    if (c->busy || !c->preempt_start) {
+    if (!c->preempt_start) {
         return;
     }
     uint64_t gross = hyg_now() - c->preempt_start;
@@ -385,6 +432,15 @@ static void hyg_line(const char* what, const struct hygiene_window* w,
             (unsigned long long)hyg_us(threshold),
             (unsigned long long)w->over_count,
             (unsigned long long)w->total_count);
+    if (w->implausible_count) {
+        kprintf("  discarded %llu implausible",
+                (unsigned long long)w->implausible_count);
+    }
+    if (w->stale_count) {
+        /* Loud rather than a footnote: any nonzero value here means the
+         * numbers on this line are not to be trusted. */
+        kprintf("  UNPAIRED %llu", (unsigned long long)w->stale_count);
+    }
     if (show_vector) {
         kprintf("  worst vector 0x%02x", (unsigned)w->worst_aux);
     } else if (w->worst_site) {
