@@ -1,5 +1,6 @@
 #include "security.h"
 #include "core/task.h"
+#include "unix/proc.h"
 
 int security_init(void)
 {
@@ -8,11 +9,11 @@ int security_init(void)
 
 int security_check_euid(uint32_t required_uid)
 {
-    task_t* task = task_get_current();
-    if (!task) {
+    proc_t* proc = proc_current();
+    if (!proc) {
         return SEC_DENY;
     }
-    if (task->euid == 0 || task->euid == required_uid) {
+    if (proc->euid == 0 || proc->euid == required_uid) {
         return SEC_OK;
     }
     return SEC_DENY;
@@ -24,7 +25,8 @@ int security_vfs_access(uint16_t inode_mode,
                         int      access,
                         const task_t* caller)
 {
-    uint32_t caller_euid = caller ? caller->euid : 0;
+    const proc_t* caller_proc = task_proc(caller);
+    uint32_t caller_euid = proc_get_euid(caller_proc);
 
     /* Root bypasses DAC. */
     if (caller_euid == 0) {
@@ -38,7 +40,7 @@ int security_vfs_access(uint16_t inode_mode,
         if (access & SEC_ACCESS_READ)  mask |= S_IRUSR;
         if (access & SEC_ACCESS_WRITE) mask |= S_IWUSR;
         if (access & SEC_ACCESS_EXEC)  mask |= S_IXUSR;
-    } else if (task_in_group(caller, inode_gid)) {
+    } else if (proc_in_group(caller_proc, inode_gid)) {
         /* group triad */
         if (access & SEC_ACCESS_READ)  mask |= S_IRGRP;
         if (access & SEC_ACCESS_WRITE) mask |= S_IWGRP;

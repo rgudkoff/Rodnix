@@ -7,6 +7,9 @@
  */
 
 #include "procfs.h"
+#include "../kernel/arch/x86_64/irqstat.h"
+#include "../kernel/arch/x86_64/vectors.h"
+#include "../kernel/arch/cpu_topology.h"
 #include "vfs.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
@@ -14,6 +17,7 @@
 #include "../../include/version.h"
 #include "../lib/heap.h"
 #include "../kernel/core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../kernel/arch/x86_64/pmm.h"
 
 /* ============================================================================
@@ -54,6 +58,14 @@ static void pb_u64(pbuf_t* p, uint64_t v)
         v /= 10;
     }
     pb_str(p, tmp + i);
+}
+
+/* Two hex digits, so vectors read the way they are written elsewhere. */
+static void pb_hex2(pbuf_t* p, uint32_t v)
+{
+    const char* hex = "0123456789ABCDEF";
+    pb_char(p, hex[(v >> 4) & 0xF]);
+    pb_char(p, hex[v & 0xF]);
 }
 
 static void pb_kv_str(pbuf_t* p, const char* key, const char* val)
@@ -133,6 +145,106 @@ static int procfs_read_meminfo(vfs_file_t* file, void* buf, size_t size)
 }
 
 /* ============================================================================
+ * /proc/interrupts
+ * ============================================================================ */
+
+/* Right-align a count in a fixed column so the per-CPU columns line up and a
+ * skewed distribution is visible at a glance rather than by reading. */
+static void pb_u64_col(pbuf_t* p, uint64_t val, size_t width)
+{
+    char digits[24];
+    size_t n = 0;
+
+    if (val == 0) {
+        digits[n++] = '0';
+    }
+    while (val > 0 && n < sizeof(digits)) {
+        digits[n++] = (char)('0' + (val % 10));
+        val /= 10;
+    }
+
+    for (size_t pad = n; pad < width; pad++) {
+        pb_char(p, ' ');
+    }
+    while (n > 0) {
+        pb_char(p, digits[--n]);
+    }
+}
+
+static const char* procfs_vector_name(uint32_t vector)
+{
+    if (vector == VECTOR_LAPIC_TIMER) {
+        return "LAPIC timer";
+    }
+    if (vector == VECTOR_PIT_TIMER) {
+        return "PIT timer";
+    }
+    if (vector == VECTOR_RESCHED) {
+        return "reschedule";
+    }
+    if (vector == VECTOR_SPURIOUS) {
+        return "spurious";
+    }
+    if (vector >= VECTOR_IPI_FIRST && vector <= VECTOR_IPI_LAST) {
+        return "IPI";
+    }
+    if (vector > VECTOR_PIT_TIMER && vector <= VECTOR_ISA_LAST) {
+        return "ISA IRQ";
+    }
+    if (vector >= VECTOR_DEVICE_FIRST && vector <= VECTOR_DEVICE_LAST) {
+        return "device";
+    }
+    return "";
+}
+
+static int procfs_read_interrupts(vfs_file_t* file, void* buf, size_t size)
+{
+    /* On the stack, like every other generator here. A static buffer would
+     * be shared by two readers on two processors, each overwriting the
+     * other's output mid-generation. */
+    char tmp[2048];
+    pbuf_t p = { tmp, sizeof(tmp) - 1, 0 };
+
+    uint32_t cpus = cpu_topology_count();
+    if (cpus > 8u) {
+        /* One line has to stay readable; the rest are reachable through the
+         * per-vector totals below. */
+        cpus = 8u;
+    }
+
+    pb_str(&p, "vector");
+    for (uint32_t c = 0; c < cpus; c++) {
+        pb_str(&p, "      CPU");
+        pb_u64(&p, c);
+    }
+    pb_str(&p, "        total  source\n");
+
+    for (uint32_t v = 0; v < 256u; v++) {
+        if (!irqstat_vector_seen(v)) {
+            continue;
+        }
+        pb_str(&p, "  0x");
+        pb_hex2(&p, v);
+        for (uint32_t c = 0; c < cpus; c++) {
+            pb_u64_col(&p, irqstat_get(c, v), 10);
+        }
+        pb_u64_col(&p, irqstat_get_total(v), 13);
+        pb_str(&p, "  ");
+        pb_str(&p, procfs_vector_name(v));
+        pb_char(&p, '\n');
+    }
+
+    pb_str(&p, "unhandled");
+    for (uint32_t c = 0; c < cpus; c++) {
+        pb_u64_col(&p, irqstat_get_unhandled(c), 10);
+    }
+    pb_char(&p, '\n');
+
+    tmp[p.len] = '\0';
+    return procfs_serve(file, tmp, p.len, buf, size);
+}
+
+/* ============================================================================
  * /proc/uptime
  * ============================================================================ */
 
@@ -185,25 +297,39 @@ static char task_state_char(task_state_t s)
     }
 }
 
+/* Kernel-задачи не обязаны иметь UNIX-персоналию: читаем её безопасно. */
+static uint32_t proc_uid_or_zero(const task_t* t)
+{
+    const proc_t* pr = task_proc(t);
+    return pr ? pr->uid : 0u;
+}
+
+static const char* proc_cwd_or(const task_t* t, const char* fallback)
+{
+    const proc_t* pr = task_proc(t);
+    return (pr && pr->cwd[0]) ? pr->cwd : fallback;
+}
+
 static void pb_task_status(pbuf_t* p, const task_t* t)
 {
-    pb_kv_str(p, "Name",  t->cwd[0] ? t->cwd : "kernel");
+    const proc_t* pr = task_proc(t);
+    pb_kv_str(p, "Name",  (pr && pr->cwd[0]) ? pr->cwd : "kernel");
     pb_kv_str(p, "State", task_state_name(t->state));
     pb_kv_u64(p, "Pid",   t->task_id);
     pb_kv_u64(p, "PPid",  t->parent_task_id);
     pb_kv_u64(p, "Threads", t->thread_count);
     /* Uid: real effective saved fs */
     pb_str(p, "Uid:\t");
-    pb_u64(p, t->uid);  pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\t');
-    pb_u64(p, t->euid); pb_char(p, '\n');
+    pb_u64(p, pr ? pr->uid : 0);  pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_euid(pr)); pb_char(p, '\n');
     /* Gid: real effective saved fs */
     pb_str(p, "Gid:\t");
-    pb_u64(p, t->gid);  pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\t');
-    pb_u64(p, t->egid); pb_char(p, '\n');
+    pb_u64(p, pr ? pr->gid : 0);  pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\t');
+    pb_u64(p, proc_get_egid(pr)); pb_char(p, '\n');
 }
 
 static int procfs_read_self_status(vfs_file_t* file, void* buf, size_t size)
@@ -271,11 +397,11 @@ static void procfs_append_task(const task_t* t, void* ctx)
     pb_char(&p, '\t');
     pb_u64(&p, t->thread_count);
     pb_char(&p, '\t');
-    pb_u64(&p, t->uid);
+    pb_u64(&p, proc_uid_or_zero(t));
     pb_char(&p, '\t');
     pb_u64(&p, t->thread_group.cpu_ticks);
     pb_char(&p, '\t');
-    pb_str(&p, t->cwd[0] ? t->cwd : "/");
+    pb_str(&p, proc_cwd_or(t, "/"));
     pb_char(&p, '\n');
 
     ab->len += p.len;
@@ -333,13 +459,13 @@ static int procfs_read_pid_stat(vfs_file_t* file, void* buf, size_t size)
         /* pid (command) stat ppid uid nthrd cputicks */
         pb_u64(&p, t->task_id);
         pb_str(&p, " (");
-        pb_str(&p, t->cwd[0] ? t->cwd : "kernel");
+        pb_str(&p, proc_cwd_or(t, "kernel"));
         pb_str(&p, ") ");
         pb_char(&p, task_state_char(t->state));
         pb_char(&p, ' ');
         pb_u64(&p, t->parent_task_id);
         pb_char(&p, ' ');
-        pb_u64(&p, t->uid);
+        pb_u64(&p, proc_uid_or_zero(t));
         pb_char(&p, ' ');
         pb_u64(&p, t->thread_count);
         pb_char(&p, ' ');
@@ -363,13 +489,13 @@ static int procfs_read_self_stat(vfs_file_t* file, void* buf, size_t size)
     if (t) {
         pb_u64(&p, t->task_id);
         pb_str(&p, " (");
-        pb_str(&p, t->cwd[0] ? t->cwd : "kernel");
+        pb_str(&p, proc_cwd_or(t, "kernel"));
         pb_str(&p, ") ");
         pb_char(&p, task_state_char(t->state));
         pb_char(&p, ' ');
         pb_u64(&p, t->parent_task_id);
         pb_char(&p, ' ');
-        pb_u64(&p, t->uid);
+        pb_u64(&p, proc_uid_or_zero(t));
         pb_char(&p, ' ');
         pb_u64(&p, t->thread_count);
         pb_char(&p, ' ');
@@ -494,6 +620,7 @@ static int procfs_mount(const char* source, vfs_node_t** out_root)
     if (!procfs_make_file(root, "version", procfs_read_version,   0) ||
         !procfs_make_file(root, "meminfo", procfs_read_meminfo,   0) ||
         !procfs_make_file(root, "uptime",  procfs_read_uptime,    0) ||
+        !procfs_make_file(root, "interrupts", procfs_read_interrupts, 0) ||
         !procfs_make_file(root, "status",  procfs_read_allstatus, 0)) {
         return RDNX_E_NOMEM;
     }

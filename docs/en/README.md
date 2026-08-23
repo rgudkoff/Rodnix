@@ -6,6 +6,12 @@ and direct links to those files.
 
 Current release baseline: `0.1.22`.
 
+## Audience
+
+RodNIX targets creators — music, video, and adjacent real-time media work.
+Deterministic latency, not average throughput, is the primary engineering
+criterion; see [`../ru/overview.md`](../ru/overview.md).
+
 ## Start
 
 - [`../ru/overview.md`](../ru/overview.md) - project scope and principles.

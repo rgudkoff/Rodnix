@@ -14,6 +14,7 @@
  */
 
 #include "types.h"
+#include "vectors.h"
 #include "pic.h"
 #include "../../core/interrupts.h"
 #include "../../../sched/scheduler.h"
@@ -26,6 +27,7 @@
 extern uint64_t pmm_alloc_page(void);
 extern void pmm_free_page(uint64_t phys);
 extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+extern int interrupt_unregister(uint32_t vector);
 
 /* ============================================================================
  * PIT I/O Ports
@@ -199,8 +201,9 @@ int pit_init(uint32_t frequency)
     }
     scheduler_set_tick_rate(frequency);
     
-    /* Register timer interrupt handler (IRQ 0 = vector 32) */
-    if (interrupt_register(32, pit_timer_handler) != 0) {
+    /* The PIT arrives as ISA IRQ 0 and cannot be moved off that vector. */
+    (void)interrupt_unregister(VECTOR_PIT_TIMER);
+    if (interrupt_register(VECTOR_PIT_TIMER, pit_timer_handler) != 0) {
         return -1;
     }
     

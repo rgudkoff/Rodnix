@@ -100,6 +100,18 @@ void interrupt_vector_free(uint32_t vector);
  * ============================================================================ */
 
 /**
+ * Enter the scheduler synchronously from kernel code.
+ *
+ * Raises a software interrupt on a vector reserved for exactly this, which
+ * builds the interrupt frame the switch path needs. Voluntary switches used
+ * to raise the timer vector instead; that ran the whole hardware-tick path
+ * for something that was not a tick, advancing the clock, firing wait-queue
+ * timeouts early, reprogramming the timer deadline and issuing an EOI for an
+ * interrupt that never happened. See docs/ru/irq_audit.md, F1.
+ */
+void interrupt_trigger_resched(void);
+
+/**
  * Включение прерываний
  */
 void interrupts_enable(void);

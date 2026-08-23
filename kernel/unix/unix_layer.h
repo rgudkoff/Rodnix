@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "../core/task.h"
+#include "proc.h"
 
 /*
  * Unix compatibility layer:

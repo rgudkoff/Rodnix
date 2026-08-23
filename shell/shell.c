@@ -13,12 +13,14 @@
  */
 
 #include "shell.h"
+#include "../kernel/core/giant.h"
 #include "../kernel/input/input.h"
 #include "../kernel/core/boot.h"
 #include "../fs/vfs.h"
 #include "../kernel/core/cpu.h"
 #include "../kernel/core/memory.h"
 #include "../kernel/core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../include/console.h"
 #include "../include/debug.h"
 #include "../include/common.h"
@@ -35,6 +37,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../kernel/core/witness.h"
+#include "../kernel/core/hygiene.h"
 
 /* ============================================================================
  * Shell Constants
@@ -803,11 +807,12 @@ static int shell_cmd_run(int argc, char** argv)
         return RDNX_E_NOMEM;
     }
     user_task->state = TASK_STATE_READY;
-    task_set_ids(user_task,
-                 parent_task->uid,
-                 parent_task->gid,
-                 parent_task->euid,
-                 parent_task->egid);
+    const proc_t* parent_proc = task_proc(parent_task);
+    proc_set_ids(task_proc(user_task),
+                 parent_proc->uid,
+                 parent_proc->gid,
+                 parent_proc->euid,
+                 parent_proc->egid);
     if (posix_bind_stdio_to_console(user_task) != RDNX_OK) {
         task_destroy(user_task);
         kfree(args->path);
@@ -828,10 +833,15 @@ static int shell_cmd_run(int argc, char** argv)
     thread->joiner = thread_get_current();
     kprintf("[RUN] block shell tid=%llu\n",
             (unsigned long long)thread->joiner->thread_id);
-    /* Block shell before switching away to avoid it staying READY */
+    /* Block shell before switching away to avoid it staying READY.
+     * scheduler_block() puts this thread to sleep without going through
+     * waitq_wait_until, so the kernel-wide lock has to be handed back here
+     * explicitly -- the thread being joined needs it to run at all. */
+    uint32_t gd = giant_drop();
     scheduler_block();
     scheduler_add_thread(thread);
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
+    giant_pickup(gd);
     return RDNX_OK;
 }
 
@@ -960,6 +970,40 @@ struct shell_command {
     const char* description;        /* Command description */
 };
 
+
+/*
+ * The lock order this kernel actually uses, as learned at runtime.
+ *
+ * Worth a command rather than only a panic message: nobody here can currently
+ * say what the order is, and the answer is a prerequisite for taking anything
+ * out from under Giant. Printed after a workload it is a specification; before
+ * one it is nearly empty, which is itself the honest answer.
+ */
+/*
+ * The latency windows this kernel actually produced.
+ *
+ * The number that matters to the product is here rather than in any
+ * throughput figure: at 48 kHz with a 64-sample buffer the period is 1.33 ms,
+ * so a worst-case masked window is a direct statement about whether audio can
+ * run at that buffer size.
+ */
+static int shell_cmd_hygiene(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    hygiene_report();
+    return 0;
+}
+
+static int shell_cmd_witness(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+    witness_dump_graph();
+    witness_dump_held();
+    return 0;
+}
+
 /* Built-in commands table */
 static const struct shell_command commands[] = {
     {"help",    shell_cmd_help,    "Show help information"},
@@ -983,6 +1027,8 @@ static const struct shell_command commands[] = {
     {"cat",     shell_cmd_cat,     "Show file contents"},
     {"ring3",   shell_cmd_ring3,   "Enter ring3 test stub"},
     {"run",     shell_cmd_run,     "Run userland program"},
+    {"witness", shell_cmd_witness, "Show the learned lock order graph"},
+    {"hygiene", shell_cmd_hygiene, "Show worst interrupt/preemption latency windows"},
     {"exit",    shell_cmd_exit,    "Exit shell and reboot"},
     {NULL, NULL, NULL}  /* End marker */
 };

@@ -33,6 +33,36 @@
 #define APIC_TIMER_CURRCNT   0x390
 #define APIC_TIMER_DIV       0x3E0
 
+/* x2APIC exposes the whole ICR as one 64-bit MSR rather than the xAPIC pair
+ * at 0x300/0x310; there is no MSR for the high half. */
+#define X2APIC_MSR_ICR       0x830
+
+/* ICR (Interrupt Command Register) fields.
+ * Bits 0-7 hold the vector, or the startup page number for a STARTUP IPI. */
+#define APIC_ICR_VECTOR_MASK            0xFFU
+#define APIC_ICR_DELIVERY_FIXED         (0U << 8)
+#define APIC_ICR_DELIVERY_LOWEST        (1U << 8)
+#define APIC_ICR_DELIVERY_SMI           (2U << 8)
+#define APIC_ICR_DELIVERY_NMI           (4U << 8)
+#define APIC_ICR_DELIVERY_INIT          (5U << 8)
+#define APIC_ICR_DELIVERY_STARTUP       (6U << 8)
+#define APIC_ICR_DEST_PHYSICAL          (0U << 11)
+#define APIC_ICR_DEST_LOGICAL           (1U << 11)
+/* Reads as 1 while a previous IPI is still being delivered. Reserved, and
+ * therefore meaningless, in x2APIC mode. */
+#define APIC_ICR_DELIVERY_STATUS        (1U << 12)
+#define APIC_ICR_LEVEL_DEASSERT         (0U << 14)
+#define APIC_ICR_LEVEL_ASSERT           (1U << 14)
+#define APIC_ICR_TRIGGER_EDGE           (0U << 15)
+#define APIC_ICR_TRIGGER_LEVEL          (1U << 15)
+#define APIC_ICR_SHORTHAND_NONE         (0U << 18)
+#define APIC_ICR_SHORTHAND_SELF         (1U << 18)
+#define APIC_ICR_SHORTHAND_ALL          (2U << 18)
+#define APIC_ICR_SHORTHAND_ALL_BUT_SELF (3U << 18)
+/* In xAPIC the destination sits in bits 24-31 of the high half; in x2APIC the
+ * high half is the full 32-bit ID with no shift. */
+#define APIC_ICR_DEST_SHIFT             24
+
 /* APIC SVR flags */
 #define APIC_SVR_ENABLE      (1U << 8)
 #define APIC_SVR_SPURIOUS_VECTOR  0xFF

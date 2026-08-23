@@ -53,7 +53,9 @@ typedef struct vfs_node {
      *   the last vfs_file_t holding it is closed.
      *   unlinked = true once the node has been removed from the namespace.
      */
-    uint32_t ref_count;
+    /* Manipulated atomically; see vfs_node_retain/release. Not a plain
+     * counter: it is written from any thread on any processor. */
+    volatile uint32_t ref_count;
     bool     unlinked;
 } vfs_node_t;
 
@@ -154,9 +156,6 @@ int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx);
 
 int vfs_open(const char* path, int flags, vfs_file_t* out_file);
 int vfs_close(vfs_file_t* file);
-/* Duplicate an open file descriptor — retains node so both src and dst
- * hold independent references. dst must not already be open. */
-int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst);
 int vfs_read(vfs_file_t* file, void* buffer, size_t size);
 int vfs_write(vfs_file_t* file, const void* buffer, size_t size);
 int vfs_seek(vfs_file_t* file, int64_t off, int whence, uint64_t* out_pos);
@@ -171,3 +170,12 @@ int vfs_fchmod(vfs_file_t* file, uint16_t mode);
 /* Pass (uint32_t)-1 for uid or gid to leave the field unchanged. */
 int vfs_chown(const char* path, uint32_t uid, uint32_t gid);
 int vfs_fchown(vfs_file_t* file, uint32_t uid, uint32_t gid);
+
+struct rdnx_file;
+struct rdnx_file* vfs_file_open(const char* path, int vfs_flags);
+/* Same as vfs_file_open(), but writes the real vfs_open()/kmalloc() failure
+ * code to *out_err on failure (RDNX_OK on success). vfs_file_open() cannot
+ * report this itself — a bare NULL return can't distinguish ENOENT from
+ * EEXIST from EACCES from ENOMEM, and callers translating into guest errno
+ * (see kernel/linux/linux_errno.c) need the real code. out_err may be NULL. */
+struct rdnx_file* vfs_file_open_ex(const char* path, int vfs_flags, int* out_err);

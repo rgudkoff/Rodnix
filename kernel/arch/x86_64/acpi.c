@@ -365,6 +365,72 @@ int acpi_madt_get_ioapic(uint32_t index, struct acpi_madt_ioapic_info* out_info)
     return -1;
 }
 
+int acpi_madt_get_cpus(struct acpi_madt_cpu_info* out, uint32_t max, uint32_t* out_count)
+{
+    if (!out_count) {
+        return -1;
+    }
+    *out_count = 0;
+
+    const struct acpi_madt* madt = acpi_get_madt();
+    if (!madt) {
+        return -1;
+    }
+
+    const bool probe = (out == NULL || max == 0);
+    const uint8_t* madt_data = (const uint8_t*)madt;
+    uint32_t madt_length = madt->header.length;
+    uint32_t offset = sizeof(struct acpi_madt);
+    uint32_t found = 0;
+    uint32_t written = 0;
+
+    while (offset + sizeof(struct acpi_madt_entry_header) <= madt_length) {
+        const struct acpi_madt_entry_header* entry =
+            (const struct acpi_madt_entry_header*)(madt_data + offset);
+
+        if (entry->length < sizeof(struct acpi_madt_entry_header)) {
+            return -1;
+        }
+        if (offset + entry->length > madt_length) {
+            return -1;
+        }
+
+        struct acpi_madt_cpu_info info;
+        bool is_cpu = false;
+
+        if (entry->type == ACPI_MADT_TYPE_LAPIC &&
+            entry->length >= sizeof(struct acpi_madt_lapic)) {
+            const struct acpi_madt_lapic* lapic = (const struct acpi_madt_lapic*)entry;
+            info.apic_id = lapic->apic_id;
+            info.acpi_uid = lapic->acpi_processor_id;
+            info.flags = lapic->flags;
+            info.x2apic = false;
+            is_cpu = true;
+        } else if (entry->type == ACPI_MADT_TYPE_X2APIC &&
+                   entry->length >= sizeof(struct acpi_madt_x2apic)) {
+            const struct acpi_madt_x2apic* x2 = (const struct acpi_madt_x2apic*)entry;
+            info.apic_id = x2->x2apic_id;
+            info.acpi_uid = x2->acpi_processor_uid;
+            info.flags = x2->flags;
+            info.x2apic = true;
+            is_cpu = true;
+        }
+
+        if (is_cpu) {
+            found++;
+            if (!probe && written < max) {
+                out[written] = info;
+                written++;
+            }
+        }
+
+        offset += entry->length;
+    }
+
+    *out_count = probe ? found : written;
+    return 0;
+}
+
 int acpi_madt_get_iso_for_source(uint8_t source, struct acpi_madt_iso_info* out_info)
 {
     if (!out_info) {

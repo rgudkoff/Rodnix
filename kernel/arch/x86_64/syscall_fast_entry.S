@@ -4,9 +4,14 @@ section .text
 
 global x86_64_syscall_fast_entry
 extern x86_64_syscall_fast_dispatch_frame
-extern g_tss_rsp0_shadow
-extern g_syscall_user_rsp_shadow
-extern g_current_tls_fs_base
+
+; struct percpu offsets, mirrored by _Static_assert in
+; kernel/arch/x86_64/percpu.h. GS.Base points at this CPU's slot, so these
+; reads answer for the processor executing them and never for another.
+%define PCPU_SELF             0
+%define PCPU_TSS_RSP0         8
+%define PCPU_SYSCALL_USER_RSP 16
+%define PCPU_TLS_FS_BASE      24
 
 %define TF_GS       0
 %define TF_FS       8
@@ -38,8 +43,8 @@ extern g_current_tls_fs_base
 
 x86_64_syscall_fast_entry:
     ; On SYSCALL entry: rsp=user_rsp, rcx=user_rip, r11=user_rflags.
-    mov [rel g_syscall_user_rsp_shadow], rsp
-    mov rsp, [rel g_tss_rsp0_shadow]
+    mov [gs:PCPU_SYSCALL_USER_RSP], rsp
+    mov rsp, [gs:PCPU_TSS_RSP0]
     ; Keep ABI-safe alignment regardless of rsp0 source alignment.
     and rsp, -16
 
@@ -80,7 +85,7 @@ x86_64_syscall_fast_entry:
     mov [rsp + TF_RIP], rcx
     mov qword [rsp + TF_CS], 0x23
     mov [rsp + TF_RFLAGS], r11
-    mov rax, [rel g_syscall_user_rsp_shadow]
+    mov rax, [gs:PCPU_SYSCALL_USER_RSP]
     mov [rsp + TF_RSP], rax
     mov qword [rsp + TF_SS], 0x1b
 
@@ -106,7 +111,7 @@ x86_64_syscall_fast_entry:
     ; on the fast path the hidden FS base can end up stale/zero after nested
     ; kernel activity, so restore it from the scheduler-maintained shadow.
     mov ecx, 0xC0000100
-    mov rax, [rel g_current_tls_fs_base]
+    mov rax, [gs:PCPU_TLS_FS_BASE]
     mov rdx, rax
     shr rdx, 32
     wrmsr

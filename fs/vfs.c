@@ -4,6 +4,7 @@
  */
 
 #include "vfs.h"
+#include "../kernel/fabric/spin.h"
 #include "initrd.h"
 #include "ext2.h"
 #include "devfs.h"
@@ -13,6 +14,7 @@
 #include "../lib/heap.h"
 #include "../kernel/security.h"
 #include "../core/task.h"
+#include "../kernel/unix/proc.h"
 #include "../../include/common.h"
 #include "../../include/console.h"
 #include "../../include/error.h"
@@ -28,16 +30,58 @@ typedef struct vfs_cache_entry {
 } vfs_cache_entry_t;
 
 /*
- * LOCKING: VFS globals — currently unprotected (single-threaded VFS path).
- *   Protects: vfs_mounts, vfs_root_mount, vfs_root, vfs_ready.
- *   TODO: add a vfs_lock (rwlock or spinlock) before enabling concurrent VFS callers.
+ * LOCKING: VFS path cache (vfs_cache[], vfs_cache_gen, vfs_cache_rr) —
+ *   vfs_cache_spin.
  *
- * LOCKING: VFS path cache (vfs_cache[], vfs_cache_gen, vfs_cache_rr).
- *   Currently unprotected — safe because all VFS mutations (vfs_mkdir, vfs_create,
- *   vfs_unlink) call vfs_cache_reset() and the cache is advisory (miss = re-lookup).
- *   On SMP or preemptible kernel: protect with a dedicated spinlock.
- *   cache entries include a node_gen stamp (P1-6A) to detect stale pointers on free.
+ *   The old note argued the cache needed no lock because every mutation calls
+ *   vfs_cache_reset() and a miss is merely a re-lookup. That holds on one
+ *   processor and fails on several: an entry is a path plus a node pointer
+ *   plus two generation stamps, and writing it is not atomic. A miss is
+ *   harmless, but a hit on an entry assembled from two different inserts --
+ *   one caller's path next to another's node -- is not.
+ *
+ *   Held with interrupts masked. The sections are a memcmp and a struct
+ *   copy, and the lock sits under path lookup, which everything else calls.
+ *
+ * LOCKING: mount list and driver table (vfs_mounts, vfs_root_mount, vfs_root,
+ *   vfs_ready, vfs_fs_drivers[], vfs_fs_driver_count) — vfs_meta_spin.
+ *
+ *   Mutated only by mount and driver registration, read by every lookup.
+ *   Separate from the cache lock because they are contended by different
+ *   things and neither is ever held across the other.
+ *
+ *   Neither lock covers file data operations: those go to the filesystem
+ *   driver, which brings its own (see g_ext2_rw_lock).
+ *
+ *   cache entries include a node_gen stamp (P1-6A) to detect stale pointers
+ *   on free.
  */
+static spinlock_t vfs_cache_spin;
+static spinlock_t vfs_meta_spin;
+
+/*
+ * LOCKING: the node graph itself (vfs_node_t.children, .sibling) —
+ *   vfs_tree_spin.
+ *
+ *   The comment this file used to carry named only the mount globals, and
+ *   taking it at its word missed the larger exposure: the directory tree is
+ *   a linked list walked during every path resolution and spliced by every
+ *   create, unlink and rename. One processor walking `children` while
+ *   another removes a node from it follows a pointer that has just been
+ *   relinked or freed.
+ *
+ *   Taken with spinlock_lock() rather than the irqsave variant: these are
+ *   the long sections -- a full directory walk, a callback per entry -- and
+ *   masking interrupts throughout cost enough to push the contract suite
+ *   past its timeout. Preemption off is what they need, which is exactly
+ *   what the plain variant provides.
+ *
+ *   Held across vfs_list_dir's walk as well, which means a directory
+ *   callback must not re-enter the VFS. That is a real constraint rather
+ *   than a hope: the lock records its holder and panics if one processor
+ *   takes it twice.
+ */
+static spinlock_t vfs_tree_spin;
 static vfs_mount_t* vfs_mounts = NULL;
 static vfs_mount_t* vfs_root_mount = NULL;
 static vfs_node_t* vfs_root = NULL;
@@ -55,11 +99,14 @@ static uint32_t vfs_fs_driver_count = 0;
 
 static vfs_mount_t* vfs_find_mount_at(const vfs_node_t* node)
 {
+    uint64_t f = spinlock_lock_irqsave(&vfs_meta_spin);
     for (vfs_mount_t* it = vfs_mounts; it; it = it->next) {
         if (it->mountpoint == node) {
+            spinlock_unlock_irqrestore(&vfs_meta_spin, f);
             return it;
         }
     }
+    spinlock_unlock_irqrestore(&vfs_meta_spin, f);
     return NULL;
 }
 
@@ -68,6 +115,7 @@ static vfs_mount_t* vfs_find_mount_at(const vfs_node_t* node)
  * meaningful and we never leave a dangling raw pointer in the cache. */
 static void vfs_cache_evict(const vfs_node_t* node)
 {
+    uint64_t f = spinlock_lock_irqsave(&vfs_cache_spin);
     for (size_t i = 0; i < VFS_CACHE_SIZE; i++) {
         if (vfs_cache[i].node == node) {
             vfs_cache[i].path[0] = '\0';
@@ -75,10 +123,12 @@ static void vfs_cache_evict(const vfs_node_t* node)
             vfs_cache[i].gen     = 0;
         }
     }
+    spinlock_unlock_irqrestore(&vfs_cache_spin, f);
 }
 
 static void vfs_cache_reset(void)
 {
+    uint64_t f = spinlock_lock_irqsave(&vfs_cache_spin);
     vfs_cache_gen++;
     for (size_t i = 0; i < VFS_CACHE_SIZE; i++) {
         vfs_cache[i].path[0] = '\0';
@@ -86,6 +136,7 @@ static void vfs_cache_reset(void)
         vfs_cache[i].gen = 0;
     }
     vfs_cache_rr = 0;
+    spinlock_unlock_irqrestore(&vfs_cache_spin, f);
 }
 
 static vfs_node_t* vfs_cache_lookup(const char* path)
@@ -93,6 +144,7 @@ static vfs_node_t* vfs_cache_lookup(const char* path)
     if (!path) {
         return NULL;
     }
+    uint64_t f = spinlock_lock_irqsave(&vfs_cache_spin);
     for (size_t i = 0; i < VFS_CACHE_SIZE; i++) {
         if (vfs_cache[i].gen != vfs_cache_gen) {
             continue;
@@ -102,9 +154,12 @@ static vfs_node_t* vfs_cache_lookup(const char* path)
             /* Liveness is guaranteed by vfs_cache_evict() in vfs_free_node():
              * any entry pointing to a freed node is cleared before the node
              * memory is released, so reaching here means the pointer is valid. */
-            return vfs_cache[i].node;
+            vfs_node_t* hit = vfs_cache[i].node;
+            spinlock_unlock_irqrestore(&vfs_cache_spin, f);
+            return hit;
         }
     }
+    spinlock_unlock_irqrestore(&vfs_cache_spin, f);
     return NULL;
 }
 
@@ -113,12 +168,14 @@ static void vfs_cache_insert(const char* path, vfs_node_t* node)
     if (!path || !node) {
         return;
     }
+    uint64_t f = spinlock_lock_irqsave(&vfs_cache_spin);
     size_t slot = vfs_cache_rr++ % VFS_CACHE_SIZE;
     strncpy(vfs_cache[slot].path, path, sizeof(vfs_cache[slot].path) - 1);
     vfs_cache[slot].path[sizeof(vfs_cache[slot].path) - 1] = '\0';
     vfs_cache[slot].node = node;
     vfs_cache[slot].gen = vfs_cache_gen;
     vfs_cache[slot].node_gen = node->inode ? node->inode->node_gen : 0;
+    spinlock_unlock_irqrestore(&vfs_cache_spin, f);
 }
 
 static vfs_inode_t* vfs_alloc_inode(vfs_node_type_t type)
@@ -133,8 +190,8 @@ static vfs_inode_t* vfs_alloc_inode(vfs_node_type_t type)
     inode->mode = (type == VFS_NODE_DIR) ? VFS_MODE_DIR_DEFAULT : VFS_MODE_FILE_DEFAULT;
     task_t* creator = task_get_current();
     if (creator) {
-        inode->uid = creator->euid;
-        inode->gid = creator->egid;
+        inode->uid = proc_get_euid(task_proc(creator));
+        inode->gid = proc_get_egid(task_proc(creator));
     }
     return inode;
 }
@@ -160,6 +217,16 @@ static vfs_node_t* vfs_alloc_node(const char* name, vfs_node_type_t type)
     return node;
 }
 
+/*
+ * Инвариант ссылок на ноду:
+ *   ref_count == (число живых rdnx_file_t, ссылающихся на ноду)
+ *                + (1, пока unlinked == false)
+ *
+ * vfs_open   : +1  (одно описание — одна ссылка)
+ * vfs_close  : -1
+ * vfs_unlink : снимает ссылку дерева, выставляет unlinked = true
+ * Нода освобождается, когда ref_count достигает нуля.
+ */
 static void vfs_free_node(vfs_node_t* node)
 {
     if (!node) {
@@ -193,14 +260,18 @@ static void vfs_node_release(vfs_node_t* node)
     if (!node) {
         return;
     }
-    if (node->ref_count == 0) {
-        /* Double-release bug — log and bail rather than underflow. */
+    /* Decrement and test in one step. Reading the count, deciding, and
+     * writing it back as three separate operations lets two releasers both
+     * see 1, both write 0, and both free the node. */
+    uint32_t before = __atomic_fetch_sub(&node->ref_count, 1u, __ATOMIC_ACQ_REL);
+    if (before == 0) {
+        /* Double-release bug — put it back and bail rather than underflow. */
+        __atomic_fetch_add(&node->ref_count, 1u, __ATOMIC_ACQ_REL);
         kprintf("[VFS] vfs_node_release: ref_count already 0 on node '%s'\n",
                 node->name);
         return;
     }
-    node->ref_count--;
-    if (node->ref_count == 0) {
+    if (before == 1) {
         vfs_free_node(node);
     }
 }
@@ -210,11 +281,14 @@ static vfs_node_t* vfs_find_child(vfs_node_t* dir, const char* name)
     if (!dir || dir->type != VFS_NODE_DIR) {
         return NULL;
     }
+    spinlock_lock(&vfs_tree_spin);
     for (vfs_node_t* it = dir->children; it; it = it->sibling) {
         if (strcmp(it->name, name) == 0) {
+            spinlock_unlock(&vfs_tree_spin);
             return it;
         }
     }
+    spinlock_unlock(&vfs_tree_spin);
     return NULL;
 }
 
@@ -223,9 +297,11 @@ static int vfs_add_child(vfs_node_t* dir, vfs_node_t* child)
     if (!dir || !child || dir->type != VFS_NODE_DIR) {
         return -1;
     }
+    spinlock_lock(&vfs_tree_spin);
     child->parent = dir;
     child->sibling = dir->children;
     dir->children = child;
+    spinlock_unlock(&vfs_tree_spin);
     return 0;
 }
 
@@ -460,10 +536,12 @@ static int vfs_mount_root_ramfs(void)
     }
     mnt->root = root;
     mnt->mountpoint = NULL;
+    uint64_t mf = spinlock_lock_irqsave(&vfs_meta_spin);
     mnt->next = vfs_mounts;
     vfs_mounts = mnt;
     vfs_root_mount = mnt;
     vfs_root = mnt->root;
+    spinlock_unlock_irqrestore(&vfs_meta_spin, mf);
     return 0;
 }
 
@@ -524,10 +602,13 @@ int vfs_register_fs(const vfs_fs_driver_t* driver)
     if (vfs_find_fs_driver(driver->name)) {
         return RDNX_OK;
     }
+    uint64_t f = spinlock_lock_irqsave(&vfs_meta_spin);
     if (vfs_fs_driver_count >= VFS_MAX_FS_DRIVERS) {
+        spinlock_unlock_irqrestore(&vfs_meta_spin, f);
         return RDNX_E_NOMEM;
     }
     vfs_fs_drivers[vfs_fs_driver_count++] = driver;
+    spinlock_unlock_irqrestore(&vfs_meta_spin, f);
     return RDNX_OK;
 }
 
@@ -564,8 +645,14 @@ int vfs_mount(const char* fs_name, const char* source, const char* target)
     mnt->fs_name = driver->name;
     mnt->root = root;
     mnt->mountpoint = mountpoint;
+
+    uint64_t mf = spinlock_lock_irqsave(&vfs_meta_spin);
     mnt->next = vfs_mounts;
     vfs_mounts = mnt;
+    spinlock_unlock_irqrestore(&vfs_meta_spin, mf);
+
+    /* Outside the lock on purpose: the cache has its own, and holding both
+     * would fix an order between them for no reason. */
     vfs_cache_reset();
     return RDNX_OK;
 }
@@ -704,8 +791,8 @@ int vfs_mkdir(const char* path)
             return RDNX_OK;
         }
         task_t* creator = task_get_current();
-        uint32_t euid = creator ? creator->euid : 0u;
-        uint32_t egid = creator ? creator->egid : 0u;
+        uint32_t euid = proc_get_euid(task_proc(creator));
+        uint32_t egid = proc_get_egid(task_proc(creator));
         vfs_node_t* new_node = NULL;
         return ext2_create_dir(parent, leaf, 0755u, euid, egid, &new_node);
     }
@@ -738,6 +825,7 @@ int vfs_unlink(const char* path)
     if (!parent) {
         return RDNX_E_INVALID;
     }
+    spinlock_lock(&vfs_tree_spin);
     vfs_node_t* prev = NULL;
     for (vfs_node_t* it = parent->children; it; it = it->sibling) {
         if (it == node) {
@@ -754,6 +842,9 @@ int vfs_unlink(const char* path)
      * lookup via the still-live cache sees the flag on the returned node. */
     node->unlinked = true;
     node->parent = NULL;
+    spinlock_unlock(&vfs_tree_spin);
+
+    /* Both take locks of their own, so neither runs under this one. */
     vfs_cache_reset();
     vfs_node_release(node); /* drop tree's reference; frees immediately if no open files */
     return RDNX_OK;
@@ -806,6 +897,7 @@ int vfs_rename(const char* old_path, const char* new_path)
         return RDNX_E_INVALID;
     }
 
+    spinlock_lock(&vfs_tree_spin);
     vfs_node_t* prev = NULL;
     for (vfs_node_t* it = old_parent->children; it; it = it->sibling) {
         if (it == node) {
@@ -824,6 +916,8 @@ int vfs_rename(const char* old_path, const char* new_path)
     node->parent = new_parent;
     strncpy(node->name, new_leaf, sizeof(node->name) - 1);
     node->name[sizeof(node->name) - 1] = '\0';
+    spinlock_unlock(&vfs_tree_spin);
+
     vfs_cache_reset();
     return RDNX_OK;
 }
@@ -837,9 +931,14 @@ int vfs_list_dir(const char* path, vfs_list_cb_t cb, void* ctx)
     if (!dir || dir->type != VFS_NODE_DIR) {
         return RDNX_E_NOTFOUND;
     }
+    /* Held across the callback, which therefore must not re-enter the VFS.
+     * Not a hope: the lock names itself and panics if a processor takes it
+     * twice. */
+    spinlock_lock(&vfs_tree_spin);
     for (vfs_node_t* it = dir->children; it; it = it->sibling) {
         cb(it, ctx);
     }
+    spinlock_unlock(&vfs_tree_spin);
     return RDNX_OK;
 }
 
@@ -861,8 +960,8 @@ int vfs_open(const char* path, int flags, vfs_file_t* out_file)
         }
         if (parent->inode && parent->inode->fs_tag == VFS_FS_TAG_EXT2) {
             task_t* creator = task_get_current();
-            uint32_t euid = creator ? creator->euid : 0u;
-            uint32_t egid = creator ? creator->egid : 0u;
+            uint32_t euid = proc_get_euid(task_proc(creator));
+            uint32_t egid = proc_get_egid(task_proc(creator));
             int crc = ext2_create_file(parent, leaf, 0644u, euid, egid, &node);
             if (crc != RDNX_OK) {
                 return crc;
@@ -931,16 +1030,6 @@ int vfs_close(vfs_file_t* file)
     }
     file->pos = 0;
     file->writable = false;
-    return RDNX_OK;
-}
-
-int vfs_file_dup(const vfs_file_t* src, vfs_file_t* dst)
-{
-    if (!src || !dst || !src->node) {
-        return RDNX_E_INVALID;
-    }
-    *dst = *src;                   /* shallow copy — position, flags, node ptr */
-    vfs_node_retain(dst->node);    /* dst now holds its own reference */
     return RDNX_OK;
 }
 
@@ -1253,7 +1342,8 @@ static int vfs_check_can_chmod(const vfs_inode_t* inode)
     if (!caller) {
         return RDNX_E_DENIED;
     }
-    if (caller->euid == 0 || caller->euid == inode->uid) {
+    uint32_t euid = proc_get_euid(task_proc(caller));
+    if (euid == 0 || euid == inode->uid) {
         return RDNX_OK;
     }
     return RDNX_E_DENIED;
@@ -1265,7 +1355,7 @@ static int vfs_check_can_chown(void)
     if (!caller) {
         return RDNX_E_DENIED;
     }
-    return (caller->euid == 0) ? RDNX_OK : RDNX_E_DENIED;
+    return (proc_get_euid(task_proc(caller)) == 0) ? RDNX_OK : RDNX_E_DENIED;
 }
 
 int vfs_chmod(const char* path, uint16_t mode)

@@ -19,6 +19,14 @@
 #include "../kernel/posix/posix_syscall.h"
 #include "../kernel/arch/config.h"
 #include "../kernel/arch/acpi.h"
+#include "../kernel/arch/cpu_topology.h"
+#include "../kernel/arch/percpu.h"
+#include "../kernel/core/giant.h"
+#include "../kernel/core/witness.h"
+#include "../kernel/core/hygiene.h"
+#include "../kernel/arch/x86_64/tlb.h"
+#include "../kernel/arch/gdt.h"
+#include "../kernel/arch/x86_64/smp.h"
 #include "../kernel/arch/syscall_fast.h"
 #include "../include/gfx.h"
 
@@ -49,7 +57,45 @@ static int
 sysinit_cpu(void)
 {
     extern int cpu_init(void);
-    return cpu_init();
+    int rc = cpu_init();
+    /*
+     * After cpu_init() rather than with the other early registrations, and
+     * that ordering is load-bearing: cpu_init() is what calibrates the TSC,
+     * and without a frequency a latency threshold cannot be stated in time at
+     * all. Registered at SI_ORDER_FIRST, percpu_init runs before this.
+     */
+    hygiene_init();
+    return rc;
+}
+
+static int
+sysinit_percpu(void)
+{
+    /* The very first step: from here on, "which processor am I" is a
+     * GS-relative load rather than a hardcoded zero, and everything that
+     * follows -- the GDT and TSS slot, the current task and thread -- can
+     * ask honestly. */
+    percpu_init_bsp();
+    /* Before giant_init(), because Giant's guard is a spinlock and witness
+     * should see the very first acquire in the system rather than start
+     * halfway through a boot with a partial graph. */
+    witness_init();
+    giant_init();
+    return RDNX_OK;
+}
+
+static int
+sysinit_ist(void)
+{
+    /* After memory_init, because the IST stacks come from the heap, and
+     * still before interrupts are unmasked, because this rewrites live IDT
+     * gates. */
+    if (cpu_ist_init() != 0) {
+        klog("cpu", "IST stacks unavailable, fatal exceptions stay on IST 0\n");
+        return RDNX_OK;
+    }
+    klog("cpu", "IST stacks armed for #DF/NMI/#MC\n");
+    return RDNX_OK;
 }
 
 static int
@@ -94,6 +140,59 @@ sysinit_acpi(void)
 }
 
 static int
+sysinit_cpu_topology(void)
+{
+    /* Runs after apic_init: identifying which MADT entry is the boot
+     * processor requires reading the live LAPIC ID. */
+    if (cpu_topology_init() != 0) {
+        klog("cpu", "processor inventory unavailable\n");
+        return RDNX_OK;
+    }
+
+    const struct cpu_topology_entry* bsp =
+        cpu_topology_get(cpu_topology_bsp_index());
+    if (bsp) {
+        percpu_bind_bsp(bsp->apic_id);
+    }
+
+    uint32_t total = cpu_topology_count();
+    uint32_t startable = cpu_topology_startable_count();
+
+    klog("cpu", "%u processor(s), %u startable, BSP apic_id=%u\n",
+         (unsigned)total,
+         (unsigned)startable,
+         bsp ? (unsigned)bsp->apic_id : 0u);
+
+    if (bootlog_is_verbose()) {
+        cpu_topology_report();
+    }
+    return RDNX_OK;
+}
+
+static int
+sysinit_ipi(void)
+{
+    extern int apic_ipi_selftest(void);
+    extern bool apic_is_available(void);
+    extern const char* lapic_access_mode_name(void);
+
+    if (!apic_is_available()) {
+        klog("apic", "no LAPIC, IPI unavailable\n");
+        return RDNX_OK;
+    }
+
+    /* The shootdown handler must exist before any processor can send one. */
+    tlb_shootdown_init();
+
+    if (apic_ipi_selftest() == 0) {
+        klog("apic", "IPI delivery verified (%s)\n", lapic_access_mode_name());
+    } else {
+        klog("apic", "IPI self-test FAILED (%s)\n", lapic_access_mode_name());
+    }
+    return RDNX_OK;
+}
+
+static int
 sysinit_timer(void)
 {
     extern bool apic_is_available(void);
@@ -117,6 +216,34 @@ sysinit_timer(void)
     g_timer_use_apic = use_apic_timer;
     klog("timer", "source: %s @ 1000 Hz\n", use_apic_timer ? "LAPIC" : "PIT");
     bootlog_mark("timer", use_apic_timer ? "lapic" : "pit");
+    return RDNX_OK;
+}
+
+static int
+sysinit_smp(void)
+{
+    /* After the timer, because the INIT-SIPI sequence is timed, and before
+     * the scheduler, so the processor count it eventually sees is final. */
+    uint32_t expected = cpu_topology_startable_count();
+    int started = smp_start_aps();
+
+    if (expected <= 1) {
+        klog("smp", "uniprocessor\n");
+        return RDNX_OK;
+    }
+
+    klog("smp", "%u of %u processors online\n",
+         (unsigned)smp_online_count(), (unsigned)expected);
+
+    if (started > 0) {
+        int answered = smp_verify_aps();
+        if (answered == started) {
+            klog("smp", "%d application processor(s) answered an IPI\n", answered);
+        } else {
+            klog("smp", "IPI verification FAILED (%d of %d answered)\n",
+                 answered, started);
+        }
+    }
     return RDNX_OK;
 }
 
@@ -276,7 +403,13 @@ sysinit_net(void)
 void
 kernel_run_bootstrap_sysinit(void)
 {
-    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_FIRST, "cpu_init", sysinit_cpu) != 0) {
+    /* Per-CPU state comes first: gdt_init() inside cpu_init() picks its GDT
+     * and TSS slot by asking which processor it is running on. */
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_FIRST, "percpu_init", sysinit_percpu) != 0) {
+        panic("Per-CPU init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_SECOND, "cpu_init", sysinit_cpu) != 0) {
         panic("CPU init failed");
     }
     klog("cpu", "ready\n");
@@ -291,6 +424,10 @@ kernel_run_bootstrap_sysinit(void)
     }
     klog("memory", "PMM + VM ready\n");
 
+    if (run_sysinit_step(SI_SUB_CPU, SI_ORDER_THIRD, "ist_init", sysinit_ist) != 0) {
+        panic("IST init failed");
+    }
+
     if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_SECOND, "acpi_init", sysinit_acpi) != 0) {
         panic("ACPI init failed");
     }
@@ -299,8 +436,21 @@ kernel_run_bootstrap_sysinit(void)
         panic("APIC init failed");
     }
 
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_MIDDLE, "cpu_topology_init",
+                         sysinit_cpu_topology) != 0) {
+        panic("CPU topology init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_INTR, SI_ORDER_ANY, "ipi_selftest", sysinit_ipi) != 0) {
+        panic("IPI self-test step failed");
+    }
+
     if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_FIRST, "timer_init", sysinit_timer) != 0) {
         panic("Timer init failed");
+    }
+
+    if (run_sysinit_step(SI_SUB_CLOCKS, SI_ORDER_SECOND, "smp_start_aps", sysinit_smp) != 0) {
+        panic("SMP bring-up step failed");
     }
 
     if (run_sysinit_step(SI_SUB_SCHED, SI_ORDER_FIRST, "scheduler_init", sysinit_scheduler) != 0) {
@@ -351,7 +501,6 @@ kernel_enable_runtime_interrupts(void)
 {
     extern void apic_timer_stop(void);
     extern void pit_disable(void);
-    extern volatile irql_t current_irql;
     extern void apic_timer_start(void);
     extern void pit_enable(void);
     extern uint64_t scheduler_get_ticks(void);
@@ -369,7 +518,8 @@ kernel_enable_runtime_interrupts(void)
     }
     __asm__ volatile ("" ::: "memory");
 
-    current_irql = IRQL_PASSIVE;
+    /* IRQL is per-CPU now; set this processor's own. */
+    (void)set_irql(IRQL_PASSIVE);
     __asm__ volatile ("" ::: "memory");
 
     __asm__ volatile ("sti");
@@ -386,6 +536,15 @@ kernel_enable_runtime_interrupts(void)
         __asm__ volatile ("pause");
     }
     __asm__ volatile ("" ::: "memory");
+
+    {
+        extern int irql_selftest(void);
+        if (irql_selftest() == 0) {
+            klog("irq", "IRQL masking verified via LAPIC TPR\n");
+        } else {
+            klog("irq", "IRQL masking self-test FAILED\n");
+        }
+    }
 
     if (g_timer_use_apic) {
         uint64_t t0 = scheduler_get_ticks();
@@ -418,6 +577,9 @@ kernel_enable_runtime_interrupts(void)
     }
 
     klog("kernel", "interrupts enabled\n");
+    witness_selftest();
+    witness_summary();
+    hygiene_report();
     bootlog_mark("interrupts", "enable_done");
     __asm__ volatile ("" ::: "memory");
 }

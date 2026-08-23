@@ -11,9 +11,11 @@ KERNEL_C_SRCS += \
 	kernel/kmod.c \
 	kernel/unix/uaccess/unix_uaccess.c \
 	kernel/unix/fd/unix_fd.c \
+	kernel/unix/fd/file.c \
 	kernel/unix/fs/unix_fs.c \
 	kernel/unix/exec/unix_exec.c \
 	kernel/unix/process/unix_process.c \
+	kernel/unix/process/unix_proc.c \
 	kernel/posix/posix_syscall.c \
 	kernel/posix/posix_sys_ids.c \
 	kernel/posix/posix_sys_file.c \
@@ -22,6 +24,10 @@ KERNEL_C_SRCS += \
 	kernel/posix/posix_sys_info.c \
 	kernel/debug.c \
 	kernel/task.c \
+	kernel/kmutex.c \
+	kernel/giant.c \
+	kernel/witness.c \
+	kernel/hygiene.c \
 	mm/vm_object.c \
 	mm/vm_page_ref.c \
 	mm/vm_pager.c \
@@ -64,6 +70,11 @@ KERNEL_ARCH_X86_64_C_SRCS := \
 	kernel/arch/x86_64/apic.c \
 	kernel/arch/x86_64/isr_handlers.c \
 	kernel/arch/x86_64/cpu.c \
+	kernel/arch/x86_64/cpu_topology.c \
+	kernel/arch/x86_64/percpu.c \
+	kernel/arch/x86_64/irqstat.c \
+	kernel/arch/x86_64/tlb.c \
+	kernel/arch/x86_64/smp.c \
 	kernel/arch/x86_64/gdt.c \
 	kernel/arch/x86_64/pmm.c \
 	kernel/arch/x86_64/paging.c \
@@ -90,6 +101,7 @@ include shell/Makefile
 
 KERNEL_ARCH_X86_64_ASM_SRCS := \
 	kernel/arch/x86_64/isr_stubs.S \
+	kernel/arch/x86_64/ap_trampoline.S \
 	kernel/arch/x86_64/syscall_fast_entry.S
 
 ifeq ($(ARCH),x86_64)

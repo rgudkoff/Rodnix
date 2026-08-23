@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "../kernel/core/cpu.h"
+#include "../kernel/fabric/spin.h"
 #include "../../arch/gdt.h"
 #include "../../../include/debug.h"
 
@@ -84,6 +86,16 @@ bool ready_thread_is_queued(const thread_t* thread)
     return thread && thread->ready_queued != 0;
 }
 
+/*
+ * One queue shared by every processor, taken under a real lock.
+ *
+ * This is the v0 shape docs/ru/architecture.md commits to -- "глобальная
+ * очередь на v0, затем per-CPU run-queues и балансировка". A single locked
+ * queue balances itself for free, at the cost of contention that only starts
+ * to matter with more processors than this kernel has been run on.
+ */
+static spinlock_t rq_lock;
+
 void ready_enqueue(thread_t* thread)
 {
     if (!thread) {
@@ -98,9 +110,12 @@ void ready_enqueue(thread_t* thread)
     if (q < 0 || q >= READY_QUEUE_LEVELS) {
         q = (int)SCHED_BUCKET_DEFAULT;
     }
+
+    uint64_t flags = spinlock_lock_irqsave(&rq_lock);
     TAILQ_INSERT_TAIL(&ready_queues[q], thread, sched_link);
     thread->ready_queued = 1;
     stats.ready_tasks++;
+    spinlock_unlock_irqrestore(&rq_lock, flags);
 }
 
 /* Вспомогательная функция: извлечь первый поток из очереди q и обновить метрики. */
@@ -126,7 +141,8 @@ static thread_t* dequeue_from(int q)
     return thread;
 }
 
-thread_t* ready_dequeue(void)
+/* Caller holds rq_lock. */
+static thread_t* ready_dequeue_locked(void)
 {
     /* RR/FIFO: всё в DEFAULT-очереди */
     if (current_policy == SCHED_POLICY_RR || current_policy == SCHED_POLICY_FIFO) {
@@ -152,6 +168,14 @@ thread_t* ready_dequeue(void)
     }
 
     return NULL;
+}
+
+thread_t* ready_dequeue(void)
+{
+    uint64_t flags = spinlock_lock_irqsave(&rq_lock);
+    thread_t* thread = ready_dequeue_locked();
+    spinlock_unlock_irqrestore(&rq_lock, flags);
+    return thread;
 }
 
 int ready_queue_index_for_thread(const thread_t* thread)

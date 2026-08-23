@@ -13,6 +13,9 @@
  */
 
 #include "types.h"
+#include "../../fabric/spin.h"
+#include "tlb.h"
+#include "percpu.h"
 #include "config.h"
 #include "pmm.h"
 #include "../../../include/debug.h"
@@ -67,7 +70,23 @@ static bool physmap_ready = false;
  * ============================================================================ */
 
 /* Current PML4 (CR3 register value) */
-static uint64_t current_pml4_phys = 0;
+/*
+ * Which page tables this processor is running on.
+ *
+ * This used to be a global mirroring CR3, written by paging_switch_pml4() on
+ * every context switch. CR3 is per-CPU hardware state, so a global mirror of
+ * it reports whatever the last processor to switch happened to be running:
+ * CPU A would take a fault for process X, ask for "the current page tables",
+ * and be handed process Y's -- mapping X's page into Y's address space. That
+ * is exactly the userspace fault this was chased down from.
+ *
+ * It lives in struct percpu now, which is where both references keep it:
+ * FreeBSD's pc_curpmap and XNU's cpu_active_cr3.
+ */
+static inline uint64_t current_pml4(void)
+{
+    return percpu_self()->current_pml4;
+}
 
 /* ============================================================================
  * Helper Functions
@@ -198,14 +217,32 @@ static uint64_t paging_alloc_page_table_identity(void)
  */
 static uint64_t* paging_get_pml4(void)
 {
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return NULL;
     }
-    return (uint64_t*)(current_pml4_phys + X86_64_KERNEL_VIRT_BASE);
+    return (uint64_t*)(current_pml4() + X86_64_KERNEL_VIRT_BASE);
 }
 
-uint64_t paging_create_user_pml4(void)
-{
+/*
+ * One lock over the page tables.
+ *
+ * They had none. The assumption was that Giant covers them, since every
+ * mapping path runs in thread context under it -- but "covered by the lock
+ * above" is exactly the assumption that kept turning out to have holes, and
+ * page tables are the structure where a hole shows up as a reserved-bit
+ * violation on somebody else's memory rather than as anything readable.
+ *
+ * Coarser than the references, deliberately and for now: FreeBSD locks per
+ * address space (PMAP_LOCK on pmap->pm_mtx), which is where this should end
+ * up once these functions take a pmap object rather than a bare PML4
+ * address. One lock first, split when contention is measured.
+ *
+ * irqsave, because the fault path reaches here and faults are exceptions.
+ * The sections are a four-level walk, bounded by construction.
+ */
+static spinlock_t paging_spin;
+
+static uint64_t paging_create_user_pml4_locked(void){
     uint64_t phys = paging_alloc_page_table_low();
     if (!phys) {
         return 0;
@@ -226,14 +263,23 @@ uint64_t paging_create_user_pml4(void)
     return phys;
 }
 
+uint64_t paging_create_user_pml4(void)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    uint64_t _r = paging_create_user_pml4_locked();
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+    return _r;
+}
+
+
+
 /**
  * Free the page-table structure for a user address space.
  * Only the page-table pages themselves (PML4/PDPT/PD/PT) are freed here;
  * user data pages are already released by vm_map_remove() → vm_page_ref_release().
  * Kernel-half entries (PML4[256..511]) are shared and must NOT be freed.
  */
-void paging_free_user_pml4(uint64_t pml4_phys)
-{
+static void paging_free_user_pml4_locked(uint64_t pml4_phys){
     if (!pml4_phys) {
         return;
     }
@@ -272,6 +318,20 @@ void paging_free_user_pml4(uint64_t pml4_phys)
     pmm_free_page(pml4_phys);
 }
 
+void paging_free_user_pml4(uint64_t pml4_phys)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    paging_free_user_pml4_locked(pml4_phys);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+
+    /* Outside the lock on purpose: the wait needs every other processor
+     * able to take the IPI, and one spinning for this lock with interrupts
+     * masked could not. */
+    tlb_shootdown(0);
+}
+
+
+
 static uint64_t* paging_get_pdpt_for(uint64_t* pml4, uint64_t pml4_entry)
 {
     (void)pml4;
@@ -302,8 +362,7 @@ static uint64_t* paging_get_pt_for(uint64_t pd_entry)
     return (uint64_t*)(pt_phys + X86_64_KERNEL_VIRT_BASE);
 }
 
-int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags)
-{
+static int paging_map_page_4kb_pml4_locked(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags){
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
         return RDNX_E_GENERIC;
     }
@@ -361,11 +420,26 @@ int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, u
 
     uint64_t entry = phys | (flags & (PTE_PRESENT | PTE_RW | PTE_USER | PTE_NX));
     pt[pt_idx] = entry;
-    if (current_pml4_phys == pml4_phys) {
+    if (current_pml4() == pml4_phys) {
         paging_flush_tlb((void*)virt);
     }
     return 0;
 }
+
+int paging_map_page_4kb_pml4(uint64_t pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    int _r = paging_map_page_4kb_pml4_locked(pml4_phys, virt, phys, flags);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+
+    /* Outside the lock on purpose: the wait needs every other processor
+     * able to take the IPI, and one spinning for this lock with interrupts
+     * masked could not. */
+    tlb_shootdown(virt);
+    return _r;
+}
+
+
 
 void paging_switch_pml4(uint64_t pml4_phys)
 {
@@ -373,7 +447,7 @@ void paging_switch_pml4(uint64_t pml4_phys)
         return;
     }
     __asm__ volatile ("mov %0, %%cr3" : : "r"(pml4_phys));
-    current_pml4_phys = pml4_phys;
+    percpu_self()->current_pml4 = pml4_phys;
 }
 
 /**
@@ -466,9 +540,13 @@ static void paging_flush_tlb(void* virt)
 int paging_init(void)
 {
     /* Get current CR3 (PML4 physical address) */
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(current_pml4_phys));
+    {   /* Record what boot.S left in CR3 for this processor. */
+        uint64_t cr3;
+        __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+        percpu_self()->current_pml4 = cr3 & ~0xFFFULL;
+    }
     
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
     return 0;
@@ -484,8 +562,7 @@ int paging_init(void)
  * 
  * @return 0 on success, -1 on failure
  */
-int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
-{
+static int paging_map_page_4kb_locked(uint64_t virt, uint64_t phys, uint64_t flags){
     if ((virt & PAGE_OFFSET_MASK) != 0 || (phys & PAGE_OFFSET_MASK) != 0) {
         return RDNX_E_GENERIC; /* Not page-aligned */
     }
@@ -565,6 +642,21 @@ int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
     
     return 0;
 }
+
+int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    int _r = paging_map_page_4kb_locked(virt, phys, flags);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+
+    /* Outside the lock on purpose: the wait needs every other processor
+     * able to take the IPI, and one spinning for this lock with interrupts
+     * masked could not. */
+    tlb_shootdown(virt);
+    return _r;
+}
+
+
 
 /**
  * @function paging_map_page_4kb_noalloc
@@ -660,7 +752,7 @@ int paging_map_page_4kb_noalloc_identity(uint64_t virt, uint64_t phys, uint64_t 
         return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -724,7 +816,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
         return RDNX_E_GENERIC; /* Not page-aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -734,7 +826,7 @@ int paging_map_page_4kb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     uint64_t pd_idx = paging_get_pd_index(virt);
     uint64_t pt_idx = paging_get_pt_index(virt);
 
-    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t* pml4 = (uint64_t*)current_pml4();
     uint64_t pml4_entry = pml4[pml4_idx];
     uint64_t* pdpt;
 
@@ -813,7 +905,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
         return RDNX_E_GENERIC; /* Not 2MB aligned */
     }
 
-    if (!current_pml4_phys) {
+    if (!current_pml4()) {
         return RDNX_E_GENERIC;
     }
 
@@ -822,7 +914,7 @@ int paging_map_page_2mb_identity_alloc(uint64_t virt, uint64_t phys, uint64_t fl
     uint64_t pdpt_idx = paging_get_pdpt_index(virt);
     uint64_t pd_idx = paging_get_pd_index(virt);
 
-    uint64_t* pml4 = (uint64_t*)current_pml4_phys;
+    uint64_t* pml4 = (uint64_t*)current_pml4();
     uint64_t pml4_entry = pml4[pml4_idx];
     uint64_t* pdpt;
 
@@ -918,8 +1010,7 @@ bool paging_is_physmap_ready(void)
  * 
  * @return 0 on success, -1 on failure
  */
-int paging_unmap_page(uint64_t virt)
-{
+static int paging_unmap_page_locked(uint64_t virt){
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
         return RDNX_E_GENERIC;
@@ -967,8 +1058,22 @@ int paging_unmap_page(uint64_t virt)
     return 0;
 }
 
-int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
+int paging_unmap_page(uint64_t virt)
 {
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    int _r = paging_unmap_page_locked(virt);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+
+    /* Outside the lock on purpose: the wait needs every other processor
+     * able to take the IPI, and one spinning for this lock with interrupts
+     * masked could not. */
+    tlb_shootdown(virt);
+    return _r;
+}
+
+
+
+static int paging_unmap_page_pml4_locked(uint64_t pml4_phys, uint64_t virt){
     if (!pml4_phys) {
         return RDNX_E_GENERIC;
     }
@@ -1001,7 +1106,7 @@ int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
 
     if (pd_entry & PTE_SIZE_2MB) {
         pd[pd_idx] = 0;
-        if (current_pml4_phys == pml4_phys) {
+        if (current_pml4() == pml4_phys) {
             paging_flush_tlb((void*)virt);
         }
         return 0;
@@ -1009,11 +1114,26 @@ int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
 
     uint64_t* pt = paging_get_pt(pd_entry);
     pt[pt_idx] = 0;
-    if (current_pml4_phys == pml4_phys) {
+    if (current_pml4() == pml4_phys) {
         paging_flush_tlb((void*)virt);
     }
     return 0;
 }
+
+int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    int _r = paging_unmap_page_pml4_locked(pml4_phys, virt);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+
+    /* Outside the lock on purpose: the wait needs every other processor
+     * able to take the IPI, and one spinning for this lock with interrupts
+     * masked could not. */
+    tlb_shootdown(virt);
+    return _r;
+}
+
+
 
 /**
  * @function paging_get_physical
@@ -1023,8 +1143,7 @@ int paging_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt)
  * 
  * @return Physical address, or 0 if not mapped
  */
-uint64_t paging_get_physical(uint64_t virt)
-{
+static uint64_t paging_get_physical_locked(uint64_t virt){
     uint64_t* pml4 = paging_get_pml4();
     if (!pml4) {
         return 0;
@@ -1071,8 +1190,17 @@ uint64_t paging_get_physical(uint64_t virt)
     return phys;
 }
 
-uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt)
+uint64_t paging_get_physical(uint64_t virt)
 {
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    uint64_t _r = paging_get_physical_locked(virt);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+    return _r;
+}
+
+
+
+static uint64_t paging_get_physical_pml4_locked(uint64_t pml4_phys, uint64_t virt){
     if (!pml4_phys) {
         return 0;
     }
@@ -1115,6 +1243,16 @@ uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt)
     return (pte & PTE_ADDR_MASK_4KB) | (virt & PAGE_OFFSET_MASK);
 }
 
+uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    uint64_t _r = paging_get_physical_pml4_locked(pml4_phys, virt);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+    return _r;
+}
+
+
+
 /**
  * @function paging_map_page_2mb
  * @brief Map a 2MB page (large page)
@@ -1127,8 +1265,7 @@ uint64_t paging_get_physical_pml4(uint64_t pml4_phys, uint64_t virt)
  * 
  * @note 2MB pages are more efficient than 4KB pages for large mappings.
  */
-int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
-{
+static int paging_map_page_2mb_locked(uint64_t virt, uint64_t phys, uint64_t flags){
     if ((virt & 0x1FFFFF) != 0 || (phys & 0x1FFFFF) != 0) {
         return RDNX_E_GENERIC; /* Not 2MB aligned */
     }
@@ -1184,3 +1321,13 @@ int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
     
     return 0;
 }
+
+int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
+{
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    int _r = paging_map_page_2mb_locked(virt, phys, flags);
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+    return _r;
+}
+
+

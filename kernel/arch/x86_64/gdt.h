@@ -11,10 +11,10 @@
 
 void gdt_init(void);
 void tss_set_rsp0(uint64_t rsp0);
-extern uint64_t g_tss_rsp0_shadow;
-/* FS.Base value for the currently running thread; updated by
- * sched_arch_apply_thread() and read by the ISR/IRQ stubs to re-apply
- * FS.Base after segment-register restoration clears it. */
-extern uint64_t g_current_tls_fs_base;
+
+/* Allocate this CPU's IST stacks and point the #DF/NMI/#MC gates at them.
+ * Needs the heap, so it runs after memory_init rather than inside gdt_init.
+ * Call with interrupts masked: it rewrites live IDT gates. */
+int cpu_ist_init(void);
 
 #endif /* _RODNIX_ARCH_X86_64_GDT_H */

@@ -4,36 +4,25 @@
  */
 
 #include "core/task.h"
+#include "fabric/spin.h"
 #include "../mm/vm_map.h"
 #include "../lib/heap.h"
 #include "../sched/scheduler.h"
 #include "../sched/waitq.h"
 #include "core/cpu.h"
 #include "arch/interrupt_frame.h"
+#include "arch/percpu.h"
+#include "core/giant.h"
 #include "core/interrupts.h"
 #include "../fs/vfs.h"
-#include "unix/unix_layer.h"
 #include "../include/console.h"
 #include "../include/error.h"
+#include "../include/common.h"
 #include <stddef.h>
 #include <stdint.h>
 
 #define KERNEL_STACK_SIZE (32 * 1024)
 #define STACK_POISON_BYTE 0xCC
-
-/*
- * LOCKING: per-CPU locals — no lock needed.
- *   Each CPU reads/writes only its own slot via cpu_get_id().
- *   On UP (single CPU) cpu_get_id() always returns 0.
- *   On SMP cpu_get_id() must return the correct APIC id before
- *   the scheduler starts (currently always 0 — see cpu.c TODO).
- */
-#define MAX_CPUS 8
-typedef struct {
-    task_t*   task;
-    thread_t* thread;
-} cpu_local_t;
-static cpu_local_t g_cpu_locals[MAX_CPUS];
 
 /*
  * LOCKING: task registry — protected by IRQL_HIGH (task_registry_lock / task_registry_unlock).
@@ -45,9 +34,11 @@ static cpu_local_t g_cpu_locals[MAX_CPUS];
  * LOCKING: stack_cache — protected by IRQL_HIGH (task_stack_cache_lock / task_stack_cache_unlock).
  *   Protects: stack_cache[], stack_cache_count, stack_cache_hits, stack_cache_misses.
  *
- * LOCKING: g_cpu_locals[] — each slot written only by the owning CPU.
- *   On UP (current target) cpu_get_id() always returns 0; no explicit lock needed.
- *   On SMP: each CPU accesses only its own slot; cross-CPU reads are advisory only.
+ * LOCKING: current task/thread — no lock needed.
+ *   They live in struct percpu, reached through this CPU's GS base
+ *   (kernel/arch/x86_64/percpu.h). A processor only ever addresses its own
+ *   slot, so there is nothing for another CPU to race against; cross-CPU
+ *   reads, if ever added, are advisory only.
  */
 static uint64_t next_task_id = 1;
 static uint64_t next_thread_id = 1;
@@ -74,14 +65,18 @@ RB_GENERATE_STATIC(task_id_index, task, task_id_link, task_id_cmp);
 #endif
 static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
 
-static inline irql_t task_registry_lock(void)
+/* Real mutual exclusion: the registry is walked and mutated from every
+ * processor, and masking interrupts only ever excluded this one. */
+static spinlock_t task_registry_spin;
+
+static inline uint64_t task_registry_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&task_registry_spin);
 }
 
-static inline void task_registry_unlock(irql_t old)
+static inline void task_registry_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&task_registry_spin, flags);
 }
 
 #define STACK_CACHE_SIZE 32
@@ -92,14 +87,17 @@ static uint64_t stack_cache_misses = 0;
 static uint64_t stack_cache_retired = 0;
 static uint64_t stack_cache_poison_failures = 0;
 
-static inline irql_t task_stack_cache_lock(void)
+/* Same reasoning as the registry lock above. */
+static spinlock_t task_stack_cache_spin;
+
+static inline uint64_t task_stack_cache_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&task_stack_cache_spin);
 }
 
-static inline void task_stack_cache_unlock(irql_t old)
+static inline void task_stack_cache_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&task_stack_cache_spin, flags);
 }
 
 static bool stack_has_poison(const void* stack)
@@ -127,7 +125,22 @@ static void thread_trampoline(void)
     }
 
     self->state = THREAD_STATE_RUNNING;
+
+    /* Kernel threads run kernel code for their whole life, so they hold the
+     * kernel-wide lock for it -- dropped around every sleep, and dropped for
+     * good before a thread of this kind enters ring 3. The idle thread is
+     * excluded: it exists precisely to run when nothing else can, and taking
+     * Giant there would serialise idling. */
+    bool holds_giant = (self != (thread_t*)percpu_self()->sched_idle);
+    if (holds_giant) {
+        giant_lock();
+    }
+
     self->entry(self->arg);
+
+    if (holds_giant) {
+        giant_unlock();
+    }
 
     /* Thread finished — hand off to scheduler for proper teardown. */
     scheduler_exit_current();
@@ -137,7 +150,7 @@ void* task_kernel_stack_acquire(void)
 {
     for (;;) {
         void* stack = NULL;
-        irql_t old = task_stack_cache_lock();
+        uint64_t old = task_stack_cache_lock();
         if (stack_cache_count > 0) {
             stack = stack_cache[--stack_cache_count];
             stack_cache[stack_cache_count] = NULL;
@@ -149,7 +162,7 @@ void* task_kernel_stack_acquire(void)
             break;
         }
         if (!stack_has_poison(stack)) {
-            irql_t old2 = task_stack_cache_lock();
+            uint64_t old2 = task_stack_cache_lock();
             stack_cache_poison_failures++;
             task_stack_cache_unlock(old2);
             kfree(stack);
@@ -157,7 +170,7 @@ void* task_kernel_stack_acquire(void)
         }
         return stack;
     }
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     stack_cache_misses++;
     task_stack_cache_unlock(old);
     return kmalloc(KERNEL_STACK_SIZE);
@@ -170,7 +183,7 @@ void task_kernel_stack_retire(void* stack, size_t size)
     }
     extern void* memset(void* s, int c, size_t n);
     memset(stack, STACK_POISON_BYTE, KERNEL_STACK_SIZE);
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     stack_cache_retired++;
     if (stack_cache_count < STACK_CACHE_SIZE) {
         stack_cache[stack_cache_count++] = stack;
@@ -186,7 +199,7 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
     if (!out_stats) {
         return RDNX_E_INVALID;
     }
-    irql_t old = task_stack_cache_lock();
+    uint64_t old = task_stack_cache_lock();
     out_stats->cache_count = stack_cache_count;
     out_stats->cache_capacity = STACK_CACHE_SIZE;
     out_stats->cache_hits = stack_cache_hits;
@@ -199,22 +212,22 @@ int task_get_stack_cache_stats(task_stack_cache_stats_t* out_stats)
 
 task_t* task_get_current(void)
 {
-    return g_cpu_locals[cpu_get_id()].task;
+    return percpu_self()->current_task;
 }
 
 void task_set_current(task_t* task)
 {
-    g_cpu_locals[cpu_get_id()].task = task;
+    percpu_self()->current_task = task;
 }
 
 thread_t* thread_get_current(void)
 {
-    return g_cpu_locals[cpu_get_id()].thread;
+    return percpu_self()->current_thread;
 }
 
 void thread_set_current(thread_t* thread)
 {
-    g_cpu_locals[cpu_get_id()].thread = thread;
+    percpu_self()->current_thread = thread;
 }
 
 void thread_set_priority(thread_t* thread, uint8_t priority)
@@ -231,7 +244,7 @@ task_t* task_create(void)
         return NULL;
     }
 
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     task->task_id = next_task_id++;
     task->parent_task_id = 0;
     task->address_space = NULL;
@@ -240,48 +253,17 @@ task_t* task_create(void)
     task->vm_brk_end = 0;
     task->vm_mmap_base = 0;
     task->vm_mmap_hint = 0;
+    task->vm_brk_base = 0;
+    task->vm_brk_end = 0;
+    task->vm_mmap_base = 0;
+    task->vm_mmap_hint = 0;
     task->state = TASK_STATE_NEW;
-    task->uid = 0;
-    task->gid = 0;
-    task->euid = 0;
-    task->egid = 0;
-    task->supp_group_count = 0;
-    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
-        task->supp_groups[i] = 0;
-    }
-    task->session_id = task->task_id;
-    task->process_group_id = task->task_id;
-    task->umask = 0022;
-    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
-        task->fd_table[i] = NULL;
-        task->fd_flags[i] = 0;
-        task->fd_kind[i] = 0;
-    }
-    task->cwd[0] = '/';
-    task->cwd[1] = '\0';
-    task->exit_code = 0;
-    task->exited = 0;
-    task->waited = 0;
-    for (uint32_t i = 0; i < 32; i++) {
-        task->sigaction[i].handler = 0;
-        task->sigaction[i].flags = 0;
-        task->sigaction[i].restorer = 0;
-        task->sigaction[i].mask = 0;
-    }
-    task->sig_pending = 0;
-    task->sig_in_handler = 0;
     task->abi = TASK_ABI_NATIVE;
     task->tls_fs_base = 0;
-    {
-        uint64_t* p = (uint64_t*)&task->sig_saved;
-        for (size_t i = 0; i < sizeof(task->sig_saved) / sizeof(uint64_t); i++) {
-            p[i] = 0;
-        }
-    }
+    task->proc = NULL;
     task->main_thread = NULL;
     TAILQ_INIT(&task->threads);
     task->thread_count = 0;
-    waitq_init(&task->child_waitq, "child_wait");
     task->ref_count = 1;
     task->task_id_link.rbe_link[0] = NULL;
     task->task_id_link.rbe_link[1] = NULL;
@@ -291,6 +273,12 @@ task_t* task_create(void)
     (void)RB_INSERT(task_id_index, &all_tasks_by_id, task);
     task_registry_unlock(old);
     task->arch_specific = NULL;
+
+    /* UNIX-персоналия живёт в POSIX-слое; ядро только владеет её временем жизни. */
+    if (!proc_attach(task)) {
+        task_destroy(task);
+        return NULL;
+    }
     return task;
 }
 
@@ -299,7 +287,7 @@ void task_destroy(task_t* task)
     if (!task) {
         return;
     }
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     if (all_tasks_head == task) {
         all_tasks_head = task->next_all;
     } else {
@@ -320,11 +308,7 @@ void task_destroy(task_t* task)
     TAILQ_FOREACH_SAFE(thr, &task->threads, task_link, tmp) {
         thread_destroy(thr);
     }
-    for (uint32_t i = 0; i < TASK_MAX_FD; i++) {
-        if (task->fd_table[i]) {
-            unix_fd_release(task, (int)i);
-        }
-    }
+    proc_detach(task);
     vm_task_destroy(task);
     kfree(task);
 }
@@ -336,103 +320,10 @@ task_t* task_find_by_id(uint64_t task_id)
     }
     task_t key = {0};
     key.task_id = task_id;
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     task_t* found = RB_FIND(task_id_index, &all_tasks_by_id, &key);
     task_registry_unlock(old);
     return found;
-}
-
-task_t* task_find_child_by_parent(uint64_t parent_task_id, int require_exited, int include_waited)
-{
-    task_t* found = NULL;
-    irql_t old = task_registry_lock();
-    for (task_t* it = all_tasks_head; it; it = it->next_all) {
-        bool child_exited;
-        if (it->parent_task_id != parent_task_id) {
-            continue;
-        }
-        if (!include_waited && it->waited) {
-            continue;
-        }
-        child_exited = it->exited ||
-                       (it->state == TASK_STATE_ZOMBIE) ||
-                       (it->state == TASK_STATE_DEAD);
-        if (require_exited && !child_exited) {
-            continue;
-        }
-        found = it;
-        break;
-    }
-    task_registry_unlock(old);
-    return found;
-}
-
-void task_set_ids(task_t* task, uint32_t uid, uint32_t gid, uint32_t euid, uint32_t egid)
-{
-    if (!task) {
-        return;
-    }
-    task->uid = uid;
-    task->gid = gid;
-    task->euid = euid;
-    task->egid = egid;
-}
-
-int task_set_supp_groups(task_t* task, const uint32_t* gids, uint32_t count)
-{
-    if (!task) {
-        return RDNX_E_INVALID;
-    }
-    if (count > TASK_MAX_SUPP_GROUPS) {
-        return RDNX_E_INVALID;
-    }
-    task->supp_group_count = 0;
-    for (uint32_t i = 0; i < TASK_MAX_SUPP_GROUPS; i++) {
-        task->supp_groups[i] = 0;
-    }
-    for (uint32_t i = 0; i < count; i++) {
-        task->supp_groups[i] = gids ? gids[i] : 0;
-    }
-    task->supp_group_count = count;
-    return RDNX_OK;
-}
-
-uint32_t task_get_supp_group_count(const task_t* task)
-{
-    return task ? task->supp_group_count : 0;
-}
-
-int task_copy_supp_groups(const task_t* task, uint32_t* out_gids, uint32_t max_count)
-{
-    if (!task) {
-        return RDNX_E_INVALID;
-    }
-    if (task->supp_group_count > max_count) {
-        return RDNX_E_INVALID;
-    }
-    if (task->supp_group_count > 0 && !out_gids) {
-        return RDNX_E_INVALID;
-    }
-    for (uint32_t i = 0; i < task->supp_group_count; i++) {
-        out_gids[i] = task->supp_groups[i];
-    }
-    return (int)task->supp_group_count;
-}
-
-int task_in_group(const task_t* task, uint32_t gid)
-{
-    if (!task) {
-        return 0;
-    }
-    if (task->gid == gid || task->egid == gid) {
-        return 1;
-    }
-    for (uint32_t i = 0; i < task->supp_group_count; i++) {
-        if (task->supp_groups[i] == gid) {
-            return 1;
-        }
-    }
-    return 0;
 }
 
 void task_set_abi(task_t* task, task_abi_t abi)
@@ -451,57 +342,9 @@ task_abi_t task_get_abi(const task_t* task)
     return (task->abi == (uint8_t)TASK_ABI_LINUX) ? TASK_ABI_LINUX : TASK_ABI_NATIVE;
 }
 
-uint32_t task_get_euid(const task_t* task)
-{
-    return task ? task->euid : 0;
-}
-
-uint32_t task_get_egid(const task_t* task)
-{
-    return task ? task->egid : 0;
-}
-
 uint32_t task_get_thread_count(const task_t* task)
 {
     return task ? task->thread_count : 0;
-}
-
-int task_fd_alloc(task_t* task, void* handle)
-{
-    if (!task || !handle) {
-        return RDNX_E_INVALID;
-    }
-    for (int i = 0; i < TASK_MAX_FD; i++) {
-        if (!task->fd_table[i]) {
-            task->fd_table[i] = handle;
-            task->fd_flags[i] = 0;
-            task->fd_kind[i] = 0;
-            return i;
-        }
-    }
-    return RDNX_E_BUSY;
-}
-
-void* task_fd_get(task_t* task, int fd)
-{
-    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
-        return NULL;
-    }
-    return task->fd_table[fd];
-}
-
-int task_fd_close(task_t* task, int fd)
-{
-    if (!task || fd < 0 || fd >= TASK_MAX_FD) {
-        return RDNX_E_INVALID;
-    }
-    if (!task->fd_table[fd]) {
-        return RDNX_E_INVALID;
-    }
-    task->fd_table[fd] = NULL;
-    task->fd_flags[fd] = 0;
-    task->fd_kind[fd] = 0;
-    return RDNX_OK;
 }
 
 thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
@@ -514,6 +357,11 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
@@ -597,6 +445,11 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
@@ -674,6 +527,11 @@ thread_t* thread_create_user_thread(task_t* task,
     if (!thread) {
         return NULL;
     }
+    /* Zero first, then fill in. Every field used to be assigned by hand,
+     * which is fine until a field is added and one of the creators forgets
+     * it -- on_cpu started life as heap garbage that way, and a scheduler
+     * waiting on it spun forever. */
+    memset(thread, 0, sizeof(*thread));
 
     void* stack = task_kernel_stack_acquire();
     if (!stack) {
@@ -812,7 +670,7 @@ void task_for_each(task_iter_fn_t fn, void* ctx)
     if (!fn) {
         return;
     }
-    irql_t old = task_registry_lock();
+    uint64_t old = task_registry_lock();
     for (task_t* it = all_tasks_head; it; it = it->next_all) {
         fn(it, ctx);
     }

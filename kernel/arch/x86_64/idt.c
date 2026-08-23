@@ -59,6 +59,15 @@ static struct idt_entry idt[256] __attribute__((aligned(16)));
 /* IDT descriptor pointer for LIDT instruction */
 static struct idt_ptr idt_pointer;
 
+/* Load this CPU's IDTR. The table itself is shared -- every processor uses
+ * the same gates -- but IDTR is a per-CPU register, so each AP must run this
+ * once on its own. */
+void idt_load(void)
+{
+    __asm__ volatile ("lidt %0" : : "m"(idt_pointer));
+}
+
+
 /* External ISR handlers (defined in assembly) */
 extern void isr0(void);
 extern void isr1(void);
@@ -240,7 +249,7 @@ int idt_init(void)
     /* Step 5: Load IDT */
     kputs("[IDT-5] Load IDT\n");
     __asm__ volatile ("" ::: "memory");
-    __asm__ volatile ("lidt %0" : : "m"(idt_pointer));
+    idt_load();
     __asm__ volatile ("" ::: "memory");
     
     kputs("[IDT-OK] Complete\n");

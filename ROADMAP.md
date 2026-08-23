@@ -1,14 +1,22 @@
 # RodNIX High-Level Roadmap
 
-Last updated: 2026-03-08
+Last updated: 2026-08-22
 
 This roadmap is intentionally high level. Detailed execution plans live in:
 - `docs/ru/execution_plan_os_foundation.md`
 - `docs/ru/industrial_gap.md`
+- `docs/ru/smp_bringup.md`
 - `docs/archive/posix-plan.md` (historical)
 
 It should be read together with `README.md`, `ARCHITECTURE.md`, and
 `INSTALL.md`.
+
+## Target audience
+
+RodNIX is built for creators — music, video, and adjacent real-time media work.
+Roadmap items are therefore prioritized by what deterministic latency requires:
+bounded scheduling response, jitter-free interrupt and timer paths, real-time
+memory that does not fault, and sustained media I/O.
 
 ## Current baseline (already done)
 - [x] x86_64 long mode and high-half kernel boot
@@ -31,6 +39,23 @@ It should be read together with `README.md`, `ARCHITECTURE.md`, and
 - [ ] VM v1: explicit user VM map/object model + page-fault path + basic COW
 - [ ] VFS semantics hardening for userland workflows
 
+## SMP bring-up (P1, gated on Phase 1-2)
+Tracked in detail in `docs/ru/smp_bringup.md`. Ordered, because starting
+APs before the syscall/interrupt entry paths are per-CPU corrupts the
+system on the first concurrent syscall.
+- [x] Enumerate CPUs from MADT type 0/9 (`acpi_madt_get_cpus`)
+- [x] Per-CPU infrastructure: `struct percpu`, GS base, `cpu_id()`
+- [x] Rewrite `syscall_fast_entry.S` / `isr_stubs.S` onto GS-relative state
+- [x] Per-CPU GDT + TSS + IST stacks for #DF/NMI/#MC
+- [x] Implement `interrupt_send_ipi()` (xAPIC ICR pair and x2APIC MSR)
+- [x] AP trampoline (`ap_trampoline.S`) + `ap_entry()` bring-up path
+- [x] Real spinlocks replacing the cli-as-lock idiom; scheduler, wait queues
+      and console made SMP-safe
+- [x] Per-CPU idle threads and an on-cpu handshake, so APs can run threads
+      (enabled with `rdnx.smp=threads`; default off pending a VFS audit)
+- [ ] Audit VFS for concurrent callers, then make AP threads the default
+- [ ] Per-CPU run-queues and reschedule IPI (v1; global queue is the v0 shape)
+
 ## Phase 3 - Reliability and Security (P2)
 - [ ] Structured kernel logs + tracepoints (`irq/sched/syscall/fault`)
 - [ ] Crash dump format (registers, backtrace, task context)
@@ -47,4 +72,4 @@ It should be read together with `README.md`, `ARCHITECTURE.md`, and
 - [ ] Release Candidate cycle with blocker-only policy
 - [ ] Hardware support matrix for target deployment profile
 - [ ] Security response process and supported-version policy
-- [ ] RodNIX 1.0 GA for a constrained initial market segment
+- [ ] RodNIX 1.0 GA for the initial creator-workflow segment

@@ -11,6 +11,13 @@ points, not as a flat dump of notes.
 
 Current release baseline: `0.1.22`.
 
+## Audience
+
+RodNIX targets creators — music, video, and adjacent real-time media work — so
+documentation should state the latency and predictability consequences of a
+change wherever they apply. See `docs/ru/overview.md` and the root
+`ARCHITECTURE.md`.
+
 ## Start Here
 
 - `docs/ru/README.md` — active Russian documentation map;

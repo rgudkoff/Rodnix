@@ -24,4 +24,8 @@ void* idt_get_handler(uint16_t vector);
 /* Set custom handler */
 int idt_set_handler(uint16_t vector, void* handler, uint8_t type_attr, uint8_t ist);
 
+/* Load the IDTR on the calling CPU. idt_init() does this for the BSP; each
+ * AP calls it once during bring-up. */
+void idt_load(void);
+
 #endif /* _RODNIX_ARCH_X86_64_IDT_H */

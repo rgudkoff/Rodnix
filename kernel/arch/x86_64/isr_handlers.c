@@ -10,6 +10,7 @@
  */
 
 #include "../../../include/console.h"
+#include "../../core/hygiene.h"
 
 #include "../../../include/debug.h"
 #include "../../../include/error.h"
@@ -25,6 +26,11 @@
 #include "config.h"
 #include "pic.h"
 #include "apic.h"
+#include "lapic_regs.h"
+#include "vectors.h"
+#include "irqstat.h"
+#include "../../core/giant.h"
+#include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
 
@@ -75,14 +81,12 @@ static void serial_write_hex64(uint64_t value)
 
 /* Forward declaration */
 extern interrupt_handler_t interrupt_handlers[256];
-extern uint64_t irq_iret_rsp;
-extern uint64_t irq_iret_rip;
-extern uint64_t irq_iret_cs;
-extern uint64_t irq_iret_rflags;
-extern uint64_t isr_iret_rsp;
-extern uint64_t isr_iret_rip;
-extern uint64_t isr_iret_cs;
-extern uint64_t isr_iret_rflags;
+/* The entry stub captures the iretq frame it was about to return through into
+ * this CPU's percpu slot; these read it back for the exception dump. */
+#define iret_rsp    (percpu_self()->iret_rsp)
+#define iret_rip    (percpu_self()->iret_rip)
+#define iret_cs     (percpu_self()->iret_cs)
+#define iret_rflags (percpu_self()->iret_rflags)
 
 static void irq_send_eoi(uint32_t irq)
 {
@@ -108,8 +112,95 @@ static void irq_send_eoi(uint32_t irq)
     }
 }
 
+/*
+ * How many firings with nobody to take them before a line is shut off.
+ *
+ * The old policy shut it off on the first one, silently. That loses the line
+ * for good to a single stray during init -- a device asserting before its
+ * driver registers -- and leaves nothing to explain why the device later
+ * appears dead.
+ *
+ * Consecutive is what makes the threshold safe to set low: a handler running
+ * even once resets the count, so a slow or intermittent source never
+ * approaches it, while a line stuck asserted re-enters here as fast as the
+ * processor can acknowledge and crosses it in milliseconds. Something has to
+ * shut that off, or the machine makes no further progress.
+ */
+#define UNHANDLED_MASK_THRESHOLD 10000u
+
+/* Lines this code masked, so a driver registering later can have them back
+ * -- masking is a defence against a runaway, not a verdict on the device. */
+static bool g_masked_unhandled[256];
+
+void interrupt_unmask_if_we_masked(uint32_t vector);
+
+static void interrupt_note_unhandled(uint32_t vector)
+{
+    if (vector >= 256u || g_masked_unhandled[vector]) {
+        return;
+    }
+    if (irqstat_unhandled_streak(vector) < UNHANDLED_MASK_THRESHOLD) {
+        return;
+    }
+
+    /* Only the legacy range maps to a line this kernel can mask. An MSI
+     * vector is masked at the device, which needs the driver that is by
+     * definition absent here -- so say so rather than pretend. */
+    if (vector < 48u) {
+        uint32_t irq = vector - 32u;
+        extern bool ioapic_is_available(void);
+        if (apic_is_available() && ioapic_is_available()) {
+            apic_disable_irq((uint8_t)irq);
+        } else {
+            pic_disable_irq((uint8_t)irq);
+        }
+        g_masked_unhandled[vector] = true;
+        kprintf("[IRQ] vector 0x%x (IRQ %u) fired %u times with no handler; "
+                "line masked\n",
+                (unsigned)vector, (unsigned)irq,
+                (unsigned)UNHANDLED_MASK_THRESHOLD);
+    } else {
+        /* Latch so this reports once rather than every firing. */
+        g_masked_unhandled[vector] = true;
+        kprintf("[IRQ] vector 0x%x fired %u times with no handler and cannot "
+                "be masked here; it will keep firing\n",
+                (unsigned)vector, (unsigned)UNHANDLED_MASK_THRESHOLD);
+    }
+}
+
+void interrupt_unmask_if_we_masked(uint32_t vector)
+{
+    if (vector >= 256u || !g_masked_unhandled[vector]) {
+        return;
+    }
+    g_masked_unhandled[vector] = false;
+
+    if (vector < 48u) {
+        uint32_t irq = vector - 32u;
+        extern bool ioapic_is_available(void);
+        if (apic_is_available() && ioapic_is_available()) {
+            apic_enable_irq((uint8_t)irq);
+        } else {
+            pic_enable_irq((uint8_t)irq);
+        }
+        kprintf("[IRQ] vector 0x%x (IRQ %u) unmasked: a handler registered\n",
+                (unsigned)vector, (unsigned)irq);
+    }
+}
+
+static inline bool interrupt_is_tick(uint32_t vector)
+{
+    return vector == VECTOR_LAPIC_TIMER || vector == VECTOR_PIT_TIMER;
+}
+
 static void interrupt_send_eoi(uint32_t vector)
 {
+    /* The spurious vector sets no ISR bit, so there is nothing to retire.
+     * An EOI here would retire whatever genuinely was in service instead
+     * (docs/ru/irq_audit.md, F10). */
+    if (vector == VECTOR_SPURIOUS) {
+        return;
+    }
     if (vector >= 32 && vector < 48) {
         irq_send_eoi(vector - 32);
         return;
@@ -248,8 +339,26 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         return handle_syscall(regs);
     }
     
+    /*
+     * Reschedule trap. Deliberately short: no handler, and above all no EOI.
+     * It is a software interrupt, so nothing is in service, and an EOI here
+     * would retire whatever genuinely was.
+     */
+    if (vector == VECTOR_RESCHED) {
+        /* Counted like any other entry: its rate is how often the kernel
+         * switches voluntarily, which is worth being able to see next to the
+         * tick rate rather than inferring. */
+        irqstat_count(percpu_index(), vector, true);
+        /* The vector means "switch now", so the request is implicit in
+         * having been raised; callers need not set the flag themselves. */
+        percpu_self()->sched_resched_pending = true;
+        return scheduler_switch_from_irq(regs);
+    }
+
     /* Handle hardware interrupts (32-255), except the syscall gate on 128. */
     if (vector >= 32 && vector != SYSCALL_VECTOR) {
+        irqstat_count(percpu_index(), vector, interrupt_handlers[vector] != NULL);
+
         /* Call registered handler if available */
         if (interrupt_handlers[vector]) {
             interrupt_context_t ctx;
@@ -262,23 +371,16 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             ctx.arch_specific = (void*)regs;
             interrupt_handlers[vector](&ctx);
         } else {
-            /* Only legacy PIC IRQs can be safely masked here. */
-            if (vector < 48) {
-                uint32_t irq = vector - 32;
-                if (irq != 0) {
-                    extern bool ioapic_is_available(void);
-                    if (apic_is_available() && ioapic_is_available()) {
-                        apic_disable_irq((uint8_t)irq);
-                    } else {
-                        pic_disable_irq((uint8_t)irq);
-                    }
-                }
-            }
+            interrupt_note_unhandled(vector);
         }
 
         interrupt_send_eoi(vector);
-        if (vector == 32) {
-            /* Timer tick drives preemption */
+        /* Preemption follows from the source being a tick, not from a
+         * particular number. There are two tick vectors -- the LAPIC timer
+         * and the PIT it falls back to -- and asking "is this 32?" quietly
+         * stopped being the same question (docs/ru/irq_audit.md, F7). */
+        if (interrupt_is_tick(vector)) {
+            percpu_irq_selftest();
             scheduler_tick();
             regs = scheduler_switch_from_irq(regs);
         }
@@ -291,7 +393,13 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             uint64_t cr2 = 0;
             __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
             task_t* task = task_get_current();
-            if (vm_fault_handle(task, cr2, regs->err_code, regs->rip) == RDNX_OK) {
+            /* A fault in thread context runs kernel code, so it runs under
+             * the kernel-wide lock like any other kernel entry. Recursive,
+             * so a fault taken by a thread that already holds it is fine. */
+            giant_lock();
+            int frc = vm_fault_handle(task, cr2, regs->err_code, regs->rip);
+            giant_unlock();
+            if (frc == RDNX_OK) {
                 return regs;
             }
         }
@@ -327,17 +435,17 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         }
 
         /* Serial exception dump for boot.log */
-        serial_write_str("\n[EXC] irq_iret rsp=");
-        serial_write_hex64(irq_iret_rsp);
+        serial_write_str("\n[EXC] iret rsp=");
+        serial_write_hex64(iret_rsp);
         serial_write_str(" rip=");
-        serial_write_hex64(irq_iret_rip);
+        serial_write_hex64(iret_rip);
         serial_write_str(" cs=");
-        serial_write_hex64(irq_iret_cs);
+        serial_write_hex64(iret_cs);
         serial_write_str(" rflags=");
-        serial_write_hex64(irq_iret_rflags);
+        serial_write_hex64(iret_rflags);
         serial_write_str("\n");
-        if (irq_iret_rsp) {
-            uint64_t* p = (uint64_t*)(uintptr_t)irq_iret_rsp;
+        if (iret_rsp) {
+            uint64_t* p = (uint64_t*)(uintptr_t)iret_rsp;
             serial_write_str("[EXC] iretq stack rip/cs/rflags=");
             serial_write_hex64(p[0]);
             serial_write_str(" ");
@@ -361,16 +469,6 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             serial_write_hex64(p[4]);
             serial_write_str("\n");
         }
-
-        serial_write_str("[EXC] isr_iret rsp=");
-        serial_write_hex64(isr_iret_rsp);
-        serial_write_str(" rip=");
-        serial_write_hex64(isr_iret_rip);
-        serial_write_str(" cs=");
-        serial_write_hex64(isr_iret_cs);
-        serial_write_str(" rflags=");
-        serial_write_hex64(isr_iret_rflags);
-        serial_write_str("\n");
 
         serial_write_str("\n[EXC] v=");
         serial_write_hex64(vector);
@@ -476,14 +574,30 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
     return regs;
 }
 
-/* ISR handler (called from assembly for exceptions 0-31) */
-interrupt_frame_t* isr_handler(interrupt_frame_t* regs)
+/* The one entry point from assembly, for every vector. */
+interrupt_frame_t* interrupt_entry(interrupt_frame_t* regs)
 {
-    return interrupt_dispatch(regs);
-}
+    /*
+     * The gate cleared IF, so a handler's running time is time this processor
+     * is unavailable to everyone else -- the same latency window as a masked
+     * region, just entered by hardware. Measured here because this is the one
+     * place every vector passes through.
+     *
+     * The syscall gate is left out on purpose: the fast SYSCALL path does not
+     * come through here, so counting only the int 0x80 half would produce a
+     * number for "syscall duration" that is true of some syscalls and not
+     * others. Syscall latency wants its own measurement at its own two
+     * entries, and is currently unmeasured.
+     */
+    uint32_t vector = regs->int_no;
+    bool measured = hygiene_enabled() && vector != SYSCALL_VECTOR;
 
-/* IRQ handler (called from assembly for IRQ 32-47) */
-interrupt_frame_t* irq_handler(interrupt_frame_t* regs)
-{
-    return interrupt_dispatch(regs);
+    if (measured) {
+        hygiene_irq_enter(vector);
+    }
+    interrupt_frame_t* out = interrupt_dispatch(regs);
+    if (measured) {
+        hygiene_irq_exit(vector);
+    }
+    return out;
 }

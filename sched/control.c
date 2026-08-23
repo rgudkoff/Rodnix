@@ -1,4 +1,7 @@
 #include "internal.h"
+#include "../kernel/core/giant.h"
+#include "../kernel/arch/percpu.h"
+#include "../kernel/core/interrupts.h"
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../include/debug.h"
@@ -27,12 +30,40 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
 
 static void scheduler_yield_internal(bool irq_context)
 {
-    (void)irq_context;
     if (!scheduler_running) {
         return;
     }
-    /* Request preemption on next timer interrupt */
     resched_pending = true;
+
+    if (irq_context || !thread_get_current()) {
+        return;
+    }
+
+    /*
+     * Holding a spinlock means preemption is off and switching is not
+     * allowed; leave the request for the next tick, as before.
+     */
+    if (percpu_preempt_blocked()) {
+        return;
+    }
+
+    /*
+     * Otherwise, yield for real, and give up the kernel-wide lock while
+     * doing it.
+     *
+     * This kernel waits by polling: pipes, waitpid, the tty, the sockets and
+     * the reaper all spin on scheduler_yield() rather than sleeping on a
+     * wait queue. Seventeen loops, and every one of them would hold Giant
+     * across a wait for work that only another thread can do. Dropping it
+     * here covers all of them, instead of depending on seventeen call sites
+     * to remember -- and one that forgot would wedge the kernel outright.
+     *
+     * It also makes the name true. This used to set a flag and return, so a
+     * caller "yielding" kept running until the next timer tick.
+     */
+    uint32_t giant_depth = giant_drop();
+    interrupt_trigger_resched();
+    giant_pickup(giant_depth);
 }
 
 void scheduler_yield(void)
@@ -61,8 +92,20 @@ void scheduler_block(void)
 
     in_scheduler = true;
 
+    /*
+     * Somebody already woke this thread between it deciding to sleep and
+     * getting here, so it is READY and sitting in the run queue. Blocking now
+     * would put it back to sleep with the wakeup already spent -- and leave a
+     * BLOCKED thread in the run queue, which is what surfaced as
+     * "ready_dequeue: thread N state=3".
+     *
+     * A caller that reaches here is inside a loop re-testing its condition,
+     * so returning without blocking is safe: it will look again and find the
+     * condition satisfied.
+     */
     if (cur->state != THREAD_STATE_RUNNING) {
-        DEBUG_WARN("block: current thread %llu state=%d", (unsigned long long)cur->thread_id, cur->state);
+        in_scheduler = false;
+        return;
     }
     scheduler_thread_set_state(cur, THREAD_STATE_BLOCKED, "scheduler_block");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
@@ -115,6 +158,23 @@ void scheduler_wake(thread_t* thread)
     if (thread->state == THREAD_STATE_DEAD) {
         return;
     }
+
+    /*
+     * Already running -- on this processor or another -- so there is nothing
+     * to wake.
+     *
+     * The branches below used to catch this case and force the thread READY
+     * and into the run queue while a processor was executing it. On one
+     * processor that was unreachable: the only RUNNING thread was the caller.
+     * With several it means a thread sitting in the queue that some CPU is
+     * mid-way through running, which showed up as "ready_dequeue: thread N
+     * state=2" and leaves two processors contending for one thread and one
+     * kernel stack.
+     */
+    if (thread->state == THREAD_STATE_RUNNING) {
+        return;
+    }
+
     if (thread->state == THREAD_STATE_BLOCKED) {
         if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
             uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
@@ -155,6 +215,14 @@ void scheduler_exit_current(void)
         return;
     }
 
+    /*
+     * A thread that dies inside a system call still holds the kernel-wide
+     * lock it took on entry, and will never reach the release at the other
+     * end -- exit() does not return. Give it back here, where every path to
+     * a dead thread passes, rather than at each of them.
+     */
+    (void)giant_drop();
+
     scheduler_exit_wake_joiner(cur);
     scheduler_thread_set_state(cur, THREAD_STATE_DEAD, "scheduler_exit_current");
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_EXIT,
@@ -177,7 +245,7 @@ void scheduler_exit_current(void)
         }
     }
     resched_pending = true;
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
     for (;;) {
         cpu_idle();
     }

@@ -16,6 +16,7 @@
 #include "paging.h"
 #include "pic.h"
 #include "lapic_regs.h"
+#include "vectors.h"
 #include "lapic_access.h"
 #include "acpi.h"
 #include "../../../include/debug.h"
@@ -830,16 +831,174 @@ int ioapic_init(void)
  * 
  * @note Get current CPU's LAPIC ID
  */
-uint8_t apic_get_lapic_id(void)
+uint32_t apic_get_lapic_id_ext(void)
 {
     if (!apic_initialized) {
         return 0;
     }
-    
-    /* Read APIC ID register */
+
     uint32_t apic_id_reg = apic_read_register(APIC_ID);
-    /* APIC ID is in bits 24-31 */
-    return (uint8_t)((apic_id_reg >> 24) & 0xFF);
+
+    /* xAPIC keeps the ID in bits 24-31 of the MMIO register; x2APIC exposes
+     * the whole 32-bit ID in MSR 0x802 with no shift. Applying the xAPIC
+     * shift in x2APIC mode reads back zero for every low ID, which silently
+     * collapses all processors onto destination 0. */
+    if (lapic_access_mode() == LAPIC_MODE_X2APIC) {
+        return apic_id_reg;
+    }
+    return (apic_id_reg >> 24) & 0xFFu;
+}
+
+/* Bring up the calling processor's own LAPIC, in the mode the boot processor
+ * already settled on. Much smaller than apic_init(): the I/O APIC, the mode
+ * decision and the MMIO mapping are machine-wide and already done. What is
+ * genuinely per-CPU is the APIC_BASE enable bit, the spurious-vector register
+ * and the local vector table. */
+int apic_init_ap(void)
+{
+    if (lapic_access_init_ap() != 0) {
+        return -1;
+    }
+
+    apic_reset_local();
+
+    uint32_t svr = apic_read_register(APIC_SVR);
+    svr |= APIC_SVR_ENABLE;
+    svr &= ~0xFFu;
+    svr |= APIC_SVR_SPURIOUS_VECTOR;
+    apic_write_register(APIC_SVR, svr);
+
+    /* External IRQs are routed through the I/O APIC to the boot processor;
+     * an AP has no business accepting them off its local pins. */
+    apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
+    apic_write_register(APIC_LVT_LINT1, APIC_LVT_MASKED);
+
+    return 0;
+}
+
+/* Bounded so a wedged ICR fails the send instead of hanging the sender. */
+#define APIC_IPI_WAIT_SPINS 100000U
+
+static int apic_send_ipi_raw(uint32_t apic_id, uint32_t icr_low)
+{
+    if (!apic_initialized || !lapic_access_ready()) {
+        return -1;
+    }
+    if (!lapic_access_ipi_wait(APIC_IPI_WAIT_SPINS)) {
+        return -1;
+    }
+    lapic_access_write_icr(apic_id, icr_low);
+    return 0;
+}
+
+int apic_send_ipi(uint32_t apic_id, uint8_t vector)
+{
+    return apic_send_ipi_raw(apic_id,
+                             (uint32_t)vector
+                             | APIC_ICR_DELIVERY_FIXED
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+int apic_send_ipi_self(uint8_t vector)
+{
+    /* The self shorthand makes the destination field irrelevant, which also
+     * means this works before the sender knows its own APIC ID. */
+    return apic_send_ipi_raw(0,
+                             (uint32_t)vector
+                             | APIC_ICR_DELIVERY_FIXED
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_SELF);
+}
+
+int apic_send_init(uint32_t apic_id)
+{
+    return apic_send_ipi_raw(apic_id,
+                             APIC_ICR_DELIVERY_INIT
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+int apic_send_startup(uint32_t apic_id, uint8_t start_page)
+{
+    return apic_send_ipi_raw(apic_id,
+                             (uint32_t)start_page
+                             | APIC_ICR_DELIVERY_STARTUP
+                             | APIC_ICR_DEST_PHYSICAL
+                             | APIC_ICR_LEVEL_ASSERT
+                             | APIC_ICR_TRIGGER_EDGE
+                             | APIC_ICR_SHORTHAND_NONE);
+}
+
+/* Send this processor an IPI and confirm it arrives.
+ *
+ * Runs once per CPU during bring-up. What it proves is narrow but exactly
+ * what the AP wake-up depends on: this CPU's ICR accepts a write, the write
+ * reaches the local APIC, and the vector comes back through the IDT. A
+ * broken ICR encoding -- the easy mistake being the xAPIC register pair
+ * versus the single x2APIC MSR -- shows up here rather than as an AP that
+ * silently never starts.
+ *
+ * Interrupts must be masked on entry; a short window is opened deliberately,
+ * because an IPI that is only pending proves nothing. */
+static volatile uint32_t g_ipi_selftest_hits = 0;
+
+static void apic_ipi_selftest_handler(interrupt_context_t* ctx)
+{
+    (void)ctx;
+    g_ipi_selftest_hits++;
+}
+
+int apic_ipi_selftest(void)
+{
+    if (!apic_initialized) {
+        return -1;
+    }
+
+    int vector = interrupt_vector_alloc(0xF0, 0xFE);
+    if (vector < 0) {
+        return -1;
+    }
+
+    g_ipi_selftest_hits = 0;
+    if (interrupt_register((uint32_t)vector, apic_ipi_selftest_handler) != 0) {
+        interrupt_vector_free((uint32_t)vector);
+        return -1;
+    }
+
+    int rc = -1;
+    if (apic_send_ipi_self((uint8_t)vector) == 0) {
+        __asm__ volatile ("sti");
+        /* Bounded: a vector that never arrives must fail the check, not
+         * wedge the boot. */
+        for (uint32_t spin = 0; spin < 1000000u; spin++) {
+            if (g_ipi_selftest_hits != 0) {
+                break;
+            }
+            __asm__ volatile ("pause");
+        }
+        __asm__ volatile ("cli");
+        rc = (g_ipi_selftest_hits != 0) ? 0 : -1;
+    }
+
+    interrupt_unregister((uint32_t)vector);
+    interrupt_vector_free((uint32_t)vector);
+    return rc;
+}
+
+uint8_t apic_get_lapic_id(void)
+{
+    /* Callers here feed 8-bit destination fields (I/O APIC RTE, MSI address).
+     * Truncation is wrong for x2APIC IDs above 255, which needs interrupt
+     * remapping to express at all; it is still strictly better than the
+     * unconditional shift this used to do. */
+    return (uint8_t)(apic_get_lapic_id_ext() & 0xFFu);
 }
 
 /**
@@ -945,7 +1104,9 @@ void apic_disable_irq(uint8_t irq)
 void apic_timer_handler(interrupt_context_t* ctx)
 {
     (void)ctx;
-    apic_timer_ticks++;
+    /* Every processor runs this handler, so the machine-wide count has to be
+     * incremented atomically. Per-CPU counts live in irqstat. */
+    __sync_fetch_and_add(&apic_timer_ticks, 1u);
 
     /*
      * TSC-Deadline mode is one-shot: reprogram the next deadline immediately.
@@ -1088,12 +1249,6 @@ int apic_timer_init(uint32_t frequency)
     apic_timer_frequency = frequency;
     scheduler_set_tick_rate(frequency);
 
-    /* Register timer interrupt handler (vector 32) */
-    extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
-    if (interrupt_register(32, apic_timer_handler) != 0) {
-        return -1;
-    }
-
     /*
      * Mode selection (XNU-style priority):
      *
@@ -1149,7 +1304,7 @@ int apic_timer_init(uint32_t frequency)
 
         /* Sanity-check registers before committing to periodic mode */
         apic_write_register(APIC_TIMER_DIV, 0b0011);
-        apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED | 32u);
+        apic_write_register(APIC_LVT_TIMER, APIC_LVT_MASKED | VECTOR_LAPIC_TIMER);
         apic_write_register(APIC_TIMER_INITCNT, 0x1000u);
         if (apic_read_register(APIC_LVT_TIMER) == 0 ||
             apic_read_register(APIC_TIMER_INITCNT) == 0) {
@@ -1158,6 +1313,17 @@ int apic_timer_init(uint32_t frequency)
         }
         kprintf("[APIC-TIMER-INIT] mode=periodic hz=%u ticks_per_ms=%u\n",
                 frequency, apic_timer_ticks_per_ms);
+    }
+
+    /* Claim the vector only now that a working mode has been established.
+     * Registering earlier meant that a failure below left it held by a timer
+     * that never started (docs/ru/irq_audit.md, F3). The LAPIC timer has its
+     * own vector above the device classes, so it no longer contends with the
+     * PIT that calibration borrows -- see vectors.h. */
+    extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+    extern int interrupt_unregister(uint32_t vector);
+    if (interrupt_register(VECTOR_LAPIC_TIMER, apic_timer_handler) != 0) {
+        return -1;
     }
 
     /* Calibration helpers (pit_init) may have clobbered the scheduler tick
@@ -1187,7 +1353,7 @@ void apic_timer_start(void)
          */
         uint32_t lvt = (apic_read_register(APIC_LVT_TIMER) & ~0x000F0000u)
                        | APIC_LVT_TIMER_TSC_DEADLINE
-                       | 32u;
+                       | VECTOR_LAPIC_TIMER;
         lvt &= ~APIC_LVT_MASKED;
         apic_write_register(APIC_LVT_TIMER, lvt);
         __asm__ volatile ("" ::: "memory");
@@ -1202,7 +1368,7 @@ void apic_timer_start(void)
         uint32_t initial_count = (apic_timer_ticks_per_ms * 1000u) / apic_timer_frequency;
         uint32_t lvt = (apic_read_register(APIC_LVT_TIMER) & ~0x000F0000u)
                        | APIC_LVT_TIMER_PERIODIC
-                       | 32u;
+                       | VECTOR_LAPIC_TIMER;
         lvt &= ~APIC_LVT_MASKED;
         apic_write_register(APIC_TIMER_DIV, 0b0011);
         apic_write_register(APIC_LVT_TIMER, lvt);

@@ -7,12 +7,13 @@
 #include "../../core/task.h"
 #include "types.h"
 #include "gdt.h"
+#include "cpu_topology.h"
+#include "percpu.h"
 #include "../../../include/common.h"
 #include <stddef.h>
 
 /* Use volatile to prevent compiler optimizations that might cause issues */
 static volatile cpu_info_t cpu_info_cache;
-static volatile uint32_t cpu_count = 1;
 static volatile bool cpu_initialized = false;
 static volatile uint64_t cpu_freq_hz = 0;
 static char cpu_vendor_str[16];
@@ -311,13 +312,18 @@ int cpu_get_info(cpu_info_t* info)
 
 uint32_t cpu_get_id(void)
 {
-    /* TODO: Get real CPU ID via APIC */
-    return 0;
+    /* One GS-relative load. Safe from interrupt context: no lock is taken,
+     * and there is no window in which a preempted caller could observe a
+     * different processor's slot. */
+    return percpu_index();
 }
 
 uint32_t cpu_get_count(void)
 {
-    return cpu_count;
+    /* Reported from the MADT inventory rather than the local cache: the cache
+     * is written by cpu_init(), which runs before ACPI is parsed and can only
+     * ever see the processor it runs on. Falls back to 1 until then. */
+    return cpu_topology_count();
 }
 
 void cpu_save_context(thread_context_t* ctx)
@@ -448,11 +454,6 @@ uint64_t cpu_get_time(void)
     return ((uint64_t)edx << 32) | eax;
 }
 
-/* Tracks the FS.Base value of the currently scheduled thread.
- * Read by isr_stubs.S to re-apply FS.Base after the ISR/IRQ segment-restore
- * path zeroes it (loading a segment selector in 64-bit mode clears the base). */
-uint64_t g_current_tls_fs_base = 0;
-
 void sched_arch_apply_thread(void* thread_ptr)
 {
     thread_t* t = (thread_t*)thread_ptr;
@@ -465,8 +466,9 @@ void sched_arch_apply_thread(void* thread_ptr)
             fs_base = t->task->tls_fs_base;
         }
     }
-    /* Always update the shadow so the ISR/IRQ stubs restore the correct value. */
-    g_current_tls_fs_base = fs_base;
+    /* Always update this CPU's copy so its entry stubs restore the correct
+     * value, including the zero case. */
+    percpu_set_tls_fs_base(fs_base);
     if (!fs_base) {
         return;
     }

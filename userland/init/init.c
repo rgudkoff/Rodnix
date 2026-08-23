@@ -19,6 +19,7 @@
 
 #define VFS_OPEN_READ 1
 #define VFS_OPEN_WRITE 2
+#define VFS_OPEN_CREATE 4
 #define FD_STDOUT 1
 #define SYS_TEST_SLEEP 120
 
@@ -1214,6 +1215,174 @@ static void run_contract_mode_if_enabled(void)
             ct_log("CT-033", "PASS", "find name/type/maxdepth workflow");
         } else {
             ct_log("CT-033", "FAIL", "find smoke failed");
+            ok = 0;
+        }
+    }
+
+    {
+        /* CT-034: dup разделяет описание, значит и offset.
+         * posix_open() передаёт flags как POSIX O_* биты (см.
+         * unix_posix_flags_to_vfs() в kernel/unix/fd/unix_fd.c) — значение
+         * VFS_OPEN_CREATE (4) в этой кодировке совпадает с O_NONBLOCK, а не
+         * с O_CREAT (0x200), так что создание файла нужно запрашивать через
+         * O_WRONLY|O_CREAT|O_TRUNC (sys/fcntl.h, доступен через unistd.h). */
+        int local_ok = 1;
+        char buf[8];
+        long fd = posix_open("/mnt/ct_dupoff.txt", O_WRONLY | O_CREAT | O_TRUNC);
+        if (fd < 0) {
+            local_ok = 0;
+        } else {
+            long fd2 = posix_dup((int)fd);
+            if (fd2 < 0) {
+                local_ok = 0;
+            } else {
+                /* Пишем через оба дескриптора. При общем описании получится
+                 * "abcd"; при копирующем dup второй write затрёт первый. */
+                if (posix_write((int)fd, "ab", 2) != 2) local_ok = 0;
+                if (posix_write((int)fd2, "cd", 2) != 2) local_ok = 0;
+                (void)posix_close((int)fd2);
+            }
+            (void)posix_close((int)fd);
+        }
+        if (local_ok) {
+            long rfd = posix_open("/mnt/ct_dupoff.txt", VFS_OPEN_READ);
+            if (rfd < 0) {
+                local_ok = 0;
+            } else {
+                long n = posix_read((int)rfd, buf, sizeof(buf));
+                (void)posix_close((int)rfd);
+                if (n != 4 || buf[0] != 'a' || buf[1] != 'b' ||
+                    buf[2] != 'c' || buf[3] != 'd') {
+                    local_ok = 0;
+                }
+            }
+        }
+        (void)posix_unlink("/mnt/ct_dupoff.txt");
+
+        if (local_ok) {
+            ct_log("CT-034", "PASS", "dup shares file offset");
+        } else {
+            ct_log("CT-034", "FAIL", "dup does not share file offset");
+            ok = 0;
+        }
+    }
+
+    {
+        /* CT-035: сокет — обычное описание, dup обязан работать. */
+        int local_ok = 1;
+        long s = posix_socket(2 /* AF_INET */, 2 /* SOCK_DGRAM */, 0);
+        if (s < 0) {
+            local_ok = 0;
+        } else {
+            long s2 = posix_dup((int)s);
+            if (s2 < 0) {
+                local_ok = 0;
+            } else {
+                /* Закрытие одной копии не должно убивать вторую. */
+                (void)posix_close((int)s);
+                if (posix_close((int)s2) < 0) {
+                    local_ok = 0;
+                }
+            }
+            if (!local_ok) {
+                (void)posix_close((int)s);
+            }
+        }
+        if (local_ok) {
+            ct_log("CT-035", "PASS", "dup works on socket fd");
+        } else {
+            ct_log("CT-035", "FAIL", "dup on socket fd failed");
+            ok = 0;
+        }
+    }
+
+    {
+        /* CT-036: unlink открытого файла не рвёт чтение через живой fd.
+         * posix_open() передаёт flags как POSIX O_* биты (см.
+         * unix_posix_flags_to_vfs() в kernel/unix/fd/unix_fd.c) — значение
+         * VFS_OPEN_CREATE (4) в этой кодировке совпадает с O_NONBLOCK, а не
+         * с O_CREAT (0x200), так что создание файла нужно запрашивать через
+         * O_WRONLY|O_CREAT|O_TRUNC (sys/fcntl.h, доступен через unistd.h).
+         *
+         * Путь намеренно не /mnt (brief specified /mnt verbatim, departure
+         * approved by coordinator ruling): /mnt is the ext2 mount, and
+         * ext2_unlink() (fs/ext2.c) frees the inode's data blocks
+         * synchronously and unconditionally, with no awareness of
+         * vfs_node.ref_count — a pre-existing ext2 defect, not something
+         * this task's fs/vfs.c reconciliation controls. Root ("/") is the
+         * ramfs mount; ramfs files keep their bytes in vfs_inode_t.data,
+         * which vfs_free_node() only frees once ref_count reaches zero, so
+         * this exercises exactly the vfs.c-layer invariant Task 2 is about. */
+        int local_ok = 1;
+        char buf[8];
+        long wfd = posix_open("/ct_unlink.txt", O_WRONLY | O_CREAT | O_TRUNC);
+        if (wfd < 0 || posix_write((int)wfd, "live", 4) != 4) {
+            local_ok = 0;
+        }
+        if (wfd >= 0) {
+            (void)posix_close((int)wfd);
+        }
+
+        if (local_ok) {
+            long rfd = posix_open("/ct_unlink.txt", VFS_OPEN_READ);
+            if (rfd < 0) {
+                local_ok = 0;
+            } else {
+                if (posix_unlink("/ct_unlink.txt") < 0) {
+                    local_ok = 0;
+                }
+                /* Имя удалено, но описание живо — данные обязаны читаться. */
+                long n = posix_read((int)rfd, buf, sizeof(buf));
+                if (n != 4 || buf[0] != 'l' || buf[3] != 'e') {
+                    local_ok = 0;
+                }
+                (void)posix_close((int)rfd);
+                /* Повторное открытие обязано провалиться. */
+                long again = posix_open("/ct_unlink.txt", VFS_OPEN_READ);
+                if (again >= 0) {
+                    (void)posix_close((int)again);
+                    local_ok = 0;
+                }
+            }
+        }
+
+        if (local_ok) {
+            ct_log("CT-036", "PASS", "unlinked file readable via open fd");
+        } else {
+            ct_log("CT-036", "FAIL", "unlink broke open fd");
+            ok = 0;
+        }
+    }
+
+    {
+        /* CT-041: после fork описание общее. Закрытие дескриптора у родителя
+         * не должно обрывать его у потомка. */
+        int local_ok = 1;
+        long fd = posix_open("/etc/hostname", VFS_OPEN_READ);
+        if (fd < 0) {
+            local_ok = 0;
+        } else {
+            long pid = posix_fork();
+            if (pid == 0) {
+                /* Потомок: родитель к этому моменту мог закрыть свой fd. */
+                char b = 0;
+                long r = posix_read((int)fd, &b, 1);
+                posix_exit((r == 1) ? 0 : 1);
+            } else if (pid < 0) {
+                local_ok = 0;
+                (void)posix_close((int)fd);
+            } else {
+                int status = 0;
+                (void)posix_close((int)fd);   /* родитель закрывает первым */
+                if (posix_waitpid(pid, &status) < 0 || status != 0) {
+                    local_ok = 0;
+                }
+            }
+        }
+        if (local_ok) {
+            ct_log("CT-041", "PASS", "fork shares the file description");
+        } else {
+            ct_log("CT-041", "FAIL", "child fd died with parent close");
             ok = 0;
         }
     }

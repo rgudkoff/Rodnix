@@ -5,6 +5,7 @@
 #include "../../mm/vm_map.h"
 #include "../../mm/vm_object.h"
 #include "../unix/unix_layer.h"
+#include "../../include/sys/file.h"
 #include "../../lib/heap.h"
 #include "../../include/gfx.h"
 #include "../../include/error.h"
@@ -73,11 +74,13 @@ uint64_t posix_mmap(uint64_t a1,
         return (uint64_t)RDNX_E_INVALID;
     }
     int fd = (int)a5;
-    if (fd < 0 || fd >= TASK_MAX_FD || task->fd_kind[fd] != UNIX_FD_KIND_VFS) {
+    /* было: task_proc(task)->fd_kind[fd] != UNIX_FD_KIND_VFS */
+    rdnx_file_t* rf = (rdnx_file_t*)proc_fd_get(task_proc(task), fd);
+    if (fd < 0 || fd >= PROC_MAX_FD || !rf || rf->kind != UNIX_FD_KIND_VFS) {
         return (uint64_t)RDNX_E_INVALID;
     }
     uint64_t off = a6;
-    vfs_file_t* file = (vfs_file_t*)task_fd_get(task, fd);
+    vfs_file_t* file = (vfs_file_t*)rf->priv;
     if (!file || !file->node || !file->node->inode || file->node->type != VFS_NODE_FILE) {
         return (uint64_t)RDNX_E_INVALID;
     }

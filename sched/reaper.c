@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/fabric/spin.h"
 #include "../lib/heap.h"
 #include "../trace/tracev2.h"
 #include "../kernel/unix/unix_layer.h"
@@ -15,19 +16,22 @@ static uint32_t reap_tail = 0;
 static task_t* reaper_task = NULL;
 static thread_t* reaper_thread = NULL;
 
-static inline irql_t reaper_lock(void)
+/* Guards the reap list against concurrent producers on other CPUs. */
+static spinlock_t reaper_spin;
+
+static inline uint64_t reaper_lock(void)
 {
-    return set_irql(IRQL_HIGH);
+    return spinlock_lock_irqsave(&reaper_spin);
 }
 
-static inline void reaper_unlock(irql_t old)
+static inline void reaper_unlock(uint64_t flags)
 {
-    (void)set_irql(old);
+    spinlock_unlock_irqrestore(&reaper_spin, flags);
 }
 
 static thread_t* scheduler_reap_dequeue(void)
 {
-    irql_t old = reaper_lock();
+    uint64_t old = reaper_lock();
     if (reap_head == reap_tail) {
         reaper_unlock(old);
         return NULL;
@@ -41,7 +45,7 @@ static thread_t* scheduler_reap_dequeue(void)
 
 static thread_t* scheduler_reap_peek(void)
 {
-    irql_t old = reaper_lock();
+    uint64_t old = reaper_lock();
     if (reap_head == reap_tail) {
         reaper_unlock(old);
         return NULL;
@@ -61,10 +65,19 @@ static void scheduler_reaper_main(void* arg)
     }
 }
 
+/* Caller must hold the reaper lock. Split out because the enqueue path needs
+ * the length while already holding it, and a real spinlock -- unlike the
+ * cli-based lock this replaced -- deadlocks rather than tolerating the
+ * nested acquire. */
+static inline uint32_t reap_queue_len_locked(void)
+{
+    return (reap_tail + REAP_QUEUE_SIZE - reap_head) % REAP_QUEUE_SIZE;
+}
+
 uint32_t scheduler_reap_queue_len(void)
 {
-    irql_t old = reaper_lock();
-    uint32_t qlen = (reap_tail + REAP_QUEUE_SIZE - reap_head) % REAP_QUEUE_SIZE;
+    uint64_t old = reaper_lock();
+    uint32_t qlen = reap_queue_len_locked();
     reaper_unlock(old);
     return qlen;
 }
@@ -74,7 +87,7 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
     if (!dead_thread || dead_thread->reap_queued) {
         return;
     }
-    irql_t old = reaper_lock();
+    uint64_t old = reaper_lock();
     uint32_t next_tail = (reap_tail + 1u) % REAP_QUEUE_SIZE;
     if (next_tail == reap_head) {
         /*
@@ -92,7 +105,7 @@ void scheduler_reap_enqueue(thread_t* dead_thread)
     reap_queue[reap_tail] = dead_thread;
     reap_tail = next_tail;
     reap_stats.enqueued++;
-    uint32_t qlen = scheduler_reap_queue_len();
+    uint32_t qlen = reap_queue_len_locked();
     if (qlen > reap_stats.queue_hwm) {
         reap_stats.queue_hwm = qlen;
     }
@@ -115,6 +128,27 @@ void scheduler_reap_dead_threads(void)
         if (!dead) {
             break;
         }
+        /*
+         * Do not touch the thread until no processor is still executing on
+         * its kernel stack.
+         *
+         * A thread reaches this list the moment it is marked DEAD, which is
+         * before the processor running it has switched off its stack -- the
+         * stub clears on_cpu only after `mov rsp, rax`. Retiring the stack in
+         * that window poisons memory a processor is still running on, and the
+         * next thing it executes is 0xCC repeated, which is how this was
+         * found: a #GP with rip = 0xcccccccccccccccc.
+         *
+         * The same flag the scheduler uses to hand a thread between
+         * processors answers this too: it is exactly "somebody is on this
+         * stack". Deferring rather than spinning, because the reaper has
+         * nothing to gain by waiting and the thread will still be here next
+         * round.
+         */
+        if (__atomic_load_n(&dead->on_cpu, __ATOMIC_ACQUIRE) != 0) {
+            break;
+        }
+
         dead->reap_queued = 0;
         task_t* owner = dead->task;
         if (owner) {
@@ -148,7 +182,8 @@ void scheduler_reap_dead_threads(void)
                     scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_last_thread");
                     task_destroy(owner);
                 } else {
-                    if (owner->waited) {
+                    const proc_t* owner_proc = task_proc(owner);
+                    if (owner_proc && owner_proc->waited) {
                         scheduler_task_set_state(owner, TASK_STATE_DEAD, "reaper_waited_destroy");
                         task_destroy(owner);
                     } else {

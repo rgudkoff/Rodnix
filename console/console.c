@@ -4,6 +4,8 @@
  */
 
 #include "../include/console.h"
+#include "../kernel/arch/percpu.h"
+#include "../kernel/fabric/spin.h"
 #include "../include/gfx_console.h"
 #include "tty_console.h"
 #include "../trace/startup_trace.h"
@@ -35,7 +37,42 @@ static uint16_t* vga_buffer = (uint16_t*)VGA_MEMORY;
 static uint8_t vga_row = 0;
 static uint8_t vga_col = 0;
 static uint8_t vga_color = 0x0F; /* White on black */
-static volatile bool kputs_in_progress = false; /* Prevent recursive calls from exception handlers */
+/* Per-CPU: a processor must not mistake another processor's print for its
+ * own re-entry. */
+#define kputs_in_progress (percpu_self()->console_in_progress)
+
+/*
+ * Serialises whole lines across processors.
+ *
+ * Acquired with a bounded spin rather than unconditionally. If a processor
+ * dies holding this, the alternative to interleaved output is a machine that
+ * hangs with nothing on the wire -- and a dying system is exactly when the
+ * output is worth having. Interleaving is the cheaper failure.
+ */
+static spinlock_t console_spin;
+
+static bool console_try_lock(uint64_t* out_flags)
+{
+    uint64_t flags;
+    __asm__ volatile ("pushfq\n\tpopq %0\n\tcli" : "=r"(flags) :: "memory");
+    *out_flags = flags;
+
+    for (uint32_t spin = 0; spin < 20000000u; spin++) {
+        if (!__sync_lock_test_and_set(&console_spin.locked, 1)) {
+            return true;
+        }
+        __asm__ volatile ("pause");
+    }
+    return false;
+}
+
+static void console_unlock(bool held, uint64_t flags)
+{
+    if (held) {
+        __sync_lock_release(&console_spin.locked);
+    }
+    __asm__ volatile ("pushq %0\n\tpopfq" :: "r"(flags) : "memory", "cc");
+}
 static void (*g_gfx_putc_fn)(char) = NULL;
 static void (*g_gfx_blink_fn)(void) = NULL;
 static bool cursor_visible = true;
@@ -1159,12 +1196,17 @@ void kputs(const char* str)
         return;
     }
     
+    uint64_t flags;
+    bool held = console_try_lock(&flags);
+
     kputs_in_progress = true;
     while (*str) {
         kputc(*str);
         str++;
     }
     kputs_in_progress = false;
+
+    console_unlock(held, flags);
     /* Force immediate output - no buffering */
     __asm__ volatile ("" ::: "memory");
 }
@@ -1239,6 +1281,12 @@ void kvprintf(const char* fmt, va_list args)
     if (!console_verbose_mode() && fmt && line_filter_is_noisy_prefix(fmt)) {
         return;
     }
+
+    /* Held across the whole format so a line from one processor does not end
+     * up spliced into a line from another -- which is what happened during
+     * AP bring-up debugging, character by character. */
+    uint64_t cflags;
+    bool cheld = console_try_lock(&cflags);
 
     while (*fmt) {
         if (*fmt != '%') {
@@ -1386,6 +1434,8 @@ void kvprintf(const char* fmt, va_list args)
         }
         fmt++;
     }
+
+    console_unlock(cheld, cflags);
 }
 
 void console_set_fg_color(uint8_t color)

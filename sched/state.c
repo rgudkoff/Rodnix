@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/core/interrupts.h"
 #include "../include/debug.h"
 #include "../include/error.h"
 
@@ -7,10 +8,7 @@ bool scheduler_running = false;
 sched_policy_t current_policy = SCHED_POLICY_PRIORITY;
 scheduler_stats_t stats = {0};
 
-volatile bool in_scheduler = false;
-uint32_t ticks_until_preempt = 1;
 uint32_t ticks_per_slice = 1;
-volatile bool resched_pending = false;
 uint64_t sched_ticks = 0;
 
 struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
@@ -138,7 +136,7 @@ void scheduler_start(void)
     /* Kick preemption to start the first thread on the next timer IRQ */
     resched_pending = true;
     /* Force a timer-like IRQ to start the first thread */
-    __asm__ volatile ("int $32");
+    interrupt_trigger_resched();
     /* If we return here, we did not switch yet */
 }
 
@@ -206,6 +204,14 @@ int scheduler_remove_thread(thread_t* thread)
     /* TODO: Remove thread from queues */
 
     return 0;
+}
+
+void scheduler_mark_runnable_unqueued(thread_t* thread)
+{
+    if (!thread) {
+        return;
+    }
+    scheduler_thread_set_state(thread, THREAD_STATE_READY, "idle_unqueued");
 }
 
 thread_t* scheduler_get_current_thread(void)

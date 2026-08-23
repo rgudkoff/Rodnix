@@ -15,6 +15,10 @@ DISK_IMG="${DISK_IMG:-${BUILD_DIR}/rodnix-disk.img}"
 DISK_MB="${DISK_MB:-128}"
 DISK_FS_STAMP="${DISK_FS_STAMP:-${BUILD_DIR}/rodnix-disk.ext2.stamp}"
 FRESH_DISK="${FRESH_DISK:-1}"
+# Extra qemu arguments, e.g. QEMU_EXTRA="-smp 2". Kept out of the default run
+# so the smoke stays the same shape, and available so an SMP reproduction does
+# not need a second copy of this script.
+QEMU_EXTRA="${QEMU_EXTRA:-}"
 FLAG_FILE="userland/rootfs/etc/contract.auto"
 
 cleanup() {
@@ -56,7 +60,7 @@ if ! command -v "$QEMU_BIN" >/dev/null 2>&1; then
 fi
 
 set +e
-"$QEMU_BIN" -m 1G -boot d -cdrom "$ISO_PATH" ${QEMU_DISPLAY} -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
+"$QEMU_BIN" -m 1G -boot d -cdrom "$ISO_PATH" ${QEMU_DISPLAY} ${QEMU_EXTRA} -serial file:"$LOG_FILE" -no-reboot -no-shutdown \
   -drive file="$DISK_IMG",if=ide,format=raw,index=0,media=disk &
 QEMU_PID=$!
 set -e

@@ -4,6 +4,7 @@
  */
 
 #include "loader.h"
+#include "arch/percpu.h"
 #include "elf.h"
 #include "arch/usermode.h"
 #include "arch/paging.h"
@@ -11,6 +12,7 @@
 #include "arch/config.h"
 #include "../fs/vfs.h"
 #include "core/task.h"
+#include "unix/proc.h"
 #include "security.h"
 #include "../mm/vm_map.h"
 #include "../mm/vm_page_ref.h"
@@ -562,12 +564,13 @@ int loader_execve_ex(const char* path,
     }
 
     /* Apply suid/sgid: update task credentials before switching address space. */
-    if ((exec_has_suid || exec_has_sgid) && cur && cur->task) {
-        uint32_t new_uid  = exec_has_suid ? exec_file_uid : cur->task->uid;
-        uint32_t new_gid  = exec_has_sgid ? exec_file_gid : cur->task->gid;
-        uint32_t new_euid = exec_has_suid ? exec_file_uid : cur->task->euid;
-        uint32_t new_egid = exec_has_sgid ? exec_file_gid : cur->task->egid;
-        task_set_ids(cur->task, new_uid, new_gid, new_euid, new_egid);
+    if ((exec_has_suid || exec_has_sgid) && cur && cur->task && task_proc(cur->task)) {
+        proc_t* proc = task_proc(cur->task);
+        uint32_t new_uid  = exec_has_suid ? exec_file_uid : proc->uid;
+        uint32_t new_gid  = exec_has_sgid ? exec_file_gid : proc->gid;
+        uint32_t new_euid = exec_has_suid ? exec_file_uid : proc->euid;
+        uint32_t new_egid = exec_has_sgid ? exec_file_gid : proc->egid;
+        proc_set_ids(proc, new_uid, new_gid, new_euid, new_egid);
     }
 
     usermode_set_pml4(img.pml4_phys);
@@ -600,10 +603,7 @@ int loader_execve_ex(const char* path,
     if (cur) {
         cur->tls_fs_base = 0;
     }
-    {
-        extern uint64_t g_current_tls_fs_base;
-        g_current_tls_fs_base = 0;
-    }
+    percpu_set_tls_fs_base(0);
 
     if (bootlog_is_verbose()) {
         kputs("[LOADER] entering userland\n");

@@ -93,52 +93,54 @@ static int unix_frame_on_thread_stack(const thread_t* t, const interrupt_frame_t
 
 static void unix_signal_save_frame(task_t* task, const interrupt_frame_t* frame)
 {
-    task->sig_saved.rip = frame->rip;
-    task->sig_saved.rsp = frame->rsp;
-    task->sig_saved.rflags = frame->rflags;
-    task->sig_saved.rax = frame->rax;
-    task->sig_saved.rbx = frame->rbx;
-    task->sig_saved.rcx = frame->rcx;
-    task->sig_saved.rdx = frame->rdx;
-    task->sig_saved.rsi = frame->rsi;
-    task->sig_saved.rdi = frame->rdi;
-    task->sig_saved.rbp = frame->rbp;
-    task->sig_saved.r8 = frame->r8;
-    task->sig_saved.r9 = frame->r9;
-    task->sig_saved.r10 = frame->r10;
-    task->sig_saved.r11 = frame->r11;
-    task->sig_saved.r12 = frame->r12;
-    task->sig_saved.r13 = frame->r13;
-    task->sig_saved.r14 = frame->r14;
-    task->sig_saved.r15 = frame->r15;
+    proc_t* proc = task_proc(task);
+    proc->sig_saved.rip = frame->rip;
+    proc->sig_saved.rsp = frame->rsp;
+    proc->sig_saved.rflags = frame->rflags;
+    proc->sig_saved.rax = frame->rax;
+    proc->sig_saved.rbx = frame->rbx;
+    proc->sig_saved.rcx = frame->rcx;
+    proc->sig_saved.rdx = frame->rdx;
+    proc->sig_saved.rsi = frame->rsi;
+    proc->sig_saved.rdi = frame->rdi;
+    proc->sig_saved.rbp = frame->rbp;
+    proc->sig_saved.r8 = frame->r8;
+    proc->sig_saved.r9 = frame->r9;
+    proc->sig_saved.r10 = frame->r10;
+    proc->sig_saved.r11 = frame->r11;
+    proc->sig_saved.r12 = frame->r12;
+    proc->sig_saved.r13 = frame->r13;
+    proc->sig_saved.r14 = frame->r14;
+    proc->sig_saved.r15 = frame->r15;
 }
 
 static uint64_t unix_signal_restore_frame(task_t* task, interrupt_frame_t* frame)
 {
-    if (!task || !frame || !task->sig_in_handler) {
+    proc_t* proc = task_proc(task);
+    if (!task || !frame || !proc->sig_in_handler) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
-    frame->rip = task->sig_saved.rip;
-    frame->rsp = task->sig_saved.rsp;
-    frame->rflags = task->sig_saved.rflags;
-    frame->rax = task->sig_saved.rax;
-    frame->rbx = task->sig_saved.rbx;
-    frame->rcx = task->sig_saved.rcx;
-    frame->rdx = task->sig_saved.rdx;
-    frame->rsi = task->sig_saved.rsi;
-    frame->rdi = task->sig_saved.rdi;
-    frame->rbp = task->sig_saved.rbp;
-    frame->r8 = task->sig_saved.r8;
-    frame->r9 = task->sig_saved.r9;
-    frame->r10 = task->sig_saved.r10;
-    frame->r11 = task->sig_saved.r11;
-    frame->r12 = task->sig_saved.r12;
-    frame->r13 = task->sig_saved.r13;
-    frame->r14 = task->sig_saved.r14;
-    frame->r15 = task->sig_saved.r15;
+    frame->rip = proc->sig_saved.rip;
+    frame->rsp = proc->sig_saved.rsp;
+    frame->rflags = proc->sig_saved.rflags;
+    frame->rax = proc->sig_saved.rax;
+    frame->rbx = proc->sig_saved.rbx;
+    frame->rcx = proc->sig_saved.rcx;
+    frame->rdx = proc->sig_saved.rdx;
+    frame->rsi = proc->sig_saved.rsi;
+    frame->rdi = proc->sig_saved.rdi;
+    frame->rbp = proc->sig_saved.rbp;
+    frame->r8 = proc->sig_saved.r8;
+    frame->r9 = proc->sig_saved.r9;
+    frame->r10 = proc->sig_saved.r10;
+    frame->r11 = proc->sig_saved.r11;
+    frame->r12 = proc->sig_saved.r12;
+    frame->r13 = proc->sig_saved.r13;
+    frame->r14 = proc->sig_saved.r14;
+    frame->r15 = proc->sig_saved.r15;
 
-    task->sig_in_handler = 0;
+    proc->sig_in_handler = 0;
     /* Do not clear sig_pending: other signals may have accumulated during the
      * handler and will be delivered on the next signal checkpoint. */
     return frame->rax;
@@ -152,10 +154,10 @@ static int unix_signal_may_send(const task_t* sender, const task_t* target)
     if (sender == target) {
         return 1;
     }
-    if (sender->euid == 0) {
+    if (task_proc(sender)->euid == 0) {
         return 1;
     }
-    return sender->uid == target->uid;
+    return task_proc(sender)->uid == task_proc(target)->uid;
 }
 
 static void unix_force_remove_ready_thread(thread_t* thread)
@@ -197,20 +199,21 @@ static void unix_proc_force_terminate_task(task_t* target, int sig)
 {
     thread_t* thread;
 
-    if (!target || target->exited) {
+    proc_t* proc = task_proc(target);
+    if (!target || !proc || proc->exited) {
         return;
     }
 
     unix_proc_close_fds(target);
-    target->exit_code = 128 + sig;
-    target->exited = 1;
-    target->sig_pending = 0;
-    target->sig_in_handler = 0;
+    proc->exit_code = 128 + sig;
+    proc->exited = 1;
+    proc->sig_pending = 0;
+    proc->sig_in_handler = 0;
     unix_proc_notify_waiters(target->parent_task_id);
     if (target->parent_task_id) {
         task_t* parent = task_find_by_id(target->parent_task_id);
-        if (parent) {
-            parent->sig_pending |= (1u << UNIX_SIGCHLD);
+        if (parent && task_proc(parent)) {
+            task_proc(parent)->sig_pending |= (1u << UNIX_SIGCHLD);
         }
     }
 
@@ -236,8 +239,8 @@ void unix_proc_notify_waiters(uint64_t parent_task_id)
         return;
     }
     task_t* parent = task_find_by_id(parent_task_id);
-    if (parent) {
-        waitq_wake_all(&parent->child_waitq);
+    if (parent && task_proc(parent)) {
+        waitq_wake_all(&task_proc(parent)->child_waitq);
     }
 }
 
@@ -246,8 +249,12 @@ void unix_proc_close_fds(task_t* task)
     if (!task) {
         return;
     }
-    for (int fd = 0; fd < TASK_MAX_FD; fd++) {
-        if (task->fd_table[fd]) {
+    proc_t* proc = task_proc(task);
+    if (!proc) {
+        return;
+    }
+    for (int fd = 0; fd < PROC_MAX_FD; fd++) {
+        if (proc->fd_table[fd]) {
             unix_fd_release(task, fd);
         }
     }
@@ -256,16 +263,17 @@ void unix_proc_close_fds(task_t* task)
 uint64_t unix_proc_exit(uint64_t status)
 {
     task_t* task = task_get_current();
-    if (task) {
+    proc_t* proc = task_proc(task);
+    if (task && proc) {
         unix_proc_close_fds(task);
-        task->exit_code = (int32_t)status;
-        task->exited = 1;
+        proc->exit_code = (int32_t)status;
+        proc->exited = 1;
         unix_proc_notify_waiters(task->parent_task_id);
         /* Send SIGCHLD to parent — use bitmask so it's never lost. */
         if (task->parent_task_id) {
             task_t* parent = task_find_by_id(task->parent_task_id);
-            if (parent) {
-                parent->sig_pending |= (1u << UNIX_SIGCHLD);
+            if (parent && task_proc(parent)) {
+                task_proc(parent)->sig_pending |= (1u << UNIX_SIGCHLD);
             }
         }
     }
@@ -281,18 +289,19 @@ uint64_t unix_proc_exit(uint64_t status)
 void unix_proc_signal_checkpoint(void)
 {
     task_t* task = task_get_current();
+    proc_t* proc = task_proc(task);
     thread_t* thr = thread_get_current();
     if (!task || !thr) {
         return;
     }
-    if (!task->sig_pending || task->sig_in_handler) {
+    if (!proc->sig_pending || proc->sig_in_handler) {
         return;
     }
 
     /* Find the lowest-numbered pending signal (bitmask model). */
     uint32_t sig = 0;
     for (uint32_t i = 1; i <= (uint32_t)UNIX_SIG_MAX; i++) {
-        if (task->sig_pending & (1u << i)) {
+        if (proc->sig_pending & (1u << i)) {
             sig = i;
             break;
         }
@@ -301,15 +310,15 @@ void unix_proc_signal_checkpoint(void)
         return;
     }
 
-    uint64_t handler = task->sigaction[sig].handler;
-    uint64_t restorer = task->sigaction[sig].restorer;
+    uint64_t handler = proc->sigaction[sig].handler;
+    uint64_t restorer = proc->sigaction[sig].restorer;
     interrupt_frame_t* frame = (interrupt_frame_t*)thr->arch_specific;
     if (!frame) {
         return;
     }
 
     /* Clear this signal from the pending bitmask before potential re-entry. */
-    task->sig_pending &= ~(1u << sig);
+    proc->sig_pending &= ~(1u << sig);
 
     /* Linux guest tasks (BusyBox ash included) install a SIGCHLD handler, but
      * RodNIX does not yet provide a fully Linux-compatible signal frame and
@@ -363,7 +372,7 @@ void unix_proc_signal_checkpoint(void)
     frame->rsp = new_rsp;
     frame->rip = handler;
     frame->rdi = sig;
-    task->sig_in_handler = 1;
+    proc->sig_in_handler = 1;
     /* sig_pending already has this signal cleared; other signals remain queued. */
 }
 
@@ -386,10 +395,11 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
         if (sig == 0) {
             return (uint64_t)RDNX_OK;
         }
-        uint64_t target_pgid = (spid == 0) ? self->process_group_id
+        proc_t* self_proc = task_proc(self);
+        uint64_t target_pgid = (spid == 0) ? self_proc->process_group_id
                                             : (uint64_t)(-spid);
-        if (self->process_group_id == target_pgid) {
-            self->sig_pending |= (1u << (uint32_t)sig);
+        if (self_proc->process_group_id == target_pgid) {
+            self_proc->sig_pending |= (1u << (uint32_t)sig);
             unix_proc_signal_checkpoint();
         }
         return (uint64_t)RDNX_OK;
@@ -411,7 +421,7 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
         return (uint64_t)RDNX_OK;
     }
 
-    target->sig_pending |= (1u << (uint32_t)sig);
+    task_proc(target)->sig_pending |= (1u << (uint32_t)sig);
     if (target == self) {
         unix_proc_signal_checkpoint();
     }
@@ -421,6 +431,7 @@ uint64_t unix_proc_kill(uint64_t pid, uint64_t signum)
 uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t user_oldact_ptr)
 {
     task_t* task = task_get_current();
+    proc_t* proc = task_proc(task);
     int sig = (int)signum;
     if (!task || sig <= 0 || sig > UNIX_SIG_MAX || sig == UNIX_SIGKILL) {
         return (uint64_t)RDNX_E_INVALID;
@@ -431,10 +442,10 @@ uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t us
             return (uint64_t)RDNX_E_INVALID;
         }
         unix_sigaction_u_t kold;
-        kold.sa_handler  = task->sigaction[sig].handler;
-        kold.sa_flags    = task->sigaction[sig].flags;
-        kold.sa_restorer = task->sigaction[sig].restorer;
-        kold.sa_mask     = task->sigaction[sig].mask;
+        kold.sa_handler  = proc->sigaction[sig].handler;
+        kold.sa_flags    = proc->sigaction[sig].flags;
+        kold.sa_restorer = proc->sigaction[sig].restorer;
+        kold.sa_mask     = proc->sigaction[sig].mask;
         if (unix_copy_to_user((void*)(uintptr_t)user_oldact_ptr, &kold, sizeof(kold)) != RDNX_OK) {
             return (uint64_t)RDNX_E_INVALID;
         }
@@ -448,10 +459,10 @@ uint64_t unix_proc_sigaction(uint64_t signum, uint64_t user_act_ptr, uint64_t us
         if (unix_copy_from_user(&knew, (const void*)(uintptr_t)user_act_ptr, sizeof(knew)) != RDNX_OK) {
             return (uint64_t)RDNX_E_INVALID;
         }
-        task->sigaction[sig].handler  = knew.sa_handler;
-        task->sigaction[sig].flags    = knew.sa_flags;
-        task->sigaction[sig].restorer = knew.sa_restorer;
-        task->sigaction[sig].mask     = knew.sa_mask;
+        proc->sigaction[sig].handler  = knew.sa_handler;
+        proc->sigaction[sig].flags    = knew.sa_flags;
+        proc->sigaction[sig].restorer = knew.sa_restorer;
+        proc->sigaction[sig].mask     = knew.sa_mask;
     }
 
     return (uint64_t)RDNX_OK;
@@ -493,24 +504,24 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
     }
 
     /* Block until child exits. Wake-up is delivered via unix_proc_notify_waiters()
-     * which calls waitq_wake_all(&self->child_waitq) when a child transitions
+     * which calls waitq_wake_all() on the parent's proc->child_waitq when a child transitions
      * to ZOMBIE. Re-check after each wakeup in case of spurious wakeups or
      * multiple children. Short timeout (100 ms) handles the TOCTOU race where
      * the child exits between the exited-check and waitq_wait enqueue. */
     for (;;) {
         if (wait_any_child) {
-            child = task_find_child_by_parent(self->task_id, 1, 0);
+            child = proc_find_child_by_parent(self->task_id, 1, 0);
             if (child) {
                 break;
             }
-            if (!task_find_child_by_parent(self->task_id, 0, 0)) {
+            if (!proc_find_child_by_parent(self->task_id, 0, 0)) {
                 return (uint64_t)RDNX_E_NOTFOUND;
             }
-            (void)waitq_wait(&self->child_waitq, 100);
+            (void)waitq_wait(&task_proc(self)->child_waitq, 100);
             continue;
         }
 
-        bool child_exited = child->exited ||
+        bool child_exited = task_proc(child)->exited ||
                             (child->state == TASK_STATE_ZOMBIE) ||
                             (child->state == TASK_STATE_DEAD);
         if (child_exited) {
@@ -520,16 +531,16 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         if (!task_find_by_id(pid)) {
             return (uint64_t)RDNX_E_NOTFOUND;
         }
-        (void)waitq_wait(&self->child_waitq, 100);
+        (void)waitq_wait(&task_proc(self)->child_waitq, 100);
     }
 
-    if (child->waited) {
+    if (task_proc(child)->waited) {
         return (uint64_t)RDNX_E_NOTFOUND;
     }
 
-    child->waited = 1;
+    task_proc(child)->waited = 1;
     if (user_status_ptr) {
-        int code = child->exit_code;
+        int code = task_proc(child)->exit_code;
         (void)unix_copy_to_user((void*)(uintptr_t)user_status_ptr, &code, sizeof(int));
     }
     bool destroy_now = (child->thread_count == 0);
@@ -560,15 +571,15 @@ uint64_t unix_proc_fork(void)
     }
     child->state = TASK_STATE_READY;
     child->parent_task_id = parent->task_id;
-    task_set_ids(child, parent->uid, parent->gid, parent->euid, parent->egid);
-    (void)task_set_supp_groups(child, parent->supp_groups, parent->supp_group_count);
+    proc_set_ids(task_proc(child), task_proc(parent)->uid, task_proc(parent)->gid, task_proc(parent)->euid, task_proc(parent)->egid);
+    (void)proc_set_supp_groups(task_proc(child), task_proc(parent)->supp_groups, task_proc(parent)->supp_group_count);
     task_set_abi(child, task_get_abi(parent));
-    child->session_id = parent->session_id;
-    child->process_group_id = parent->process_group_id;
+    task_proc(child)->session_id = task_proc(parent)->session_id;
+    task_proc(child)->process_group_id = task_proc(parent)->process_group_id;
     child->tls_fs_base = parent->tls_fs_base;
-    child->umask = parent->umask;
-    strncpy(child->cwd, parent->cwd, sizeof(child->cwd) - 1);
-    child->cwd[sizeof(child->cwd) - 1] = '\0';
+    task_proc(child)->umask = task_proc(parent)->umask;
+    strncpy(task_proc(child)->cwd, task_proc(parent)->cwd, sizeof(task_proc(child)->cwd) - 1);
+    task_proc(child)->cwd[sizeof(task_proc(child)->cwd) - 1] = '\0';
 
     if (unix_clone_fds_for_spawn(parent, child) != RDNX_OK) {
         task_destroy(child);
@@ -591,7 +602,7 @@ uint64_t unix_proc_fork(void)
         task_destroy(child);
         return (uint64_t)RDNX_E_NOMEM;
     }
-    /* Inherit FS.Base so the child's first context-switch sets g_current_tls_fs_base
+    /* Inherit FS.Base so the child's first context-switch sets this CPU's percpu.tls_fs_base
      * correctly; without this any IRQ before the child's first syscall clears TLS. */
     child_thread->tls_fs_base = child->tls_fs_base;
     child_thread->priority = self_thread->priority;
@@ -870,13 +881,13 @@ uint64_t unix_proc_thread_exit(uint64_t status)
         }
         if (live == 0) {
             unix_proc_close_fds(task);
-            task->exit_code = (int32_t)status;
-            task->exited = 1;
+            task_proc(task)->exit_code = (int32_t)status;
+            task_proc(task)->exited = 1;
             unix_proc_notify_waiters(task->parent_task_id);
             if (task->parent_task_id) {
                 task_t* parent = task_find_by_id(task->parent_task_id);
                 if (parent) {
-                    parent->sig_pending |= (1u << UNIX_SIGCHLD);
+                    task_proc(parent)->sig_pending |= (1u << UNIX_SIGCHLD);
                 }
             }
         }

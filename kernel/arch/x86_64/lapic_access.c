@@ -68,6 +68,23 @@ int lapic_access_init(uint64_t apic_phys, bool prefer_x2apic)
     return 0;
 }
 
+int lapic_access_init_ap(void)
+{
+    if (g_lapic_mode == LAPIC_MODE_NONE) {
+        return -1;
+    }
+
+    uint64_t apic_base = lapic_rdmsr(APIC_BASE_MSR);
+    apic_base |= APIC_BASE_ENABLE;
+    if (g_lapic_mode == LAPIC_MODE_X2APIC) {
+        apic_base |= APIC_BASE_X2APIC;
+    } else {
+        apic_base &= ~APIC_BASE_X2APIC;
+    }
+    lapic_wrmsr(APIC_BASE_MSR, apic_base);
+    return 0;
+}
+
 bool lapic_access_ready(void)
 {
     if (g_lapic_mode == LAPIC_MODE_X2APIC) {
@@ -119,4 +136,44 @@ void lapic_access_write(uint32_t reg_off, uint32_t value)
         g_lapic_mmio[reg_off >> 2] = value;
         __asm__ volatile ("" ::: "memory");
     }
+}
+
+void lapic_access_write_icr(uint32_t dest, uint32_t low)
+{
+    if (g_lapic_mode == LAPIC_MODE_X2APIC) {
+        uint64_t value = ((uint64_t)dest << 32) | (uint64_t)low;
+        __asm__ volatile ("mfence" ::: "memory");
+        lapic_wrmsr(X2APIC_MSR_ICR, value);
+        return;
+    }
+
+    if (g_lapic_mode == LAPIC_MODE_XAPIC && g_lapic_mmio) {
+        /* The two writes are one logical operation: an interrupt landing
+         * between them could let another sender overwrite the destination
+         * before the low write fires this IPI at it. */
+        uint64_t flags;
+        __asm__ volatile ("pushfq\n\tpopq %0\n\tcli"
+                          : "=r"(flags) :: "memory");
+
+        g_lapic_mmio[APIC_ICR_HIGH >> 2] = dest << APIC_ICR_DEST_SHIFT;
+        g_lapic_mmio[APIC_ICR_LOW >> 2] = low;
+
+        __asm__ volatile ("pushq %0\n\tpopfq"
+                          :: "r"(flags) : "memory", "cc");
+    }
+}
+
+bool lapic_access_ipi_wait(uint32_t spins)
+{
+    if (g_lapic_mode != LAPIC_MODE_XAPIC) {
+        return true;
+    }
+
+    while (spins-- > 0) {
+        if ((lapic_access_read(APIC_ICR_LOW) & APIC_ICR_DELIVERY_STATUS) == 0) {
+            return true;
+        }
+        __asm__ volatile ("pause");
+    }
+    return false;
 }

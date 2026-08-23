@@ -130,6 +130,11 @@ int scheduler_remove_thread(thread_t* thread);
  */
 thread_t* scheduler_get_current_thread(void);
 
+/* Mark a thread runnable without putting it in the run queue.
+ * For per-CPU idle threads, which are always available to their own
+ * processor and must never be handed to another. */
+void scheduler_mark_runnable_unqueued(thread_t* thread);
+
 /* ============================================================================
  * Scheduling control
  * ============================================================================ */
