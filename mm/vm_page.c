@@ -4,6 +4,7 @@
  */
 
 #include "vm_page.h"
+#include "../include/console.h"
 #include "../kernel/arch/pmm.h"
 #include "../include/error.h"
 #include "../include/debug.h"
@@ -142,6 +143,15 @@ int vm_page_drop(uint64_t phys)
         /* This processor took the count to zero, so it owns the free. The
          * compare-exchange is what makes that unambiguous with several
          * processors dropping at once. */
+        if (m->object != NULL) {
+            /* An indexed page reached zero references, which means somebody
+             * dropped a reference they did not own: the owning object holds
+             * one for as long as the page is in its index. Freeing it now
+             * hands the allocator a page that a hash chain still points at,
+             * and the next allocation corrupts that chain. Loud, always. */
+            kprintf("[VMPAGE] freeing page %llx still indexed (pindex=%u)\n",
+                    (unsigned long long)phys, m->pindex);
+        }
         pmm_free_page(phys);
     }
     return RDNX_OK;

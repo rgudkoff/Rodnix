@@ -19,11 +19,10 @@
  * because its segments are sparse; ours are not, and eight bytes per page is
  * worth not spending on a value that is already known.
  *
- * The structure is deliberately small now and will grow. Later stages add the
- * owning object and offset (mm_redesign.md, stage 4), the queue links (stage
- * 2), the service class (stage 7), and the machine-dependent slot that a pmap
- * needs for reverse mappings (stage 8). Fields are added when something reads
- * them, not in advance.
+ * The structure is deliberately small now and will grow. Stage 4 added the
+ * owning object and offset below; later stages add the service class (stage
+ * 7) and the machine-dependent slot that a pmap needs for reverse mappings
+ * (stage 8). Fields are added when something reads them, not in advance.
  */
 
 #ifndef _RODNIX_VM_PAGE_H
@@ -80,6 +79,17 @@ typedef struct vm_page {
      * vm_page.order, and for the same reason: marking every page of a block
      * would make freeing a large block cost its size. */
     uint8_t order;
+
+    /* Owner and offset within it (stage 4). A page is resident in at most
+     * one object; the object holds a reference for as long as the page is in
+     * its index, so an indexed page cannot be freed out from under it. The
+     * chain link makes the page itself the node of the object's hash bucket
+     * -- the same economy as FreeBSD, where the page is the radix tree's
+     * leaf: residency costs no allocation, so a fault cannot fail for want
+     * of an index node. All three fields belong to the owning object's lock. */
+    struct vm_object* object;
+    uint32_t pindex;    /* page index within the object */
+    uint32_t obj_next;  /* next page in the bucket chain, as a vm_page index */
 } vm_page_t;
 
 /*

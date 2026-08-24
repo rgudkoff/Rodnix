@@ -182,12 +182,19 @@ static int spawn_and_wait(char* const argv[])
 
     pid = posix_spawn(argv[0], (const char* const*)argv);
     if (pid <= 0) {
+        ct_log("spawn", "DIAG", "posix_spawn failed");
         return 0;
     }
-    if (waitpid((pid_t)pid, &status, 0) != pid) {
+    long wret = waitpid((pid_t)pid, &status, 0);
+    if (wret != pid) {
+        ct_log("spawn", "DIAG", "waitpid pid mismatch");
         return 0;
     }
-    return status == 0;
+    if (status != 0) {
+        ct_log("spawn", "DIAG", "child exited nonzero");
+        return 0;
+    }
+    return 1;
 }
 
 static void cleanup_ct_paths(void)
