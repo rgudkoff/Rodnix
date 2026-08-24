@@ -49,6 +49,7 @@ extern struct ready_queue_head ready_queues[READY_QUEUE_LEVELS];
 
 extern scheduler_reap_stats_t reap_stats;
 extern waitq_t scheduler_sleep_waitq;
+extern waitq_t scheduler_join_waitq;
 extern uint64_t bucket_last_run_tick[READY_QUEUE_LEVELS]; /* последний тик каждого бакета */
 
 void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason);

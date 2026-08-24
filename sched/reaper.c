@@ -29,7 +29,24 @@ static inline void reaper_unlock(uint64_t flags)
     spinlock_unlock_irqrestore(&reaper_spin, flags);
 }
 
-static thread_t* scheduler_reap_dequeue(void)
+/*
+ * Забрать голову очереди — только если её уже можно освобождать.
+ *
+ * Проверки готовности выполняются под замком и до извлечения. Прежний код
+ * сначала вынимал поток, потом смотрел на on_cpu и, если процессор ещё был
+ * на его стеке, просто бросал указатель: обратно в очередь поток не
+ * возвращался, а reap_queued оставался поднятым и запрещал повторную
+ * постановку. Стек и дескрипторы такого потока текли навсегда, ожидающие
+ * не уведомлялись. Неготовая голова теперь остаётся в очереди до
+ * следующего круга — жнецу ждать нечего, поток никуда не денется.
+ *
+ * Почему on_cpu вообще проверяется: поток попадает сюда в момент пометки
+ * DEAD, раньше, чем его процессор сошёл с его стека (стаб чистит on_cpu
+ * после смены rsp). Освободить стек в это окно — значит отравить память,
+ * по которой процессор ещё исполняется; найдено по #GP с
+ * rip = 0xcccccccccccccccc.
+ */
+static thread_t* scheduler_reap_take_ready(void)
 {
     uint64_t old = reaper_lock();
     if (reap_head == reap_tail) {
@@ -37,20 +54,14 @@ static thread_t* scheduler_reap_dequeue(void)
         return NULL;
     }
     thread_t* t = reap_queue[reap_head];
+    if (t->reap_after_tick > sched_ticks ||
+        __atomic_load_n(&t->on_cpu, __ATOMIC_ACQUIRE) != 0) {
+        reap_stats.deferred++;
+        reaper_unlock(old);
+        return NULL;
+    }
     reap_queue[reap_head] = NULL;
     reap_head = (reap_head + 1u) % REAP_QUEUE_SIZE;
-    reaper_unlock(old);
-    return t;
-}
-
-static thread_t* scheduler_reap_peek(void)
-{
-    uint64_t old = reaper_lock();
-    if (reap_head == reap_tail) {
-        reaper_unlock(old);
-        return NULL;
-    }
-    thread_t* t = reap_queue[reap_head];
     reaper_unlock(old);
     return t;
 }
@@ -116,39 +127,10 @@ void scheduler_reap_dead_threads(void)
 {
     reap_stats.runs++;
     for (;;) {
-        thread_t* head = scheduler_reap_peek();
-        if (!head) {
-            break;
-        }
-        if (head->reap_after_tick > sched_ticks) {
-            reap_stats.deferred++;
-            break;
-        }
-        thread_t* dead = scheduler_reap_dequeue();
+        thread_t* dead = scheduler_reap_take_ready();
         if (!dead) {
             break;
         }
-        /*
-         * Do not touch the thread until no processor is still executing on
-         * its kernel stack.
-         *
-         * A thread reaches this list the moment it is marked DEAD, which is
-         * before the processor running it has switched off its stack -- the
-         * stub clears on_cpu only after `mov rsp, rax`. Retiring the stack in
-         * that window poisons memory a processor is still running on, and the
-         * next thing it executes is 0xCC repeated, which is how this was
-         * found: a #GP with rip = 0xcccccccccccccccc.
-         *
-         * The same flag the scheduler uses to hand a thread between
-         * processors answers this too: it is exactly "somebody is on this
-         * stack". Deferring rather than spinning, because the reaper has
-         * nothing to gain by waiting and the thread will still be here next
-         * round.
-         */
-        if (__atomic_load_n(&dead->on_cpu, __ATOMIC_ACQUIRE) != 0) {
-            break;
-        }
-
         dead->reap_queued = 0;
         task_t* owner = dead->task;
         if (owner) {

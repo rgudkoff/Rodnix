@@ -136,8 +136,11 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     thread_t* next = sched_take_next();
     if (!next || next == cur) {
-        if (cur && cur->state != THREAD_STATE_DEAD) {
-            scheduler_thread_set_state(cur, THREAD_STATE_RUNNING, "switch_continue_current");
+        if (cur && !thread_is_dead(cur)) {
+            /* Ничего не переводим: поток и так исполняется. Пометка
+             * "RUNNING" здесь снимала бы TH_WAIT — то есть уничтожала бы
+             * объявленное ожидание у потока, которого прерывание застало
+             * между waitq_assert_wait() и scheduler_block(). */
             in_scheduler = false;
             return frame;
         }
@@ -169,10 +172,38 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
 
     thread_t* prev = cur;
 
-    if (prev->state == THREAD_STATE_RUNNING &&
-        prev != percpu_self()->sched_idle) {
-        scheduler_thread_set_state(prev, THREAD_STATE_READY, "switch_preempt");
-        ready_enqueue(prev);
+    /* Арбитр судьбы уходящего потока. Единственное место, где снимается
+     * TH_RUN, и единственное, где уходящий поток возвращается в очередь, —
+     * и то и другое под его замком. Пара к scheduler_wake(): кто застал
+     * TH_RUN стоящим, тот только снимает ожидание и в очередь не кладёт;
+     * значит, класть — наша обязанность, и делаем это ровно один раз.
+     *
+     * Контекст prev уже сохранён (frame записан на входе в прерывание), так
+     * что «снять TH_RUN» здесь честно означает «поток ушёл с процессора».
+     * Остаток окна — стаб ещё исполняется на стеке prev — закрывает on_cpu.
+     * У XNU эту роль играет thread_dispatch() на стеке нового потока. */
+    {
+        uint64_t pf = spinlock_lock_irqsave(&prev->sched_lock);
+        uint32_t ps = prev->state;
+        if (ps & TH_DEAD) {
+            /* Судьба решена не нами: ниже поток уйдёт сборщику. */
+        } else if ((ps & (TH_WAIT | TH_BLOCK)) == (TH_WAIT | TH_BLOCK)) {
+            /* Ожидание объявлено и точка сна достигнута: поток засыпает.
+             * Разбудит его scheduler_wake — увидев снятый TH_RUN, он и
+             * положит поток в очередь. TH_WAIT без TH_BLOCK сюда не
+             * попадает: такой поток ещё идёт к своей точке сна и может
+             * держать спящие замки — он остаётся готовым (ветка ниже),
+             * как поток между sleepq_add и sleepq_wait у FreeBSD. */
+            prev->state = ps & ~(TH_RUN | TH_BLOCK);
+            stats.blocked_tasks++;
+        } else if (prev != percpu_self()->sched_idle) {
+            /* Всё ещё готов — либо не засыпал, либо пробуждение успело снять
+             * ожидание раньше нас. TH_RUN остаётся, билет выдаём мы. */
+            if (!ready_thread_is_queued(prev)) {
+                ready_enqueue(prev);
+            }
+        }
+        spinlock_unlock_irqrestore(&prev->sched_lock, pf);
     }
     /* Tell the stub whose stack it is leaving. Cleared there, after the
      * switch, which is the only moment the claim can honestly be dropped. */
@@ -189,10 +220,12 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     stats.total_switches++;
 
 
-    if (prev && prev->state == THREAD_STATE_DEAD) {
+    if (prev && thread_is_dead(prev)) {
         scheduler_reap_enqueue(prev);
     }
-    scheduler_thread_set_state(next, THREAD_STATE_RUNNING, "switch_next_running");
+    /* Поток взят из очереди готовности, значит TH_RUN у него уже стоит.
+     * Переводить его нечем и незачем: снятие TH_WAIT здесь стёрло бы
+     * ожидание, объявленное им самим перед тем, как он туда попал. */
     scheduler_reset_timeslice(next);
     tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_SWITCH,
                  prev ? prev->thread_id : 0, next->thread_id);

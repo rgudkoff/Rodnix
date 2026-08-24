@@ -218,7 +218,7 @@ static void unix_proc_force_terminate_task(task_t* target, int sig)
     }
 
     TAILQ_FOREACH(thread, &target->threads, task_link) {
-        if (thread->state == THREAD_STATE_DEAD) {
+        if (thread_is_dead(thread)) {
             continue;
         }
         if (thread->waitq_owner) {
@@ -875,7 +875,7 @@ uint64_t unix_proc_thread_exit(uint64_t status)
         uint32_t live = 0;
         thread_t* t;
         TAILQ_FOREACH(t, &task->threads, task_link) {
-            if (t != cur && t->state != THREAD_STATE_DEAD) {
+            if (t != cur && !thread_is_dead(t)) {
                 live++;
             }
         }

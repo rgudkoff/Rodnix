@@ -10,6 +10,7 @@
 
 #include "arch_types.h"
 #include "cpu.h"
+#include "../fabric/spin.h"
 #include <bsd/sys/queue.h>
 #include <bsd/sys/tree.h>
 #include <stdint.h>
@@ -53,6 +54,43 @@ typedef enum {
     THREAD_STATE_SLEEPING,     /* Спит */
     THREAD_STATE_DEAD,         /* Завершен */
 } thread_state_t;
+
+/*
+ * Состояние потока для планировщика — набор битов, а не одно значение.
+ *
+ * Причина не в удобстве. Поток бывает одновременно «уже помечен ожидающим» и
+ * «ещё исполняется» — именно в этот промежуток попадает пробуждение,
+ * приходящее с другого процессора между проверкой условия и засыпанием. Одним
+ * значением такое состояние невыразимо: любое присвоение теряет половину
+ * истины, и пробуждение пропадает вместе с ней. Измерено: поток BLOCKED, ни в
+ * одной очереди ожидания, разбудить нечем, вся система стоит.
+ *
+ * XNU держит то же самое теми же битами (osfmk/kern/thread.h) и даже даёт окну
+ * имя: TH_WAKING, «between waitq remove and thread_go». Окно не редкое и не
+ * закрывается аккуратностью — оно называется.
+ *
+ * Готовность и исполнение — один бит TH_RUN, как у XNU. Что поток именно
+ * исполняется, а не стоит в очереди, знает процессор: percpu.current_thread.
+ * Разделять их в самом состоянии значило бы снова заводить переход, который
+ * можно потерять.
+ */
+#define TH_RUN     0x01u   /* исполняется или стоит в очереди готовности */
+#define TH_WAIT    0x02u   /* ждёт события */
+#define TH_IDLE    0x04u   /* поток простоя своего процессора */
+#define TH_DEAD    0x08u   /* завершился, ждёт сборщика */
+#define TH_WAKING  0x10u   /* пробуждение доставлено, поток ещё не подхвачен */
+/* Поток дошёл до своей точки сна: scheduler_block() вызван. Без этого бита
+ * арбитр обязан считать поток с TH_WAIT готовым и вернуть его в очередь.
+ *
+ * Различие содержательное. Между объявлением ожидания (waitq_enqueue) и
+ * точкой сна поток ещё может держать спящие замки — Giant дают обратно
+ * только в waitq_wait_until. Усыпить его в этом окне значит усыпить
+ * держателя Giant: тот, кто должен его разбудить, в сисколл уже не войдёт.
+ * FreeBSD в этом окне возвращает поток в run-queue (sleepq_add сделан,
+ * sleepq_wait ещё нет — TDS_RUNNING), XNU просто отказывает преемпции
+ * (ast_taken_kernel/waitq_wait_possible). Наш switch живёт в прерывании и
+ * отказать не может — поэтому фиксация отдельным битом. */
+#define TH_BLOCK   0x20u   /* спать можно: точка сна достигнута, замки отданы */
 
 /* ============================================================================
  * Приоритет
@@ -149,7 +187,10 @@ typedef struct thread {
     uint64_t thread_id;        /* Уникальный ID потока */
     task_t* task;              /* Задача, к которой принадлежит поток */
     thread_context_t context;   /* Контекст выполнения */
-    thread_state_t state;      /* Состояние потока */
+    /* Набор битов TH_*, меняется атомарно. Читать через предикаты ниже, а не
+     * сравнением с одним значением — сравнение и есть та потеря, из-за которой
+     * пробуждения пропадали. */
+    volatile uint32_t state;
     uint8_t sched_class;       /* Класс планирования */
     uint8_t priority;          /* Приоритет потока */
     uint8_t base_priority;     /* Базовый приоритет */
@@ -190,6 +231,19 @@ typedef struct thread {
     uint64_t wait_deadline_ns;
     uint8_t wait_timeout_armed;     /* Поток находится в timeout-list ожидания */
     uint8_t wait_timed_out;         /* Поток разбужен по timeout waitq */
+
+    /* Замок состояния планирования — то, чего битам не хватало.
+     *
+     * Биты TH_* сами по себе атомарны, но инварианты, которые рвались в
+     * гонках, — составные: «снял TH_WAIT и положил в очередь», «вижу
+     * готовность и отсутствие в очереди — кладу». CAS по одному полю такие
+     * переходы не защищает; у XNU thread->state — обычный int под
+     * per-thread spinlock (thread_lock()), и корректность держится на нём.
+     *
+     * Под этим замком: state, решение «класть ли поток в очередь готовности»
+     * (сама очередь — под своим rq_lock). Порядок: waitq_spin -> sched_lock
+     * -> rq_lock. */
+    spinlock_t sched_lock;
     struct thread* joiner;     /* Поток, ожидающий завершения */
     uint8_t reap_queued;       /* Флаг: поток поставлен в очередь reap */
     uint64_t reap_after_tick;  /* Тик, после которого можно освобождать стек */
@@ -329,18 +383,6 @@ void thread_set_current(thread_t* thread);
 void thread_switch(thread_t* from, thread_t* to);
 
 /**
- * Блокировка потока
- * @param thread Указатель на поток
- */
-void thread_block(thread_t* thread);
-
-/**
- * Разблокировка потока
- * @param thread Указатель на поток
- */
-void thread_unblock(thread_t* thread);
-
-/**
  * Установка приоритета потока
  * @param thread Указатель на поток
  * @param priority Новый приоритет
@@ -358,5 +400,37 @@ void thread_set_priority(thread_t* thread, uint8_t priority);
  */
 typedef void (*task_iter_fn_t)(const task_t* task, void* ctx);
 void task_for_each(task_iter_fn_t fn, void* ctx);
+
+
+/* ============================================================================
+ * Состояние потока: предикаты и переходы
+ * ============================================================================ */
+
+static inline uint32_t thread_state_get(const thread_t* t)
+{
+    return __atomic_load_n(&t->state, __ATOMIC_ACQUIRE);
+}
+
+static inline bool thread_is_runnable(const thread_t* t)
+{
+    return (thread_state_get(t) & TH_RUN) != 0u;
+}
+
+static inline bool thread_is_waiting(const thread_t* t)
+{
+    return (thread_state_get(t) & TH_WAIT) != 0u;
+}
+
+static inline bool thread_is_dead(const thread_t* t)
+{
+    return (thread_state_get(t) & TH_DEAD) != 0u;
+}
+
+/* Имя для отчётов. Не для решений: решение принимается по битам. */
+const char* thread_state_name(const thread_t* t);
+
+/* Прежнее перечисление, только чтобы не менять формат /proc и ps. Выводится
+ * из битов и знания процессора о том, кто на нём исполняется. */
+thread_state_t thread_state_legacy(const thread_t* t);
 
 #endif /* _RODNIX_CORE_TASK_H */

@@ -830,18 +830,13 @@ static int shell_cmd_run(int argc, char** argv)
     thread->priority = 200;
     kprintf("[RUN] schedule user thread tid=%llu\n",
             (unsigned long long)thread->thread_id);
-    thread->joiner = thread_get_current();
-    kprintf("[RUN] block shell tid=%llu\n",
-            (unsigned long long)thread->joiner->thread_id);
-    /* Block shell before switching away to avoid it staying READY.
-     * scheduler_block() puts this thread to sleep without going through
-     * waitq_wait_until, so the kernel-wide lock has to be handed back here
-     * explicitly -- the thread being joined needs it to run at all. */
-    uint32_t gd = giant_drop();
-    scheduler_block();
-    scheduler_add_thread(thread);
-    interrupt_trigger_resched();
-    giant_pickup(gd);
+    kprintf("[RUN] join shell tid=%llu\n",
+            (unsigned long long)thread_get_current()->thread_id);
+    /* Ждать через объявленное ожидание, а не сырым scheduler_block(): под
+     * протоколом арбитра спать можно только на объявленном событии. Ожидание
+     * объявляется до старта потока, так что его exit не обгонит join.
+     * Kernel-wide замок отдаёт waitq_wait_until, как на всех путях сна. */
+    (void)scheduler_thread_start_join(thread);
     return RDNX_OK;
 }
 

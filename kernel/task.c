@@ -69,6 +69,42 @@ static struct task_id_index all_tasks_by_id = RB_INITIALIZER(&all_tasks_by_id);
  * processor, and masking interrupts only ever excluded this one. */
 static spinlock_t task_registry_spin;
 
+/*
+ * Every thread, its state, and what it is waiting on -- taken under the
+ * registry lock and written into caller-supplied storage, so nothing is read
+ * without the lock that protects it.
+ */
+uint32_t task_debug_thread_snapshot(uint64_t* tid, uint64_t* task_id,
+                                    int* state, uint64_t* waitq,
+                                    uint64_t* rip, uint32_t max)
+{
+    uint64_t f = spinlock_lock_irqsave(&task_registry_spin);
+    uint32_t n = 0;
+    for (task_t* t = all_tasks_head; t && n < max; t = t->next_all) {
+        thread_t* th;
+        TAILQ_FOREACH(th, &t->threads, task_link) {
+            if (n >= max) {
+                break;
+            }
+            tid[n] = th->thread_id;
+            task_id[n] = t->task_id;
+            state[n] = (int)th->state;
+            waitq[n] = (uint64_t)(uintptr_t)th->waitq_owner;
+            /* Where it is parked: the saved trap frame's RIP. Safe to read
+             * for a thread that is not running -- nothing is writing it. */
+            rip[n] = 0;
+            if (th != thread_get_current() && th->context.stack_pointer) {
+                const interrupt_frame_t* fr =
+                    (const interrupt_frame_t*)(uintptr_t)th->context.stack_pointer;
+                rip[n] = fr->rip;
+            }
+            n++;
+        }
+    }
+    spinlock_unlock_irqrestore(&task_registry_spin, f);
+    return n;
+}
+
 static inline uint64_t task_registry_lock(void)
 {
     return spinlock_lock_irqsave(&task_registry_spin);
@@ -124,7 +160,7 @@ static void thread_trampoline(void)
         }
     }
 
-    self->state = THREAD_STATE_RUNNING;
+    scheduler_thread_set_state(self, THREAD_STATE_RUNNING, "thread_entry");
 
     /* Kernel threads run kernel code for their whole life, so they hold the
      * kernel-wide lock for it -- dropped around every sleep, and dropped for
@@ -391,7 +427,7 @@ thread_t* thread_create(task_t* task, void (*entry)(void*), void* arg)
     thread->task = task;
     thread->context.stack_pointer = (uint64_t)(uintptr_t)frame;
     thread->context.program_counter = frame->rip;
-    thread->state = THREAD_STATE_NEW;
+    thread->state = 0;
     thread->sched_class = SCHED_CLASS_TIMESHARE;
     thread->priority = PRIORITY_DEFAULT;
     thread->base_priority = PRIORITY_DEFAULT;
@@ -469,7 +505,7 @@ thread_t* thread_create_user_clone(task_t* task, const interrupt_frame_t* frame)
     thread->task = task;
     thread->context.stack_pointer = (uint64_t)(uintptr_t)child_frame;
     thread->context.program_counter = child_frame->rip;
-    thread->state = THREAD_STATE_NEW;
+    thread->state = 0;
     thread->sched_class = SCHED_CLASS_TIMESHARE;
     thread->priority = PRIORITY_DEFAULT;
     thread->base_priority = PRIORITY_DEFAULT;
@@ -552,7 +588,7 @@ thread_t* thread_create_user_thread(task_t* task,
     thread->task = task;
     thread->context.stack_pointer = (uint64_t)(uintptr_t)child_frame;
     thread->context.program_counter = child_frame->rip;
-    thread->state = THREAD_STATE_NEW;
+    thread->state = 0;
     thread->sched_class = SCHED_CLASS_TIMESHARE;
     thread->priority = PRIORITY_DEFAULT;
     thread->base_priority = PRIORITY_DEFAULT;
@@ -644,24 +680,6 @@ void thread_switch(thread_t* from, thread_t* to)
         cpu_restore_context(&to->context);
     } else {
         cpu_switch_thread(&from->context, &to->context);
-    }
-}
-
-void thread_block(thread_t* thread)
-{
-    if (!thread) {
-        return;
-    }
-    thread->state = THREAD_STATE_BLOCKED;
-}
-
-void thread_unblock(thread_t* thread)
-{
-    if (!thread) {
-        return;
-    }
-    if (thread->state == THREAD_STATE_BLOCKED) {
-        thread->state = THREAD_STATE_READY;
     }
 }
 

@@ -147,6 +147,11 @@ struct percpu {
      * rather than against whenever the handler happened to run. */
     uint64_t timer_deadline;
     uint64_t timer_missed;       /* periods skipped after falling behind */
+
+    /* Heartbeat bookkeeping: when this processor last reported, and how many
+     * timer interrupts it has taken. Per-CPU so the report needs no lock. */
+    uint64_t hb_last_ns;
+    uint64_t hb_ticks;
 } __attribute__((aligned(64)));
 
 /* Mirrored by the PCPU_* defines in isr_stubs.S and syscall_fast_entry.S. */

@@ -152,15 +152,16 @@ void scheduler_yield(void);
 void scheduler_block(void);
 
 /**
- * Unblock a thread
- * @param thread Thread to unblock
- */
-void scheduler_unblock(thread_t* thread);
-
-/**
  * Wake a thread and enqueue it if needed.
  */
 void scheduler_wake(thread_t* thread);
+
+/**
+ * Start a thread and block until it exits.
+ * Declares the wait before the thread is scheduled, so its exit
+ * cannot race the join.
+ */
+int scheduler_thread_start_join(thread_t* thread);
 
 /**
  * Exit current thread (mark DEAD and reschedule)
@@ -211,6 +212,12 @@ void scheduler_tick(void);
  * Should be called by the active timer source.
  */
 void scheduler_set_tick_rate(uint32_t hz);
+
+/* Перевести поток в состояние, выраженное прежним перечислением. Для мест вне
+ * планировщика, которым надо объявить намерение целиком; решения принимаются
+ * по битам TH_* (kernel/core/task.h). */
+void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state,
+                                const char* reason);
 
 /**
  * Check pending reschedule at safe points (AST-like)

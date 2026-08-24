@@ -116,6 +116,22 @@ int waitq_enqueue(waitq_t* q, thread_t* t)
     uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
     TAILQ_INSERT_TAIL(&q->threads, t, wait_link);
     t->waitq_owner = q;
+    /*
+     * Объявить ожидание здесь, под замком очереди, а не потом при засыпании.
+     *
+     * Это и есть interlock. Пробуждающий берёт тот же замок, чтобы снять
+     * поток с очереди, поэтому застаёт его либо уже помеченным ожидающим —
+     * и тогда снимает пометку, — либо ещё не поставленным в очередь вовсе.
+     * Промежутка, в котором пометки нет, а из очереди уже сняли, не
+     * существует. У XNU это assert_wait/thread_mark_wait_locked, и там TH_WAIT
+     * ставится под двумя замками сразу — очереди и потока. Здесь так же:
+     * state принадлежит sched_lock, порядок waitq_spin -> sched_lock.
+     */
+    {
+        uint64_t tf = spinlock_lock_irqsave(&t->sched_lock);
+        t->state |= TH_WAIT;
+        spinlock_unlock_irqrestore(&t->sched_lock, tf);
+    }
     q->count++;
     spinlock_unlock_irqrestore(&waitq_spin, flags);
     return RDNX_OK;
@@ -235,7 +251,26 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ns)
      */
     uint32_t giant_depth = giant_drop();
 
-    while (waitq_contains(q, self)) {
+    /*
+     * Ожидание переобъявляется на каждом круге, потому что заснуть можно
+     * только один раз на объявление: scheduler_block() спит, лишь пока бит
+     * TH_WAIT на месте, а пробуждающий его снимает. Круг без переобъявления
+     * означал бы busy-wait после первого же ложного пробуждения.
+     */
+    for (;;) {
+        uint64_t wf = spinlock_lock_irqsave(&waitq_spin);
+        bool still_waiting = (self->waitq_owner == q);
+        if (still_waiting) {
+            uint64_t tf = spinlock_lock_irqsave(&self->sched_lock);
+            self->state |= TH_WAIT;
+            spinlock_unlock_irqrestore(&self->sched_lock, tf);
+        }
+        spinlock_unlock_irqrestore(&waitq_spin, wf);
+
+        if (!still_waiting) {
+            break;
+        }
+
         scheduler_block();
         /* Trigger immediate dispatch to avoid spinning in current context. */
         interrupt_trigger_resched();

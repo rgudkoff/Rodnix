@@ -232,6 +232,19 @@ sysinit_timer(void)
     }
     g_tick_hz = hz;
 
+    {
+        extern uint64_t g_heartbeat_ns;
+        const boot_info_t* bi = boot_get_info();
+        const char* h = (bi && bi->cmdline[0]) ? strstr(bi->cmdline, "rdnx.heartbeat=") : NULL;
+        if (h) {
+            uint64_t secs = 0;
+            for (h += 15; *h >= '0' && *h <= '9'; h++) {
+                secs = secs * 10u + (uint64_t)(*h - '0');
+            }
+            g_heartbeat_ns = secs * 1000000000ULL;
+        }
+    }
+
     bool use_apic_timer = false;
     if (apic_is_available()) {
         if (apic_timer_init(hz) == 0) {

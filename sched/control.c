@@ -5,6 +5,7 @@
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../include/debug.h"
+#include "../../include/error.h"
 
 static void scheduler_exit_wake_joiner(thread_t* exiting)
 {
@@ -14,7 +15,7 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
 
     thread_t* joiner = exiting->joiner;
     exiting->joiner = NULL;
-    if (joiner->state == THREAD_STATE_DEAD) {
+    if (thread_is_dead(joiner)) {
         return;
     }
 
@@ -25,7 +26,35 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
     joiner->inherited_priority = 220;
     joiner->has_inherited = 0;
 
+    /* Пробуждение адресуется ожиданию, а не потоку: сначала снять с очереди,
+     * потом будить. Прямой wake потоку, сидящему в waitq, терялся — TH_WAIT
+     * снят, а из очереди никто не забрал, и поток засыпал обратно. */
+    (void)waitq_remove(&scheduler_join_waitq, joiner);
     scheduler_wake(joiner);
+}
+
+/*
+ * Запустить поток и дождаться его завершения.
+ *
+ * Порядок жёсткий: сначала объявить ожидание (waitq_enqueue ставит TH_WAIT
+ * под замком очереди), и только потом отдать поток планировщику. Его exit
+ * тогда не может прийти раньше, чем мы окажемся в очереди, — окна для
+ * потерянного пробуждения нет по построению.
+ *
+ * Это замена сырому scheduler_block() в shell: под протоколом арбитра
+ * блокировка без объявленного ожидания не блокирует вовсе (и не должна) —
+ * спать можно только на объявленном событии.
+ */
+int scheduler_thread_start_join(thread_t* thread)
+{
+    thread_t* self = thread_get_current();
+    if (!thread || !self) {
+        return RDNX_E_INVALID;
+    }
+    thread->joiner = self;
+    (void)waitq_enqueue(&scheduler_join_waitq, self);
+    scheduler_add_thread(thread);
+    return waitq_wait_until(&scheduler_join_waitq, 0);
 }
 
 static void scheduler_yield_internal(bool irq_context)
@@ -71,111 +100,86 @@ void scheduler_yield(void)
     scheduler_yield_internal(false);
 }
 
+/*
+ * Объявить готовность заснуть.
+ *
+ * Сам сон здесь не происходит и произойти не может: заснуть — значит уйти
+ * с процессора, а это делает только switch по прерыванию. Здесь лишь две
+ * вещи: быстрая проверка «не разбудили ли уже» (чтобы не дёргать resched
+ * впустую) и запрос переключения.
+ *
+ * TH_RUN этот путь не трогает. Бит снимает единственный арбитр — уходящий
+ * процессор в scheduler_switch_from_irq(), под замком потока, когда контекст
+ * уже сохранён. Ровно так у XNU: thread_block не снимает TH_RUN, его снимает
+ * thread_dispatch после переключения. Снятие здесь и было источником двух
+ * билетов на исполнение: пробуждение, пришедшее между этим местом и
+ * переключением, заставало TH_RUN снятым и клало поток в очередь, а потом
+ * его клал туда же и уходящий процессор.
+ */
 void scheduler_block(void)
 {
     thread_t* cur = thread_get_current();
-    if (!cur) {
+    if (!cur || in_scheduler) {
         return;
     }
 
-    if (in_scheduler) {
+    uint64_t f = spinlock_lock_irqsave(&cur->sched_lock);
+    uint32_t s = cur->state;
+    if ((s & TH_WAIT) == 0u || (s & TH_DEAD) != 0u) {
+        /* Пробуждение обогнало засыпание: вызывающий перепроверит своё
+         * условие и либо пойдёт дальше, либо объявит ожидание заново. */
+        spinlock_unlock_irqrestore(&cur->sched_lock, f);
         return;
     }
+    /* Фиксация точки сна. До этой строки поток с TH_WAIT — всё ещё
+     * бегущий поток (арбитр вернёт его в очередь); после — кандидат на
+     * настоящий сон при ближайшем переключении. */
+    cur->state = s | TH_BLOCK;
+    spinlock_unlock_irqrestore(&cur->sched_lock, f);
 
-    static int log_count = 0;
-    if (bootlog_is_verbose() && log_count < 6) {
-        kprintf("[SCHED] block tid=%llu state=%d\n",
-                (unsigned long long)cur->thread_id,
-                (int)cur->state);
-        log_count++;
-    }
-
-    in_scheduler = true;
-
-    /*
-     * Somebody already woke this thread between it deciding to sleep and
-     * getting here, so it is READY and sitting in the run queue. Blocking now
-     * would put it back to sleep with the wakeup already spent -- and leave a
-     * BLOCKED thread in the run queue, which is what surfaced as
-     * "ready_dequeue: thread N state=3".
-     *
-     * A caller that reaches here is inside a loop re-testing its condition,
-     * so returning without blocking is safe: it will look again and find the
-     * condition satisfied.
-     */
-    if (cur->state != THREAD_STATE_RUNNING) {
-        in_scheduler = false;
-        return;
-    }
-    scheduler_thread_set_state(cur, THREAD_STATE_BLOCKED, "scheduler_block");
-    tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK,
-                 cur->thread_id, cur->state);
+    tracev2_emit(TR2_CAT_SCHED, TR2_EV_SCHED_BLOCK, cur->thread_id, s);
     cur->last_sleep_tick = sched_ticks;
-    if (bootlog_is_verbose() && log_count < 6) {
-        kprintf("[SCHED] block set tid=%llu state=%d\n",
-                (unsigned long long)cur->thread_id,
-                (int)cur->state);
-    }
-    stats.blocked_tasks++;
     resched_pending = true;
-    in_scheduler = false;
 }
 
-void scheduler_unblock(thread_t* thread)
-{
-    if (!thread) {
-        return;
-    }
-
-    if (thread->state == THREAD_STATE_BLOCKED) {
-        if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
-            uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
-            if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
-                int boost = (int)(sleep_ticks / BOOST_THRESHOLD_TICKS);
-                if (boost > BOOST_MAX) {
-                    boost = BOOST_MAX;
-                }
-                int base = thread->base_priority;
-                int dyn = thread->dyn_priority + boost;
-                thread->dyn_priority = clamp_dyn_priority(dyn, base);
-            }
-        }
-        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_unblock");
-        if (stats.blocked_tasks > 0) {
-            stats.blocked_tasks--;
-        }
-        ready_enqueue(thread);
-    } else {
-        DEBUG_WARN("unblock: thread %llu state=%d", (unsigned long long)thread->thread_id, thread->state);
-    }
-}
-
+/*
+ * Разбудить поток.
+ *
+ * Весь переход — под замком потока, и решение «класть ли в очередь
+ * готовности» принимается там же. Правило единственного арбитра, как у XNU:
+ *
+ *   - TH_RUN снят: поток полностью ушёл с процессора. Ставим TH_RUN, кладём
+ *     в очередь. Билет на исполнение выдаём мы, и он один.
+ *   - TH_RUN стоит: поток исполняется или уже в очереди. Снимаем только
+ *     ожидание — и всё. Класть его будет тот, кто снимет TH_RUN, то есть
+ *     уходящий процессор в switch, который под этим же замком увидит, что
+ *     ожидания больше нет, и вернёт поток в очередь сам.
+ *
+ * Раньше в очередь клали оба — waker и уходящий процессор, каждый по своей
+ * проверке «не в очереди» вне общего замка. Поток получал два билета, и два
+ * процессора исполняли один стек.
+ */
 void scheduler_wake(thread_t* thread)
 {
     if (!thread) {
         return;
     }
-    if (thread->state == THREAD_STATE_DEAD) {
+
+    uint64_t f = spinlock_lock_irqsave(&thread->sched_lock);
+    uint32_t old = thread->state;
+    if (old & TH_DEAD) {
+        spinlock_unlock_irqrestore(&thread->sched_lock, f);
+        return;
+    }
+    thread->state = (old | TH_RUN) & ~(TH_WAIT | TH_WAKING | TH_BLOCK);
+
+    if ((old & TH_RUN) != 0u) {
+        /* На процессоре или в очереди: ожидание снято, добавить нечего. */
+        spinlock_unlock_irqrestore(&thread->sched_lock, f);
         return;
     }
 
-    /*
-     * Already running -- on this processor or another -- so there is nothing
-     * to wake.
-     *
-     * The branches below used to catch this case and force the thread READY
-     * and into the run queue while a processor was executing it. On one
-     * processor that was unreachable: the only RUNNING thread was the caller.
-     * With several it means a thread sitting in the queue that some CPU is
-     * mid-way through running, which showed up as "ready_dequeue: thread N
-     * state=2" and leaves two processors contending for one thread and one
-     * kernel stack.
-     */
-    if (thread->state == THREAD_STATE_RUNNING) {
-        return;
-    }
-
-    if (thread->state == THREAD_STATE_BLOCKED) {
+    if (old & TH_WAIT) {
         if (thread->sched_class == SCHED_CLASS_TIMESHARE) {
             uint64_t sleep_ticks = sched_ticks - thread->last_sleep_tick;
             if (sleep_ticks >= BOOST_THRESHOLD_TICKS) {
@@ -183,29 +187,21 @@ void scheduler_wake(thread_t* thread)
                 if (boost > BOOST_MAX) {
                     boost = BOOST_MAX;
                 }
-                int base = thread->base_priority;
-                int dyn = thread->dyn_priority + boost;
-                thread->dyn_priority = clamp_dyn_priority(dyn, base);
+                thread->dyn_priority =
+                    clamp_dyn_priority(thread->dyn_priority + boost,
+                                       thread->base_priority);
             }
         }
         if (stats.blocked_tasks > 0) {
             stats.blocked_tasks--;
         }
-        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_blocked");
-        ready_enqueue(thread);
-        resched_pending = true;
-        return;
     }
-    if (thread->state != THREAD_STATE_READY) {
-        scheduler_thread_set_state(thread, THREAD_STATE_READY, "scheduler_wake_other");
-        ready_enqueue(thread);
-        resched_pending = true;
-        return;
-    }
-    if (!ready_thread_is_queued(thread) && thread != thread_get_current()) {
-        ready_enqueue(thread);
-        resched_pending = true;
-    }
+
+    /* Под замком: пока TH_RUN, поставленный нами, виден остальным, поток
+     * уже в очереди. Порядок замков sched_lock -> rq_lock. */
+    ready_enqueue(thread);
+    spinlock_unlock_irqrestore(&thread->sched_lock, f);
+    resched_pending = true;
 }
 
 void scheduler_exit_current(void)
@@ -236,7 +232,7 @@ void scheduler_exit_current(void)
         uint32_t live = 0;
         thread_t* t;
         TAILQ_FOREACH(t, &cur->task->threads, task_link) {
-            if (t != cur && t->state != THREAD_STATE_DEAD) {
+            if (t != cur && !thread_is_dead(t)) {
                 live++;
             }
         }

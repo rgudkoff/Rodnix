@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../kernel/arch/percpu.h"
 #include "../kernel/core/cpu.h"
 #include "../kernel/fabric/spin.h"
 #include "../../arch/gdt.h"
@@ -96,6 +97,49 @@ bool ready_thread_is_queued(const thread_t* thread)
  */
 static spinlock_t rq_lock;
 
+/* How many threads are runnable, counted under the lock.
+ *
+ * Under the lock is the whole point. The previous attempt at this question
+ * read the queues without it and reported an empty queue that was not empty,
+ * which sent the investigation into the scheduler for several rounds when the
+ * scheduler was innocent. */
+uint32_t ready_queue_len_locked(void)
+{
+    uint64_t f = spinlock_lock_irqsave(&rq_lock);
+    uint32_t n = 0;
+    for (int b = 0; b < SCHED_BUCKET_COUNT; b++) {
+        thread_t* t;
+        TAILQ_FOREACH(t, &ready_queues[b], sched_link) {
+            n++;
+        }
+    }
+    spinlock_unlock_irqrestore(&rq_lock, f);
+    return n;
+}
+
+/* Who is waiting, and in what state, under the lock. Writes at most `max`
+ * entries and returns how many it wrote. */
+uint32_t ready_queue_snapshot_locked(uint64_t* ids, int* states,
+                                     uint32_t* buckets, uint32_t max)
+{
+    uint64_t f = spinlock_lock_irqsave(&rq_lock);
+    uint32_t n = 0;
+    for (int b = 0; b < SCHED_BUCKET_COUNT && n < max; b++) {
+        thread_t* t;
+        TAILQ_FOREACH(t, &ready_queues[b], sched_link) {
+            if (n >= max) {
+                break;
+            }
+            ids[n] = t->thread_id;
+            states[n] = (int)t->state;
+            buckets[n] = (uint32_t)b;
+            n++;
+        }
+    }
+    spinlock_unlock_irqrestore(&rq_lock, f);
+    return n;
+}
+
 void ready_enqueue(thread_t* thread)
 {
     if (!thread) {
@@ -126,9 +170,10 @@ static thread_t* dequeue_from(int q)
     if (!thread) {
         return NULL;
     }
-    if (thread->state != THREAD_STATE_READY) {
-        DEBUG_WARN("ready_dequeue: thread %llu state=%d",
-                   (unsigned long long)thread->thread_id, thread->state);
+    if (!thread_is_runnable(thread)) {
+        DEBUG_WARN("ready_dequeue: thread %llu is queued but not runnable (%s)",
+                   (unsigned long long)thread->thread_id,
+                   thread_state_name(thread));
     }
     TAILQ_REMOVE(queue, thread, sched_link);
     thread->sched_link.tqe_next = NULL;
