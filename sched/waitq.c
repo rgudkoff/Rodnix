@@ -9,6 +9,7 @@
 #include "../kernel/core/interrupts.h"
 #include "../kernel/fabric/spin.h"
 #include "scheduler.h"
+#include "internal.h"
 #include "../../include/error.h"
 #include <stddef.h>
 
@@ -137,6 +138,26 @@ int waitq_enqueue(waitq_t* q, thread_t* t)
     return RDNX_OK;
 }
 
+/* Снять поток с очереди. Вызывающий держит waitq_spin. */
+static void waitq_remove_locked(waitq_t* q, thread_t* t)
+{
+    TAILQ_REMOVE(&q->threads, t, wait_link);
+    t->waitq_owner = NULL;
+    t->wait_timed_out = 0;
+    waitq_disarm_timeout(t);
+    if (q->count > 0) {
+        q->count--;
+    }
+}
+
+/*
+ * Отменить объявленное ожидание.
+ *
+ * Не только вынуть из списка: под замком потока снимаются и TH_WAIT с
+ * TH_BLOCK. Иначе поток, снявший себя с очереди до сна (ipc так делает,
+ * когда условие выполнилось раньше блокировки), продолжал бы бегать с
+ * поднятым объявлением ожидания, которого больше нет.
+ */
 int waitq_remove(waitq_t* q, thread_t* t)
 {
     if (!q || !t) {
@@ -147,18 +168,29 @@ int waitq_remove(waitq_t* q, thread_t* t)
     }
 
     uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
-    TAILQ_REMOVE(&q->threads, t, wait_link);
-    t->waitq_owner = NULL;
-    t->wait_timed_out = 0;
-    waitq_disarm_timeout(t);
-    if (q->count > 0) {
-        q->count--;
+    if (t->waitq_owner != q) {
+        spinlock_unlock_irqrestore(&waitq_spin, flags);
+        return RDNX_E_NOTFOUND;
     }
+    waitq_remove_locked(q, t);
+    uint64_t tf = spinlock_lock_irqsave(&t->sched_lock);
+    t->state &= ~(TH_WAIT | TH_BLOCK);
+    spinlock_unlock_irqrestore(&t->sched_lock, tf);
     spinlock_unlock_irqrestore(&waitq_spin, flags);
     return RDNX_OK;
 }
 
-thread_t* waitq_dequeue(waitq_t* q)
+/*
+ * Разбудить одного ожидающего.
+ *
+ * Снятие с очереди и доставка пробуждения — одна критическая секция под
+ * waitq_spin (внутри — замок потока). XNU здесь отпускает замок очереди
+ * между двумя фазами и вынужден охранять зазор битом TH_WAKING: поток в нём
+ * уже не на очереди, но ещё не разбужен, и ни второе пробуждение, ни новое
+ * ожидание впускать нельзя. Не отпуская замка, мы этот зазор не создаём —
+ * охранять нечего, бита нет.
+ */
+thread_t* waitq_wake_one(waitq_t* q)
 {
     if (!q) {
         return NULL;
@@ -169,26 +201,35 @@ thread_t* waitq_dequeue(waitq_t* q)
         spinlock_unlock_irqrestore(&waitq_spin, flags);
         return NULL;
     }
-
-    TAILQ_REMOVE(&q->threads, t, wait_link);
-    t->waitq_owner = NULL;
-    t->wait_timed_out = 0;
-    waitq_disarm_timeout(t);
-    if (q->count > 0) {
-        q->count--;
-    }
+    waitq_remove_locked(q, t);
+    uint64_t tf = spinlock_lock_irqsave(&t->sched_lock);
+    scheduler_wake_locked(t);
+    spinlock_unlock_irqrestore(&t->sched_lock, tf);
     spinlock_unlock_irqrestore(&waitq_spin, flags);
+    resched_pending = true;
     return t;
 }
 
-thread_t* waitq_wake_one(waitq_t* q)
+/*
+ * Разбудить конкретный поток, если он ждёт на этой очереди, — тем же
+ * неразрывным способом. Если его там нет (например, ещё не успел
+ * заблокироваться), пробуждение доставляется напрямую: ожидания, которое
+ * можно было бы потерять, не существует.
+ */
+void waitq_wake_thread(waitq_t* q, thread_t* t)
 {
-    thread_t* t = waitq_dequeue(q);
-    if (!t) {
-        return NULL;
+    if (!q || !t) {
+        return;
     }
-    scheduler_wake(t);
-    return t;
+    uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
+    if (t->waitq_owner == q) {
+        waitq_remove_locked(q, t);
+    }
+    uint64_t tf = spinlock_lock_irqsave(&t->sched_lock);
+    scheduler_wake_locked(t);
+    spinlock_unlock_irqrestore(&t->sched_lock, tf);
+    spinlock_unlock_irqrestore(&waitq_spin, flags);
+    resched_pending = true;
 }
 
 uint32_t waitq_wake_all(waitq_t* q)
@@ -306,7 +347,6 @@ void waitq_tick(uint64_t now_ticks)
         }
 
         waitq_t* owner = it->waitq_owner;
-        it->wait_timed_out = 1;
         waitq_disarm_timeout(it);
         if (owner && waitq_contains(owner, it)) {
             TAILQ_REMOVE(&owner->threads, it, wait_link);
@@ -315,7 +355,12 @@ void waitq_tick(uint64_t now_ticks)
                 owner->count--;
             }
         }
-        scheduler_wake(it);
+        it->wait_timed_out = 1;
+        /* Та же неразрывность, что в waitq_wake_one: waitq_spin уже наш. */
+        uint64_t tf = spinlock_lock_irqsave(&it->sched_lock);
+        scheduler_wake_locked(it);
+        spinlock_unlock_irqrestore(&it->sched_lock, tf);
+        resched_pending = true;
     }
     spinlock_unlock_irqrestore(&waitq_spin, tflags);
 }

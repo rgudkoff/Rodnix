@@ -53,6 +53,8 @@ extern waitq_t scheduler_join_waitq;
 extern uint64_t bucket_last_run_tick[READY_QUEUE_LEVELS]; /* последний тик каждого бакета */
 
 void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, const char* reason);
+/* Ядро пробуждения; вызывающий держит thread->sched_lock. */
+void scheduler_wake_locked(thread_t* thread);
 void scheduler_task_set_state(task_t* task, task_state_t new_state, const char* reason);
 
 void ready_enqueue(thread_t* thread);

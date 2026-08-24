@@ -26,11 +26,11 @@ static void scheduler_exit_wake_joiner(thread_t* exiting)
     joiner->inherited_priority = 220;
     joiner->has_inherited = 0;
 
-    /* Пробуждение адресуется ожиданию, а не потоку: сначала снять с очереди,
-     * потом будить. Прямой wake потоку, сидящему в waitq, терялся — TH_WAIT
-     * снят, а из очереди никто не забрал, и поток засыпал обратно. */
-    (void)waitq_remove(&scheduler_join_waitq, joiner);
-    scheduler_wake(joiner);
+    /* Пробуждение адресуется ожиданию, а не потоку: снятие с очереди и
+     * доставка — одна операция под её замком. Прямой wake потоку, сидящему
+     * в waitq, терялся — TH_WAIT снят, а из очереди никто не забрал, и
+     * поток засыпал обратно. */
+    waitq_wake_thread(&scheduler_join_waitq, joiner);
 }
 
 /*
@@ -158,24 +158,21 @@ void scheduler_block(void)
  * Раньше в очередь клали оба — waker и уходящий процессор, каждый по своей
  * проверке «не в очереди» вне общего замка. Поток получал два билета, и два
  * процессора исполняли один стек.
+ *
+ * Ядро перехода вынесено в scheduler_wake_locked(): waitq будит потоки, не
+ * отпуская своего замка между снятием с очереди ожидания и доставкой
+ * пробуждения, и замок потока к этому моменту уже держит.
  */
-void scheduler_wake(thread_t* thread)
+void scheduler_wake_locked(thread_t* thread)
 {
-    if (!thread) {
-        return;
-    }
-
-    uint64_t f = spinlock_lock_irqsave(&thread->sched_lock);
     uint32_t old = thread->state;
     if (old & TH_DEAD) {
-        spinlock_unlock_irqrestore(&thread->sched_lock, f);
         return;
     }
-    thread->state = (old | TH_RUN) & ~(TH_WAIT | TH_WAKING | TH_BLOCK);
+    thread->state = (old | TH_RUN) & ~(TH_WAIT | TH_BLOCK);
 
     if ((old & TH_RUN) != 0u) {
         /* На процессоре или в очереди: ожидание снято, добавить нечего. */
-        spinlock_unlock_irqrestore(&thread->sched_lock, f);
         return;
     }
 
@@ -200,6 +197,16 @@ void scheduler_wake(thread_t* thread)
     /* Под замком: пока TH_RUN, поставленный нами, виден остальным, поток
      * уже в очереди. Порядок замков sched_lock -> rq_lock. */
     ready_enqueue(thread);
+}
+
+void scheduler_wake(thread_t* thread)
+{
+    if (!thread) {
+        return;
+    }
+
+    uint64_t f = spinlock_lock_irqsave(&thread->sched_lock);
+    scheduler_wake_locked(thread);
     spinlock_unlock_irqrestore(&thread->sched_lock, f);
     resched_pending = true;
 }

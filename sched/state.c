@@ -62,14 +62,14 @@ void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, cons
     uint32_t clear = 0;
     switch (new_state) {
     case THREAD_STATE_NEW:
-        clear = TH_RUN | TH_WAIT | TH_DEAD | TH_WAKING | TH_BLOCK;
+        clear = TH_RUN | TH_WAIT | TH_DEAD | TH_BLOCK;
         break;
     case THREAD_STATE_READY:
     case THREAD_STATE_RUNNING:
         /* Один бит на оба: чем поток занят прямо сейчас, знает процессор, а
          * не поле состояния. Так у XNU, и по той же причине. */
         set = TH_RUN;
-        clear = TH_WAIT | TH_WAKING | TH_BLOCK;
+        clear = TH_WAIT | TH_BLOCK;
         break;
     case THREAD_STATE_BLOCKED:
     case THREAD_STATE_SLEEPING:
@@ -78,7 +78,7 @@ void scheduler_thread_set_state(thread_t* thread, thread_state_t new_state, cons
         break;
     case THREAD_STATE_DEAD:
         set = TH_DEAD;
-        clear = TH_RUN | TH_WAIT | TH_WAKING | TH_BLOCK;
+        clear = TH_RUN | TH_WAIT | TH_BLOCK;
         break;
     default:
         return;

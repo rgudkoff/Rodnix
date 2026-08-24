@@ -129,14 +129,14 @@ void kmutex_unlock(kmutex_t* m)
     }
 
     m->owner = NULL;
-    thread_t* next = waitq_dequeue(&m->waiters);
     spinlock_unlock_irqrestore(&m->guard, f);
 
-    /* Woken outside the guard: scheduler_wake() reaches the run queue, and
-     * there is no reason to fix an order between this lock and that one. */
-    if (next) {
-        scheduler_wake(next);
-    }
+    /* Woken outside the guard: no reason to fix an order between this lock
+     * and the waitq's. Losing the race to a fresh unlock is fine -- the
+     * TH_WAIT interlock means a waiter that has not blocked yet simply sees
+     * itself off the queue and retries; removal and wakeup are one critical
+     * section inside waitq_wake_one(). */
+    (void)waitq_wake_one(&m->waiters);
 }
 
 bool kmutex_trylock(kmutex_t* m)
