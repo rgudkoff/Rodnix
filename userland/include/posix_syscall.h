@@ -560,4 +560,24 @@ static inline long posix_thread_exit(int status)
     return rdnx_syscall1(POSIX_SYS_THREAD_EXIT, (long)status);
 }
 
+static inline long posix_mlock(void* addr, uint64_t len)
+{
+    return rdnx_syscall2(POSIX_SYS_MLOCK, (long)(uintptr_t)addr, (long)len);
+}
+
+static inline long posix_munlock(void* addr, uint64_t len)
+{
+    return rdnx_syscall2(POSIX_SYS_MUNLOCK, (long)(uintptr_t)addr, (long)len);
+}
+
+static inline long posix_schedrt(int enable)
+{
+    return rdnx_syscall1(POSIX_SYS_SCHEDRT, (long)enable);
+}
+
+static inline long posix_threadfaults(void)
+{
+    return rdnx_syscall0(POSIX_SYS_THREADFAULTS);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

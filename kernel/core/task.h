@@ -170,6 +170,10 @@ typedef struct task {
     uint64_t tls_fs_base;      /* userspace FS base (arch_prctl/linux ABI) */
     proc_t* proc;              /* UNIX-персоналия (kernel/unix/proc.h): заводится в task_create(),
                                 * читатели обязаны считать NULL допустимым */
+    /* Класс обслуживания памяти по умолчанию (vm_class_t из mm/vm_object.h):
+     * его получают объекты, создаваемые для этой задачи. RT-поток повышает
+     * класс объектов, которых касается, поверх этого умолчания. */
+    uint8_t vm_class_default;
     struct thread* main_thread;/* Основной поток процесса */
     TAILQ_HEAD(thread_list, thread) threads; /* Список всех потоков задачи */
     uint32_t thread_count;     /* Количество потоков задачи */

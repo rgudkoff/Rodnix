@@ -171,3 +171,18 @@ bool pmap_is_active(pmap_t pmap)
     return pmap && pmap->root &&
            (pmap_read_cr3() & ~0xFFFULL) == pmap->root;
 }
+
+/* Диагностика RT-отказов: сырой срез дерева трансляции. MD-сторона,
+ * потому что содержимое записей — машинная орфография. */
+void pmap_debug_dump(pmap_t pmap, vm_offset_t va)
+{
+    if (!pmap || !pmap->root) {
+        kprintf("[VMRT]   walk: no pmap\n");
+        return;
+    }
+    uint64_t e[4];
+    paging_debug_walk(pmap->root, va, e);
+    kprintf("[VMRT]   walk pml4e=%llx pdpte=%llx pde=%llx pte=%llx\n",
+            (unsigned long long)e[0], (unsigned long long)e[1],
+            (unsigned long long)e[2], (unsigned long long)e[3]);
+}

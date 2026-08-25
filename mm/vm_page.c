@@ -5,6 +5,7 @@
 
 #include "vm_page.h"
 #include "../include/console.h"
+#include "../kernel/fabric/spin.h"
 #include "../kernel/arch/pmm.h"
 #include "../include/error.h"
 #include "../include/debug.h"
@@ -114,6 +115,8 @@ int vm_page_hold(uint64_t phys)
     return RDNX_OK;
 }
 
+static void vm_page_queue_leave(vm_page_t* m);
+
 int vm_page_drop(uint64_t phys)
 {
     if (!phys) {
@@ -143,6 +146,7 @@ int vm_page_drop(uint64_t phys)
         /* This processor took the count to zero, so it owns the free. The
          * compare-exchange is what makes that unambiguous with several
          * processors dropping at once. */
+        vm_page_queue_leave(m);
         if (m->object != NULL) {
             /* An indexed page reached zero references, which means somebody
              * dropped a reference they did not own: the owning object holds
@@ -164,4 +168,159 @@ uint32_t vm_page_refs(uint64_t phys)
         return 0;
     }
     return __atomic_load_n(&m->ref_count, __ATOMIC_ACQUIRE);
+}
+
+/* ============================================================================
+ * Очереди подкачки.
+ *
+ * Один замок на все три: операции — пара сшивок указателей, а ходить по
+ * очередям начнёт только возврат памяти (этап 8). Разделение — когда
+ * будет измерена конкуренция, не раньше.
+ * ============================================================================ */
+
+static spinlock_t pq_spin;
+
+typedef struct vm_pagequeue {
+    uint32_t head;   /* индекс vm_page или VM_PAGE_NIL */
+    uint32_t tail;
+    uint32_t count;
+} vm_pagequeue_t;
+
+/* Нулевая инициализация здесь была бы ошибкой: 0 — законный индекс
+ * страницы. Пустота — VM_PAGE_NIL, выставляется при первом обращении. */
+static vm_pagequeue_t g_pq[3] = {
+    { VM_PAGE_NIL, VM_PAGE_NIL, 0 },
+    { VM_PAGE_NIL, VM_PAGE_NIL, 0 },
+    { VM_PAGE_NIL, VM_PAGE_NIL, 0 },
+}; /* [0]=ACTIVE [1]=INACTIVE [2]=LAUNDRY */
+
+static vm_pagequeue_t* pq_of(uint8_t queue)
+{
+    switch (queue) {
+    case VM_PQ_ACTIVE:   return &g_pq[0];
+    case VM_PQ_INACTIVE: return &g_pq[1];
+    case VM_PQ_LAUNDRY:  return &g_pq[2];
+    default:             return NULL;
+    }
+}
+
+/* Вставка в хвост. Вызывающий держит pq_spin; страница ни в одной очереди. */
+static void pq_insert_locked(vm_pagequeue_t* q, vm_page_t* m, uint8_t queue)
+{
+    uint32_t idx = (uint32_t)vm_page_index(m);
+    m->fq_next = VM_PAGE_NIL;
+    m->fq_prev = q->tail;
+    if (q->tail != VM_PAGE_NIL) {
+        vm_page_at_index(q->tail)->fq_next = idx;
+    } else {
+        q->head = idx;
+    }
+    q->tail = idx;
+    q->count++;
+    m->queue = queue;
+}
+
+/* Извлечение. Вызывающий держит pq_spin; страница в очереди q. */
+static void pq_remove_locked(vm_pagequeue_t* q, vm_page_t* m)
+{
+    if (m->fq_prev != VM_PAGE_NIL) {
+        vm_page_at_index(m->fq_prev)->fq_next = m->fq_next;
+    } else {
+        q->head = m->fq_next;
+    }
+    if (m->fq_next != VM_PAGE_NIL) {
+        vm_page_at_index(m->fq_next)->fq_prev = m->fq_prev;
+    } else {
+        q->tail = (m->fq_prev == VM_PAGE_NIL && q->head == VM_PAGE_NIL)
+                      ? VM_PAGE_NIL : m->fq_prev;
+    }
+    if (q->head == VM_PAGE_NIL) {
+        q->tail = VM_PAGE_NIL;
+    }
+    m->fq_next = VM_PAGE_NIL;
+    m->fq_prev = VM_PAGE_NIL;
+    m->queue = VM_PQ_NONE;
+    if (q->count > 0) {
+        q->count--;
+    }
+}
+
+/* Покинуть очередь подкачки, в какой бы страница ни стояла. Зовётся перед
+ * возвратом аллокатору: свободный список сейчас переиспользует линки. */
+static void vm_page_queue_leave(vm_page_t* m)
+{
+    vm_pagequeue_t* q = pq_of(m->queue);
+    if (!q) {
+        return;
+    }
+    uint64_t f = spinlock_lock_irqsave(&pq_spin);
+    q = pq_of(m->queue);   /* перечитать под замком */
+    if (q) {
+        pq_remove_locked(q, m);
+    }
+    spinlock_unlock_irqrestore(&pq_spin, f);
+}
+
+void vm_page_activate(uint64_t phys)
+{
+    vm_page_t* m = vm_page_lookup(phys);
+    if (!m) {
+        return;
+    }
+    uint64_t f = spinlock_lock_irqsave(&pq_spin);
+    if (m->queue == VM_PQ_NONE && m->wire_count == 0) {
+        pq_insert_locked(pq_of(VM_PQ_ACTIVE), m, VM_PQ_ACTIVE);
+    }
+    spinlock_unlock_irqrestore(&pq_spin, f);
+}
+
+int vm_page_wire(uint64_t phys)
+{
+    vm_page_t* m = vm_page_lookup(phys);
+    if (!m) {
+        return RDNX_E_INVALID;
+    }
+    uint64_t f = spinlock_lock_irqsave(&pq_spin);
+    m->wire_count++;
+    if (m->wire_count == 1) {
+        vm_pagequeue_t* q = pq_of(m->queue);
+        if (q) {
+            pq_remove_locked(q, m);
+        }
+    }
+    spinlock_unlock_irqrestore(&pq_spin, f);
+    return RDNX_OK;
+}
+
+int vm_page_unwire(uint64_t phys)
+{
+    vm_page_t* m = vm_page_lookup(phys);
+    if (!m) {
+        return RDNX_E_INVALID;
+    }
+    uint64_t f = spinlock_lock_irqsave(&pq_spin);
+    if (m->wire_count == 0) {
+        spinlock_unlock_irqrestore(&pq_spin, f);
+        DEBUG_WARN("vm_page: unwire of unwired page %llx",
+                   (unsigned long long)phys);
+        return RDNX_E_NOTFOUND;
+    }
+    m->wire_count--;
+    if (m->wire_count == 0 && m->queue == VM_PQ_NONE) {
+        pq_insert_locked(pq_of(VM_PQ_ACTIVE), m, VM_PQ_ACTIVE);
+    }
+    spinlock_unlock_irqrestore(&pq_spin, f);
+    return RDNX_OK;
+}
+
+uint32_t vm_page_queue_len(uint8_t queue)
+{
+    vm_pagequeue_t* q = pq_of(queue);
+    if (!q) {
+        return 0;
+    }
+    uint64_t f = spinlock_lock_irqsave(&pq_spin);
+    uint32_t n = q->count;
+    spinlock_unlock_irqrestore(&pq_spin, f);
+    return n;
 }

@@ -101,3 +101,7 @@
 83 settimeofday    # [experimental] set CLOCK_REALTIME; root only
 84 rtc_gettime     # [experimental] read hardware RTC time
 85 rtc_settime     # [experimental] write hardware RTC time; root only
+86 mlock           # [experimental] wire a range: fault it in now, reclaim never takes it
+87 munlock         # [experimental] unwire a range
+88 schedrt         # [experimental] rodnix: a1=1 make current thread realtime, a1=0 back to timeshare
+89 threadfaults    # [experimental] rodnix: page faults taken by current thread

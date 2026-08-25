@@ -1331,3 +1331,33 @@ int paging_map_page_2mb(uint64_t virt, uint64_t phys, uint64_t flags)
 }
 
 
+
+/* Отладочный срез дерева для одного адреса: четыре сырые записи, без
+ * интерпретации. Нужен диагностике RT-отказов: err=0xe (RSVD) означает
+ * мусор в записях, и увидеть его можно только сырыми глазами. */
+void paging_debug_walk(uint64_t pml4_phys, uint64_t virt, uint64_t out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    if (!pml4_phys) {
+        return;
+    }
+    uint64_t _f = spinlock_lock_irqsave(&paging_spin);
+    uint64_t* pml4 = (uint64_t*)X86_64_PHYS_TO_VIRT(pml4_phys);
+    uint64_t e0 = pml4[paging_get_pml4_index(virt)];
+    out[0] = e0;
+    if (e0 & PTE_PRESENT) {
+        uint64_t* pdpt = paging_get_pdpt(e0);
+        uint64_t e1 = pdpt[paging_get_pdpt_index(virt)];
+        out[1] = e1;
+        if (e1 & PTE_PRESENT) {
+            uint64_t* pd = paging_get_pd(e1);
+            uint64_t e2 = pd[paging_get_pd_index(virt)];
+            out[2] = e2;
+            if (e2 & PTE_PRESENT) {
+                uint64_t* pt = (uint64_t*)X86_64_PHYS_TO_VIRT(e2 & ~0xFFFULL & 0x000FFFFFFFFFF000ULL);
+                out[3] = pt[paging_get_pt_index(virt)];
+            }
+        }
+    }
+    spinlock_unlock_irqrestore(&paging_spin, _f);
+}

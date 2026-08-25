@@ -592,6 +592,74 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        /*
+         * CT-043: обещание этапа 7. mlock приводит и закрепляет страницы
+         * СЕЙЧАС; после него обращения к диапазону не берут ни одного
+         * отказа. Тест фальсифицируем: контрольный незакреплённый буфер
+         * обязан отказы брать — если не берёт, счётчик не работает и
+         * зелёный результат ничего бы не значил.
+         */
+        enum { CT43_PAGES = 16, CT43_LEN = CT43_PAGES * 4096 };
+        volatile unsigned char* locked =
+            (volatile unsigned char*)posix_mmap(0, CT43_LEN, 0x1 | 0x2,
+                                                0x0002 | 0x1000, -1, 0);
+        volatile unsigned char* control =
+            (volatile unsigned char*)posix_mmap(0, CT43_LEN, 0x1 | 0x2,
+                                                0x0002 | 0x1000, -1, 0);
+        int ok43 = 1;
+        if ((long)locked <= 0 || (long)control <= 0) {
+            ok43 = 0;
+        }
+        if (ok43 && posix_schedrt(1) != 0) {
+            ok43 = 0;
+        }
+        if (ok43 && posix_mlock((void*)locked, CT43_LEN) != 0) {
+            ct_log("CT-043", "FAIL", "mlock failed");
+            ok43 = 0;
+        }
+        if (ok43) {
+            long f0 = posix_threadfaults();
+            for (unsigned off = 0; off < CT43_LEN; off += 4096) {
+                locked[off] = (unsigned char)(off >> 12);
+            }
+            long f1 = posix_threadfaults();
+            /* Контроль касается незакреплённого буфера и обязан отказывать —
+             * но не из-под RT: отказ RT-потока ядро печатает как поломку
+             * обещания, а тут отказы намеренные. Счётчику класс безразличен. */
+            (void)posix_schedrt(0);
+            for (unsigned off = 0; off < CT43_LEN; off += 4096) {
+                control[off] = (unsigned char)(off >> 12);
+            }
+            long f2 = posix_threadfaults();
+
+            if (f1 != f0) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "locked range took %ld faults",
+                         (long)(f1 - f0));
+                ct_log("CT-043", "FAIL", msg);
+                ok43 = 0;
+            } else if (f2 <= f1) {
+                /* Контроль не отказал — счётчик мёртв, зелёному верить нельзя. */
+                ct_log("CT-043", "FAIL", "fault counter shows nothing");
+                ok43 = 0;
+            } else {
+                ct_log("CT-043", "PASS", "realtime range takes zero faults");
+            }
+        }
+        (void)posix_schedrt(0);
+        if ((long)locked > 0) {
+            (void)posix_munlock((void*)locked, CT43_LEN);
+            (void)posix_munmap((void*)locked, CT43_LEN);
+        }
+        if ((long)control > 0) {
+            (void)posix_munmap((void*)control, CT43_LEN);
+        }
+        if (!ok43) {
+            ok = 0;
+        }
+    }
+
+    {
         int status = -1;
         volatile uint64_t as_canary = 0x1122334455667788ULL;
         long pid = posix_spawn("/bin/true", 0);

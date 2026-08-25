@@ -21,4 +21,14 @@ typedef struct vm_fault_stats {
 int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip);
 void vm_fault_get_stats(vm_fault_stats_t* out);
 
+/*
+ * Сильное обещание реального времени (этап 7): каждая страница диапазона
+ * приводится в память СЕЙЧАС — включая разрыв COW для записываемых
+ * отображений — и закрепляется. После успешного возврата ни одно обращение
+ * к диапазону не берёт отказа. Живёт в vm_fault.c, потому что «привести
+ * страницу» — это и есть машинерия отказа, вызванная заранее.
+ */
+int vm_task_mlock(task_t* task, uint64_t addr, uint64_t len);
+int vm_task_munlock(task_t* task, uint64_t addr, uint64_t len);
+
 #endif /* _RODNIX_VM_FAULT_H */

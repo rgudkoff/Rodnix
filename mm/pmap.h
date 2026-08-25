@@ -73,4 +73,7 @@ bool   pmap_is_active(pmap_t pmap);
  * will. It becomes vm_page_t when the object layer does.
  */
 
+/* Диагностика: печать сырой цепочки трансляции для адреса. */
+void pmap_debug_dump(pmap_t pmap, vm_offset_t va);
+
 #endif /* _RODNIX_VM_PMAP_H */

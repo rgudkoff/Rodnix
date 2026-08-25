@@ -27,6 +27,7 @@
 #include "pmap.h"
 #include "../kernel/arch/config.h"
 #include "../include/common.h"
+#include "../include/console.h"
 #include "../include/error.h"
 
 static vm_fault_stats_t g_fault_stats;
@@ -68,6 +69,7 @@ static int vm_fault_cow_copy(task_t* task, const vm_map_entry_t* e,
     (void)pmap_enter(task->address_space, va, new_phys, e->prot,
                      PMAP_ENTER_USER);
     (void)vm_page_drop(shared_phys); /* ссылка этого отображения на общую */
+    vm_page_activate(new_phys);
     FAULT_COUNT(cow_copy);
     return RDNX_OK;
 }
@@ -134,8 +136,15 @@ static int vm_fault_page_absent(task_t* task, vm_map_entry_t* e,
          * общую страницу объекта. */
         eff_prot &= ~VM_PROT_WRITE;
     }
-    return pmap_enter(task->address_space, va, phys, eff_prot,
-                      PMAP_ENTER_USER);
+    int rc = pmap_enter(task->address_space, va, phys, eff_prot,
+                        PMAP_ENTER_USER);
+    if (rc == RDNX_OK) {
+        /* Установленная страница встаёт в ACTIVE — очередь, по которой
+         * пойдёт возврат памяти (этап 8). Закреплённых это не касается:
+         * activate не трогает страницу с wire_count. */
+        vm_page_activate(phys);
+    }
+    return rc;
 }
 
 static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr,
@@ -169,15 +178,52 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr,
         return RDNX_E_DENIED;
     }
 
+    /*
+     * Отказ пришёл от потока реального времени — значит, обещание этапа 7
+     * для этой памяти не было дано заранее, и это страховочная сетка, а не
+     * норма: mlock обязан был привести всё раньше. Сетка делает две вещи,
+     * как у XNU (vmp_realtime / vm_pageout_protect_realtime): объект
+     * повышается до класса RT, а страница закрепляется — возврат её больше
+     * не тронет.
+     */
+    thread_t* self = thread_get_current();
+    int rt = self && self->sched_class == SCHED_CLASS_REALTIME;
+    if (rt) {
+        /* Громко и безусловно: RT-поток не должен был сюда попасть вовсе —
+         * обещание этапа 7 для этой памяти либо не давалось, либо сломано.
+         * Печать — часть механизма, как защита RT-страниц у XNU, а не
+         * отладка: молчаливая страховочная сетка скрывала бы поломку. */
+        kprintf("[VMRT] rt fault tid=%llu va=%llx err=%llx entry=[%llx..%llx) flags=%x extract=%llx\n",
+                (unsigned long long)self->thread_id,
+                (unsigned long long)fault_addr,
+                (unsigned long long)err_code,
+                (unsigned long long)e->start,
+                (unsigned long long)e->end,
+                (unsigned)e->flags,
+                (unsigned long long)pmap_extract(task->address_space, va));
+        pmap_debug_dump(task->address_space, va);
+        if (e->object && e->object->vm_class > (uint8_t)VM_CLASS_RT) {
+            e->object->vm_class = (uint8_t)VM_CLASS_RT;
+        }
+    }
+
     uint64_t current_phys = pmap_extract(task->address_space, va);
 
     if (current_phys != 0 && is_write &&
         ((e->flags & VM_MAP_F_COW) || vm_entry_uses_private_object_cow(e))) {
-        return vm_fault_cow_copy(task, e, va, current_phys);
+        int crc = vm_fault_cow_copy(task, e, va, current_phys);
+        if (crc == RDNX_OK && rt) {
+            (void)vm_page_wire(pmap_extract(task->address_space, va));
+        }
+        return crc;
     }
 
     if (current_phys == 0) {
-        return vm_fault_page_absent(task, e, va, is_write);
+        int arc = vm_fault_page_absent(task, e, va, is_write);
+        if (arc == RDNX_OK && rt) {
+            (void)vm_page_wire(pmap_extract(task->address_space, va));
+        }
+        return arc;
     }
 
     /*
@@ -210,4 +256,81 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
     int _r = vm_fault_handle_locked(task, fault_addr, err_code, rip);
     vm_map_unlock(map);
     return _r;
+}
+
+/*
+ * Привести и закрепить диапазон. Ходит той же машинерией, что и отказ, —
+ * только заранее и с намерением записи там, где запись разрешена: COW
+ * рвётся сейчас, иначе первая запись после mlock взяла бы отказ и обещание
+ * было бы ложью.
+ */
+static int vm_task_mlock_locked(task_t* task, uint64_t addr, uint64_t len)
+{
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    uint64_t s = addr & ~(VM_PAGE_SIZE - 1u);
+    uint64_t e_addr = (addr + len + VM_PAGE_SIZE - 1u) & ~(VM_PAGE_SIZE - 1u);
+    if (e_addr <= s) {
+        return RDNX_E_INVALID;
+    }
+
+    for (uint64_t va = s; va < e_addr; va += VM_PAGE_SIZE) {
+        vm_map_entry_t* e = vm_map_lookup(map, va);
+        if (!e) {
+            return RDNX_E_NOTFOUND;
+        }
+        int want_write = (e->prot & VM_PROT_WRITE) != 0;
+        uint64_t phys = pmap_extract(task->address_space, va);
+
+        if (phys != 0 && want_write &&
+            ((e->flags & VM_MAP_F_COW) || vm_entry_uses_private_object_cow(e))) {
+            int rc = vm_fault_cow_copy(task, e, va, phys);
+            if (rc != RDNX_OK) {
+                return rc;
+            }
+            phys = pmap_extract(task->address_space, va);
+        }
+        if (phys == 0) {
+            int rc = vm_fault_page_absent(task, e, va, want_write);
+            if (rc != RDNX_OK) {
+                return rc;
+            }
+            phys = pmap_extract(task->address_space, va);
+        }
+        if (phys == 0) {
+            return RDNX_E_GENERIC;
+        }
+        (void)vm_page_wire(phys);
+    }
+    return RDNX_OK;
+}
+
+int vm_task_mlock(task_t* task, uint64_t addr, uint64_t len)
+{
+    if (!task || !task->vm_map || !task->address_space || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    int _r = vm_task_mlock_locked(task, addr, len);
+    vm_map_unlock(map);
+    return _r;
+}
+
+int vm_task_munlock(task_t* task, uint64_t addr, uint64_t len)
+{
+    if (!task || !task->vm_map || !task->address_space || len == 0) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    uint64_t s = addr & ~(VM_PAGE_SIZE - 1u);
+    uint64_t e_addr = (addr + len + VM_PAGE_SIZE - 1u) & ~(VM_PAGE_SIZE - 1u);
+    for (uint64_t va = s; va < e_addr; va += VM_PAGE_SIZE) {
+        uint64_t phys = pmap_extract(task->address_space, va);
+        if (phys) {
+            (void)vm_page_unwire(phys);
+        }
+    }
+    vm_map_unlock(map);
+    return RDNX_OK;
 }

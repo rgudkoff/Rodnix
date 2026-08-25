@@ -1,5 +1,7 @@
 #include "posix_sys_proc.h"
 #include "../unix/unix_layer.h"
+#include "../../sched/scheduler.h"
+#include "../../include/error.h"
 
 uint64_t posix_exit(uint64_t a1,
                            uint64_t a2,
@@ -138,4 +140,39 @@ uint64_t posix_thread_exit(uint64_t a1,
 {
     (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     return unix_proc_thread_exit(a1);
+}
+
+/*
+ * Перевести текущий поток в класс реального времени и обратно.
+ *
+ * Никакой политики допуска пока нет — это ручка для обещания этапа 7 и его
+ * теста. Настоящая ОС креаторов даст RT через сессию аудио-сервера, а не
+ * голым сисколлом; ручка останется под капотом той сессии.
+ */
+uint64_t posix_schedrt(uint64_t a1, uint64_t a2, uint64_t a3,
+                       uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    thread_t* self = thread_get_current();
+    if (!self) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if (a1) {
+        self->sched_class = SCHED_CLASS_REALTIME;
+        scheduler_set_bucket(self, SCHED_BUCKET_INTERACTIVE);
+    } else {
+        self->sched_class = SCHED_CLASS_TIMESHARE;
+    }
+    return 0;
+}
+
+uint64_t posix_threadfaults(uint64_t a1, uint64_t a2, uint64_t a3,
+                            uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    thread_t* self = thread_get_current();
+    if (!self) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return self->fault_count;
 }

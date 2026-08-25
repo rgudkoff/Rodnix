@@ -4,6 +4,7 @@
 #include "../../fs/ext2.h"
 #include "../../mm/vm_map.h"
 #include "../../mm/vm_object.h"
+#include "../../mm/vm_fault.h"
 #include "../unix/unix_layer.h"
 #include "../../include/sys/file.h"
 #include "../../lib/heap.h"
@@ -248,4 +249,26 @@ uint64_t posix_mprotect(uint64_t a1,
     if (a3 & PROT_EXEC)  { prot |= VM_PROT_EXEC; }
     int r = vm_task_mprotect(task, a1, a2, prot);
     return (r == 0) ? 0 : (uint64_t)r;
+}
+
+uint64_t posix_mlock(uint64_t a1, uint64_t a2, uint64_t a3,
+                     uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vm_task_mlock(task, a1, a2);
+}
+
+uint64_t posix_munlock(uint64_t a1, uint64_t a2, uint64_t a3,
+                       uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    return (uint64_t)vm_task_munlock(task, a1, a2);
 }

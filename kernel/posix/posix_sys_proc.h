@@ -12,6 +12,8 @@ uint64_t posix_sigaction(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uin
 uint64_t posix_sigreturn(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_futex(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_clone(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_schedrt(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_threadfaults(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_thread_exit(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 
 #endif /* _RODNIX_POSIX_SYS_PROC_H */

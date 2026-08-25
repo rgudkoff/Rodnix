@@ -384,6 +384,7 @@ static long vm_task_mmap_locked(task_t* task, uint64_t addr_hint, uint64_t len, 
     if (!obj) {
         return (long)RDNX_E_NOMEM;
     }
+    obj->vm_class = task->vm_class_default;
     int rc = vm_map_add(map, addr, alen, prot, flags | VM_MAP_F_LAZY | VM_MAP_F_ANON, obj, 0);
     vm_object_unref(obj);
     if (rc != RDNX_OK) {
@@ -541,6 +542,7 @@ static long vm_task_mmap_file_locked(task_t* task,
     if (!obj) {
         return (long)RDNX_E_NOMEM;
     }
+    obj->vm_class = task->vm_class_default;
     vm_file_backing_t* fb = (vm_file_backing_t*)kmalloc(sizeof(vm_file_backing_t));
     if (!fb) {
         vm_object_unref(obj);
@@ -609,6 +611,7 @@ static long vm_task_mmap_file_backing_locked(task_t* task,
     if (!obj) {
         return (long)RDNX_E_NOMEM;
     }
+    obj->vm_class = task->vm_class_default;
     obj->pager_private = fb;
 
     int rc = vm_map_add(map, addr, alen, prot, flags | VM_MAP_F_LAZY, obj, file_offset);
@@ -683,6 +686,7 @@ static long vm_task_brk_locked(task_t* task, uint64_t new_break)
             if (!obj) {
                 return (long)RDNX_E_NOMEM;
             }
+            obj->vm_class = task->vm_class_default;
             int rc = vm_map_add(map, task->vm_brk_end, len,
                                 VM_PROT_READ | VM_PROT_WRITE,
                                 VM_MAP_F_ANON | VM_MAP_F_PRIVATE | VM_MAP_F_LAZY,

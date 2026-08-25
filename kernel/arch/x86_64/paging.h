@@ -54,4 +54,6 @@ void paging_switch_pml4(uint64_t pml4_phys);
 #define PTE_GLOBAL      0x100
 #define PTE_NX          0x8000000000000000ULL
 
+void paging_debug_walk(uint64_t pml4_phys, uint64_t virt, uint64_t out[4]);
+
 #endif /* _RODNIX_ARCH_X86_64_PAGING_H */
