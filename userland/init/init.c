@@ -171,6 +171,35 @@ static int write_text_file(const char* path, const char* text)
     return close(fd) == 0;
 }
 
+/* Emit one diagnosable spawn-failure line with the numbers that separate the
+ * three distinct causes: spawn refused (rc), waitpid returned the wrong pid
+ * (pid vs wret), or the child exited nonzero (status — 127 means exec failed
+ * inside the child). */
+static void spawn_diag(const char* stage, const char* cmd,
+                       const char* k1, long v1,
+                       const char* k2, long v2)
+{
+    (void)write_str("[CT] spawn DIAG ");
+    (void)write_str(stage);
+    (void)write_str(" cmd=");
+    (void)write_str(cmd ? cmd : "?");
+    if (k1) {
+        (void)write_str(" ");
+        (void)write_str(k1);
+        (void)write_str("=");
+        if (v1 < 0) { (void)write_str("-"); write_u64((uint64_t)(-v1)); }
+        else { write_u64((uint64_t)v1); }
+    }
+    if (k2) {
+        (void)write_str(" ");
+        (void)write_str(k2);
+        (void)write_str("=");
+        if (v2 < 0) { (void)write_str("-"); write_u64((uint64_t)(-v2)); }
+        else { write_u64((uint64_t)v2); }
+    }
+    (void)write_str("\n");
+}
+
 static int spawn_and_wait(char* const argv[])
 {
     int status = -1;
@@ -182,16 +211,17 @@ static int spawn_and_wait(char* const argv[])
 
     pid = posix_spawn(argv[0], (const char* const*)argv);
     if (pid <= 0) {
-        ct_log("spawn", "DIAG", "posix_spawn failed");
+        /* pid carries the negative kernel error code. */
+        spawn_diag("spawn-failed", argv[0], "rc", pid, NULL, 0);
         return 0;
     }
     long wret = waitpid((pid_t)pid, &status, 0);
     if (wret != pid) {
-        ct_log("spawn", "DIAG", "waitpid pid mismatch");
+        spawn_diag("waitpid-mismatch", argv[0], "pid", pid, "wret", wret);
         return 0;
     }
     if (status != 0) {
-        ct_log("spawn", "DIAG", "child exited nonzero");
+        spawn_diag("status-nonzero", argv[0], "pid", pid, "status", (long)status);
         return 0;
     }
     return 1;
