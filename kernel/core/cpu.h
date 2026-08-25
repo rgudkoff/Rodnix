@@ -98,6 +98,16 @@ void cpu_switch_thread(thread_context_t* from, thread_context_t* to);
  */
 void sched_arch_apply_thread(void* thread_ptr);
 
+/*
+ * FPU/SSE (x87 + XMM) context save/restore across thread switches. User code
+ * uses these registers; the kernel does not. The scheduler saves the outgoing
+ * thread's state and restores the incoming thread's on every switch.
+ */
+struct thread;
+void arch_fpu_init_default(void);
+void arch_fpu_save(struct thread* t);
+void arch_fpu_restore(struct thread* t);
+
 /* ============================================================================
  * Барьеры памяти
  * ============================================================================ */

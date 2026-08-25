@@ -252,6 +252,23 @@ typedef struct thread {
     /* Per-thread TLS and POSIX thread support */
     uint64_t tls_fs_base;      /* Per-thread FS base (set via CLONE_SETTLS); 0 = not set */
     uint64_t* clear_tid_ptr;   /* User-space TID address cleared to 0 on exit (CLONE_CHILD_CLEARTID) */
+
+    /* FPU/SSE (x87 + XMM) state, saved and restored on context switch.
+     *
+     * User code uses SSE (the C library's memcpy/memset, and the compiler's
+     * own vectorised stores); the kernel is built -mno-sse and never touches
+     * these registers. Without per-thread save/restore, a thread preempted
+     * mid-SSE-sequence has its XMM registers clobbered by the next thread that
+     * uses them, and resumes computing and storing garbage -- which under
+     * -smp showed up as intermittent user-memory corruption.
+     *
+     * FXSAVE/FXRSTOR need a 16-byte-aligned 512-byte area; the extra 16 bytes
+     * let us align inside the struct without depending on the allocator's
+     * alignment. fpu_used stays 0 until this thread's state has been saved at
+     * least once, so a freshly created thread is given a clean default FPU
+     * state on its first run rather than an uninitialised area. */
+    uint8_t fpu_area[512 + 16];
+    uint8_t fpu_used;
 } thread_t;
 
 /* ============================================================================

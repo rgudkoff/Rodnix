@@ -124,6 +124,9 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
         scheduler_switch_address_space(first);
         scheduler_update_tss(first);
         sched_arch_apply_thread(first);
+        /* First thread ever to run on this CPU: no outgoing FPU state to save,
+         * give it a clean one. */
+        arch_fpu_restore(first);
         stats.running_tasks = 1;
         stats.total_switches++;
         scheduler_thread_set_state(first, THREAD_STATE_RUNNING, "switch_first");
@@ -216,6 +219,13 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     scheduler_switch_address_space(next);
     scheduler_update_tss(next);
     sched_arch_apply_thread(next);
+    /* Save the outgoing thread's FPU/SSE registers and load the incoming
+     * thread's. The kernel is built -mno-sse and has not touched these since
+     * `prev` last ran in user mode, so what FXSAVE captures here is genuinely
+     * prev's state. Without this, a thread preempted mid-SSE resumes with
+     * another thread's XMM registers and stores corrupt data. */
+    arch_fpu_save(prev);
+    arch_fpu_restore(next);
     stats.running_tasks = 1;
     stats.total_switches++;
 

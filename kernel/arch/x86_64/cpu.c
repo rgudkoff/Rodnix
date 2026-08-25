@@ -20,6 +20,52 @@ static volatile uint64_t cpu_freq_hz = 0;
 static char cpu_vendor_str[16];
 static char cpu_brand_str[64];
 
+/* ---------------------------------------------------------------------------
+ * FPU / SSE (x87 + XMM) context, saved and restored across thread switches.
+ *
+ * The kernel is built -mno-sse and never touches these registers, but user
+ * code does, and there is no lazy-FPU (#NM) switching here. So the state has
+ * to be saved and restored explicitly on every switch, or a thread preempted
+ * mid-SSE loses its XMM registers to whatever runs next.
+ * ------------------------------------------------------------------------- */
+
+/* A pristine FXSAVE image, captured once, handed to a thread the first time it
+ * runs (before it has any saved state of its own). */
+static uint8_t g_fpu_default[512 + 16];
+
+static inline uint8_t* fpu_align16(uint8_t* p)
+{
+    return (uint8_t*)(((uintptr_t)p + 15u) & ~(uintptr_t)15u);
+}
+
+void arch_fpu_init_default(void)
+{
+    uint8_t* area = fpu_align16(g_fpu_default);
+    /* Establish a clean x87+SSE state and capture it: control word 0x037F,
+     * MXCSR 0x1F80 (all exceptions masked), registers empty. */
+    __asm__ volatile ("fninit");
+    __asm__ volatile ("fxsave (%0)" : : "r"(area) : "memory");
+}
+
+void arch_fpu_save(thread_t* t)
+{
+    if (!t) {
+        return;
+    }
+    uint8_t* area = fpu_align16(t->fpu_area);
+    __asm__ volatile ("fxsave (%0)" : : "r"(area) : "memory");
+    t->fpu_used = 1;
+}
+
+void arch_fpu_restore(thread_t* t)
+{
+    /* A thread that has never been saved yet gets the pristine image, so its
+     * first run starts from a clean FPU rather than an uninitialised area. */
+    uint8_t* area = (t && t->fpu_used) ? fpu_align16(t->fpu_area)
+                                       : fpu_align16(g_fpu_default);
+    __asm__ volatile ("fxrstor (%0)" : : "r"(area) : "memory");
+}
+
 static inline void cpu_outb(uint16_t port, uint8_t val)
 {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -112,6 +158,10 @@ int cpu_init(void)
     cr4 |= (1ULL << 9);   /* OSFXSR */
     cr4 |= (1ULL << 10);  /* OSXMMEXCPT */
     __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
+
+    /* Capture the pristine FPU image now that FXSAVE is usable, for handing to
+     * threads on their first run (see arch_fpu_restore). */
+    arch_fpu_init_default();
 
     /* Initialize GDT/TSS (user segments + RSP0) */
     gdt_init();
