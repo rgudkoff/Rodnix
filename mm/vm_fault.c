@@ -141,9 +141,16 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
 
 int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip)
 {
-    vm_layer_lock();
+    if (!task || !task->vm_map) {
+        return RDNX_E_NOTFOUND;
+    }
+    /* Замок карты — спящий, и это здесь главное: пейджер под отказом читает
+     * с диска, а спать на спинлоке с выключенной преемпцией мы уже мерили.
+     * Спать в обработчике отказа законно — этот путь уже спит на Giant. */
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
     int _r = vm_fault_handle_locked(task, fault_addr, err_code, rip);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 

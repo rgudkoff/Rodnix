@@ -3,11 +3,12 @@
 
 #include <stdint.h>
 #include "../kernel/core/task.h"
+#include "../kernel/core/kmutex.h"
 #include "vm_object.h"
 #include "pmap.h"
+#include <bsd/sys/queue.h>
 
 #define VM_PAGE_SIZE 0x1000ULL
-#define VM_MAP_MAX_ENTRIES 128
 
 #define VM_PROT_NONE  0u
 #define VM_PROT_READ  (1u << 0)
@@ -22,7 +23,11 @@
 #define VM_MAP_F_COW         (1u << 5)
 #define VM_MAP_F_FRAMEBUFFER (1u << 6)  /* physical MMIO mapping; object_offset = display_idx */
 
+/* Запись карты — узел сортированного списка, а не ячейка массива.
+ * Список упорядочен по start и не содержит пересечений; и то и другое —
+ * инварианты вставки. */
 typedef struct vm_map_entry {
+    TAILQ_ENTRY(vm_map_entry) link;
     uint64_t start;
     uint64_t end;
     uint32_t prot;
@@ -31,10 +36,18 @@ typedef struct vm_map_entry {
     uint64_t object_offset;
 } vm_map_entry_t;
 
+TAILQ_HEAD(vm_map_entry_head, vm_map_entry);
+
 typedef struct vm_map {
     pmap_t pmap;
+    /* Замок на карту, спящий. Путь отказа делает ввод-вывод (пейджер читает
+     * страницу из файловой системы), а спинлок под вводом-выводом — это
+     * секунды недоступности процессора, которые мы уже мерили. Прецедент
+     * законен: обработчик отказа уже спит на Giant. Порядок: Giant ->
+     * map->lock -> внутренние спинлоки (объект, pmap, куча). */
+    kmutex_t lock;
     uint32_t entry_count;
-    vm_map_entry_t entries[VM_MAP_MAX_ENTRIES];
+    struct vm_map_entry_head entries;
 } vm_map_t;
 
 int vm_task_prepare_exec(task_t* task, pmap_t user_pmap);
@@ -82,10 +95,9 @@ void vm_task_destroy(task_t* task);
 
 vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr);
 
-/* The VM layer's lock. Public so the fault path, which lives in its own
- * file, can take the same one. */
-void vm_layer_lock_at(const char* file, int line);
-#define vm_layer_lock() vm_layer_lock_at(__FILE__, __LINE__)
-void vm_layer_unlock(void);
+/* Замок карты — для пути отказа, который живёт в своём файле. Глобального
+ * замка VM-слоя больше нет: карты разных задач независимы. */
+void vm_map_lock(vm_map_t* map);
+void vm_map_unlock(vm_map_t* map);
 
 #endif /* _RODNIX_VM_MAP_H */

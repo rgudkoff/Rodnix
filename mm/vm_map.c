@@ -1,5 +1,5 @@
 #include "vm_map.h"
-#include "../kernel/fabric/spin.h"
+#include "../kernel/core/kmutex.h"
 #include "vm_pager.h"
 #include "vm_page.h"
 #include "pmap.h"
@@ -17,55 +17,25 @@
 static void (*g_fb_release_hook)(uint32_t display_idx) = NULL;
 
 /*
- * One lock for the whole VM layer.
+ * Замок — на карту, и его берут все публичные входы без исключения.
  *
- * There was none at all, which held only while a single processor could
- * fault. With application processors running threads, two of them walk and
- * mutate the same vm_map at once, and the observable result was a
- * reproducible userspace page fault a fifth of the way through the contract
- * suite.
+ * Глобальный vm_lock был спинлоком с выключенной преемпцией на всё время
+ * операции — включая fork, обходящий каждую страницу родителя, и путь
+ * отказа, читающий с диска. И он был дырявым: семейство vm_task_mmap* и brk
+ * его вовсе не брали, так что mmap против конкурентного отказа был гонкой.
  *
- * Coarse on purpose, matching the run queue and the wait queues: one lock at
- * the public entry points, to be split when contention is measured rather
- * than guessed at. Lock order is VM before the heap -- the fault path
- * allocates -- and nothing takes the VM lock from under the heap.
+ * Спящий замок на карту закрывает и то и другое: карты разных задач больше
+ * не сериализуют друг друга, ожидание не жжёт процессор, а во время
+ * ввода-вывода пейджера процессор занят другими потоками.
  */
-static spinlock_t vm_lock;
-
-void vm_layer_lock_at(const char* file, int line)
+void vm_map_lock(vm_map_t* map)
 {
-    /*
-     * Preemption off, interrupts left alone.
-     *
-     * It used to mask, and that was the wrong trade for work of this shape.
-     * Two of these entry points do work proportional to the size of a process
-     * -- vm_task_destroy() unmaps every page it owns, vm_task_fork_clone()
-     * walks every page of the parent -- so the hold is inherently long, and
-     * masking made it a hole in which this processor answered nothing at all.
-     * Measured at 744-1303 us, against the 1.33 ms an audio buffer gets.
-     *
-     * Masking would be required only if an interrupt handler could take this
-     * lock, and none does: no driver reaches the VM layer, and the one
-     * interrupt-context entry -- the page fault -- arrives through a gate that
-     * has already cleared IF, so the mask here was never what protected it.
-     *
-     * The hold is still long, and preemption is still off for it. That is a
-     * far weaker property -- interrupts are served, only thread switching
-     * waits -- and it is now visible in the preemption window rather than
-     * hidden in the interrupt one. The real answer is a lock per address
-     * space, which is the push-down work, not this change.
-     *
-     * The caller's site rather than this line: a wrapper collapses every
-     * acquire in the subsystem into one file:line, so a report naming it says
-     * only "the VM lock", which we already knew. vm_layer_lock() is a macro
-     * that supplies the real one.
-     */
-    spinlock_lock_named(&vm_lock, "&vm_lock", file, line);
+    kmutex_lock(&map->lock);
 }
 
-void vm_layer_unlock(void)
+void vm_map_unlock(vm_map_t* map)
 {
-    spinlock_unlock(&vm_lock);
+    kmutex_unlock(&map->lock);
 }
 
 void vm_set_fb_release_hook(void (*fn)(uint32_t display_idx))
@@ -91,6 +61,8 @@ static vm_map_t* vm_map_create(pmap_t pmap)
     }
     memset(map, 0, sizeof(*map));
     map->pmap = pmap;
+    TAILQ_INIT(&map->entries);
+    kmutex_init(&map->lock, "vm_map");
     return map;
 }
 
@@ -99,12 +71,16 @@ static void vm_map_destroy(vm_map_t* map)
     if (!map) {
         return;
     }
-    for (uint32_t i = 0; i < map->entry_count; i++) {
-        if (map->entries[i].object) {
-            vm_object_unref(map->entries[i].object);
-            map->entries[i].object = NULL;
+    vm_map_entry_t* e;
+    vm_map_entry_t* next;
+    TAILQ_FOREACH_SAFE(e, &map->entries, link, next) {
+        TAILQ_REMOVE(&map->entries, e, link);
+        if (e->object) {
+            vm_object_unref(e->object);
         }
+        kfree(e);
     }
+    map->entry_count = 0;
     kfree(map);
 }
 
@@ -117,18 +93,6 @@ static int vm_range_valid(uint64_t start, uint64_t end)
         return 0;
     }
     return 1;
-}
-
-static int vm_map_overlap(vm_map_t* map, uint64_t start, uint64_t end)
-{
-    for (uint32_t i = 0; i < map->entry_count; i++) {
-        vm_map_entry_t* e = &map->entries[i];
-        if (end <= e->start || start >= e->end) {
-            continue;
-        }
-        return 1;
-    }
-    return 0;
 }
 
 static int vm_map_add(vm_map_t* map,
@@ -144,14 +108,26 @@ static int vm_map_add(vm_map_t* map,
     if (!map || len == 0 || !vm_range_valid(s, e)) {
         return RDNX_E_INVALID;
     }
-    if (map->entry_count >= VM_MAP_MAX_ENTRIES) {
-        return RDNX_E_BUSY;
-    }
-    if (vm_map_overlap(map, s, e)) {
-        return RDNX_E_BUSY;
+
+    /* Точка вставки и проверка пересечения — один проход: место новой
+     * записи перед первой, что начинается не левее её конца; сосед слева
+     * не должен заходить на неё. */
+    vm_map_entry_t* after = NULL;   /* последняя запись со start < s */
+    vm_map_entry_t* it;
+    TAILQ_FOREACH(it, &map->entries, link) {
+        if (it->start >= e) {
+            break;
+        }
+        if (it->start >= s || it->end > s) {
+            return RDNX_E_BUSY;   /* пересечение */
+        }
+        after = it;
     }
 
-    vm_map_entry_t* ne = &map->entries[map->entry_count++];
+    vm_map_entry_t* ne = (vm_map_entry_t*)kmalloc(sizeof(vm_map_entry_t));
+    if (!ne) {
+        return RDNX_E_NOMEM;
+    }
     memset(ne, 0, sizeof(*ne));
     ne->start = s;
     ne->end = e;
@@ -162,6 +138,12 @@ static int vm_map_add(vm_map_t* map,
     if (obj) {
         vm_object_ref(obj);
     }
+    if (after) {
+        TAILQ_INSERT_AFTER(&map->entries, after, ne, link);
+    } else {
+        TAILQ_INSERT_HEAD(&map->entries, ne, link);
+    }
+    map->entry_count++;
     return RDNX_OK;
 }
 
@@ -173,12 +155,15 @@ static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, pmap_t pma
         return RDNX_E_INVALID;
     }
     int removed = 0;
-    for (uint32_t i = 0; i < map->entry_count;) {
-        vm_map_entry_t* cur = &map->entries[i];
+    vm_map_entry_t* cur;
+    vm_map_entry_t* next;
+    TAILQ_FOREACH_SAFE(cur, &map->entries, link, next) {
+        if (cur->start >= e) {
+            break;   /* сортировка: дальше пересечений нет */
+        }
         uint64_t rs = (s > cur->start) ? s : cur->start;
         uint64_t re = (e < cur->end) ? e : cur->end;
         if (re <= rs) {
-            i++;
             continue;
         }
 
@@ -202,9 +187,8 @@ static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, pmap_t pma
             if (cur->object) {
                 vm_object_unref(cur->object);
             }
-            if (i + 1 < map->entry_count) {
-                memmove(cur, cur + 1, (map->entry_count - i - 1) * sizeof(vm_map_entry_t));
-            }
+            TAILQ_REMOVE(&map->entries, cur, link);
+            kfree(cur);
             map->entry_count--;
             continue;
         }
@@ -212,33 +196,36 @@ static int vm_map_remove(vm_map_t* map, uint64_t start, uint64_t len, pmap_t pma
         if (rs == cur->start) {
             cur->start = re;
             cur->object_offset += (re - rs);
-            i++;
             continue;
         }
 
         if (re == cur->end) {
             cur->end = rs;
-            i++;
             continue;
         }
 
-        if (map->entry_count >= VM_MAP_MAX_ENTRIES) {
-            return RDNX_E_BUSY;
+        /* Дыра в середине: запись расщепляется. Хвост — новая запись сразу
+         * за текущей, сортировка сохраняется сама. Раньше здесь был потолок
+         * массива; теперь единственный отказ — нет памяти под запись. */
+        vm_map_entry_t* tail = (vm_map_entry_t*)kmalloc(sizeof(vm_map_entry_t));
+        if (!tail) {
+            return RDNX_E_NOMEM;
         }
-        vm_map_entry_t tail = *cur;
-        tail.start = re;
-        tail.object_offset += (re - cur->start);
-        if (tail.object) {
-            vm_object_ref(tail.object);
+        memset(tail, 0, sizeof(*tail));
+        tail->start = re;
+        tail->end = cur->end;
+        tail->prot = cur->prot;
+        tail->flags = cur->flags;
+        tail->object = cur->object;
+        tail->object_offset = cur->object_offset + (re - cur->start);
+        if (tail->object) {
+            vm_object_ref(tail->object);
         }
         cur->end = rs;
-        if (i + 1 < map->entry_count) {
-            memmove(&map->entries[i + 2], &map->entries[i + 1],
-                    (map->entry_count - i - 1) * sizeof(vm_map_entry_t));
-        }
-        map->entries[i + 1] = tail;
+        TAILQ_INSERT_AFTER(&map->entries, cur, tail, link);
         map->entry_count++;
-        i += 2;
+        /* Диапазон [s,e) целиком внутри одной записи — дальше искать нечего. */
+        break;
     }
     return removed ? RDNX_OK : RDNX_E_NOTFOUND;
 }
@@ -248,9 +235,12 @@ vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr)
     if (!map) {
         return NULL;
     }
-    for (uint32_t i = 0; i < map->entry_count; i++) {
-        vm_map_entry_t* e = &map->entries[i];
-        if (addr >= e->start && addr < e->end) {
+    vm_map_entry_t* e;
+    TAILQ_FOREACH(e, &map->entries, link) {
+        if (e->start > addr) {
+            break;   /* сортировка: дальше только правее */
+        }
+        if (addr < e->end) {
             return e;
         }
     }
@@ -259,24 +249,33 @@ vm_map_entry_t* vm_map_lookup(vm_map_t* map, uint64_t addr)
 
 static uint64_t vm_find_gap(vm_map_t* map, uint64_t hint, uint64_t len)
 {
+    uint64_t alen = vm_align_up(len);
     uint64_t s = vm_align_up(hint);
-    uint64_t e = vm_align_up(hint + len);
-    if (e <= s) {
+    if (alen == 0 || s + alen <= s) {
         return 0;
     }
     if (s < VM_DEFAULT_MMAP) {
         s = VM_DEFAULT_MMAP;
-        e = s + vm_align_up(len);
     }
 
-    while (e < VM_USER_MAX) {
-        if (!vm_map_overlap(map, s, e)) {
-            return s;
+    /* Один проход по сортированному списку вместо прощупывания адресного
+     * пространства постранично: кандидат сдвигается за конец каждой записи,
+     * которая ему мешает. Прежний цикл был O(диапазон × записи) и в худшем
+     * случае делал сотни тысяч проверок пересечения. */
+    vm_map_entry_t* e;
+    TAILQ_FOREACH(e, &map->entries, link) {
+        if (e->end <= s) {
+            continue;             /* запись целиком левее кандидата */
         }
-        s += VM_PAGE_SIZE;
-        e += VM_PAGE_SIZE;
+        if (e->start >= s + alen) {
+            break;                /* кандидат помещается до этой записи */
+        }
+        s = vm_align_up(e->end);  /* мешает: сдвинуться за неё */
     }
-    return 0;
+    if (s + alen > VM_USER_MAX || s + alen <= s) {
+        return 0;
+    }
+    return s;
 }
 
 static int vm_task_prepare_exec_locked(task_t* task, pmap_t user_pmap){
@@ -303,10 +302,10 @@ static int vm_task_prepare_exec_locked(task_t* task, pmap_t user_pmap){
 
 int vm_task_prepare_exec(task_t* task, pmap_t user_pmap)
 {
-    vm_layer_lock();
-    int _r = vm_task_prepare_exec_locked(task, user_pmap);
-    vm_layer_unlock();
-    return _r;
+    /* Без замка: exec выполняется единственным потоком задачи, и старая
+     * карта, которую он сносит, больше никому не видна. Брать замок карты,
+     * которую сейчас освободим, значило бы освобождать удерживаемый kmutex. */
+    return vm_task_prepare_exec_locked(task, user_pmap);
 }
 
 
@@ -320,9 +319,13 @@ static int vm_task_map_fixed_locked(task_t* task, uint64_t start, uint64_t len, 
 
 int vm_task_map_fixed(task_t* task, uint64_t start, uint64_t len, uint32_t prot, uint32_t flags)
 {
-    vm_layer_lock();
+    if (!task || !task->vm_map) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
     int _r = vm_task_map_fixed_locked(task, start, len, prot, flags);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 
@@ -340,15 +343,23 @@ static int vm_task_set_brk_base_locked(task_t* task, uint64_t brk_base){
 
 int vm_task_set_brk_base(task_t* task, uint64_t brk_base)
 {
-    vm_layer_lock();
+    if (!task) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    if (map) {
+        vm_map_lock(map);
+    }
     int _r = vm_task_set_brk_base_locked(task, brk_base);
-    vm_layer_unlock();
+    if (map) {
+        vm_map_unlock(map);
+    }
     return _r;
 }
 
 
 
-long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags)
+static long vm_task_mmap_locked(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags)
 {
     if (!task || !task->vm_map || len == 0) {
         return (long)RDNX_E_INVALID;
@@ -382,8 +393,23 @@ long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot,
     return (long)addr;
 }
 
-long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
-                       uint32_t prot, uint64_t phys_base, uint32_t display_idx)
+/* Семейство mmap и brk раньше не брали замок VM вовсе — mmap против
+ * конкурентного отказа страницы был гонкой по массиву записей. Теперь все
+ * публичные входы без исключения идут под замком карты. */
+long vm_task_mmap(task_t* task, uint64_t addr_hint, uint64_t len, uint32_t prot, uint32_t flags)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_locked(task, addr_hint, len, prot, flags);
+    vm_map_unlock(map);
+    return _r;
+}
+
+static long vm_task_mmap_phys_locked(task_t* task, uint64_t addr_hint, uint64_t len,
+                                     uint32_t prot, uint64_t phys_base, uint32_t display_idx)
 {
     if (!task || !task->vm_map || len == 0 || phys_base == 0) {
         return (long)RDNX_E_INVALID;
@@ -418,13 +444,26 @@ long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
     return (long)addr;
 }
 
-long vm_task_mmap_object(task_t* task,
-                         uint64_t addr_hint,
-                         uint64_t len,
-                         uint32_t prot,
-                         uint32_t flags,
-                         vm_object_t* obj,
-                         uint64_t object_offset)
+long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
+                       uint32_t prot, uint64_t phys_base, uint32_t display_idx)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_phys_locked(task, addr_hint, len, prot, phys_base, display_idx);
+    vm_map_unlock(map);
+    return _r;
+}
+
+static long vm_task_mmap_object_locked(task_t* task,
+                                       uint64_t addr_hint,
+                                       uint64_t len,
+                                       uint32_t prot,
+                                       uint32_t flags,
+                                       vm_object_t* obj,
+                                       uint64_t object_offset)
 {
     if (!task || !task->vm_map || len == 0 || !obj) {
         return (long)RDNX_E_INVALID;
@@ -452,14 +491,32 @@ long vm_task_mmap_object(task_t* task,
     return (long)addr;
 }
 
-long vm_task_mmap_file(task_t* task,
-                       uint64_t addr_hint,
-                       uint64_t len,
-                       uint32_t prot,
-                       uint32_t flags,
-                       const uint8_t* data,
-                       uint64_t data_size,
-                       uint64_t file_offset)
+long vm_task_mmap_object(task_t* task,
+                         uint64_t addr_hint,
+                         uint64_t len,
+                         uint32_t prot,
+                         uint32_t flags,
+                         vm_object_t* obj,
+                         uint64_t object_offset)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_object_locked(task, addr_hint, len, prot, flags, obj, object_offset);
+    vm_map_unlock(map);
+    return _r;
+}
+
+static long vm_task_mmap_file_locked(task_t* task,
+                                     uint64_t addr_hint,
+                                     uint64_t len,
+                                     uint32_t prot,
+                                     uint32_t flags,
+                                     const uint8_t* data,
+                                     uint64_t data_size,
+                                     uint64_t file_offset)
 {
     if (!task || !task->vm_map || len == 0 || !data) {
         return (long)RDNX_E_INVALID;
@@ -503,13 +560,32 @@ long vm_task_mmap_file(task_t* task,
     return (long)addr;
 }
 
-long vm_task_mmap_file_backing(task_t* task,
-                               uint64_t addr_hint,
-                               uint64_t len,
-                               uint32_t prot,
-                               uint32_t flags,
-                               vm_file_backing_t* fb,
-                               uint64_t file_offset)
+long vm_task_mmap_file(task_t* task,
+                       uint64_t addr_hint,
+                       uint64_t len,
+                       uint32_t prot,
+                       uint32_t flags,
+                       const uint8_t* data,
+                       uint64_t data_size,
+                       uint64_t file_offset)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_file_locked(task, addr_hint, len, prot, flags, data, data_size, file_offset);
+    vm_map_unlock(map);
+    return _r;
+}
+
+static long vm_task_mmap_file_backing_locked(task_t* task,
+                                             uint64_t addr_hint,
+                                             uint64_t len,
+                                             uint32_t prot,
+                                             uint32_t flags,
+                                             vm_file_backing_t* fb,
+                                             uint64_t file_offset)
 {
     if (!task || !task->vm_map || len == 0 || !fb) {
         return (long)RDNX_E_INVALID;
@@ -544,6 +620,24 @@ long vm_task_mmap_file_backing(task_t* task,
     return (long)addr;
 }
 
+long vm_task_mmap_file_backing(task_t* task,
+                               uint64_t addr_hint,
+                               uint64_t len,
+                               uint32_t prot,
+                               uint32_t flags,
+                               vm_file_backing_t* fb,
+                               uint64_t file_offset)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_file_backing_locked(task, addr_hint, len, prot, flags, fb, file_offset);
+    vm_map_unlock(map);
+    return _r;
+}
+
 static int vm_task_munmap_locked(task_t* task, uint64_t addr, uint64_t len){
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_INVALID;
@@ -553,15 +647,19 @@ static int vm_task_munmap_locked(task_t* task, uint64_t addr, uint64_t len){
 
 int vm_task_munmap(task_t* task, uint64_t addr, uint64_t len)
 {
-    vm_layer_lock();
+    if (!task || !task->vm_map) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
     int _r = vm_task_munmap_locked(task, addr, len);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 
 
 
-long vm_task_brk(task_t* task, uint64_t new_break)
+static long vm_task_brk_locked(task_t* task, uint64_t new_break)
 {
     if (!task || !task->vm_map) {
         return (long)RDNX_E_INVALID;
@@ -604,6 +702,18 @@ long vm_task_brk(task_t* task, uint64_t new_break)
     return (long)new_end;
 }
 
+long vm_task_brk(task_t* task, uint64_t new_break)
+{
+    if (!task || !task->vm_map) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_brk_locked(task, new_break);
+    vm_map_unlock(map);
+    return _r;
+}
+
 static int vm_entry_is_cow_candidate(const vm_map_entry_t* e)
 {
     if (!e) {
@@ -628,32 +738,39 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, pmap_t child
         return RDNX_E_NOMEM;
     }
 
-    for (uint32_t i = 0; i < pmap->entry_count; i++) {
-        if (cmap->entry_count >= VM_MAP_MAX_ENTRIES) {
+    vm_map_entry_t* pe;
+    TAILQ_FOREACH(pe, &pmap->entries, link) {
+        vm_map_entry_t* ce = (vm_map_entry_t*)kmalloc(sizeof(vm_map_entry_t));
+        if (!ce) {
             vm_map_destroy(cmap);
-            return RDNX_E_BUSY;
+            return RDNX_E_NOMEM;
         }
-        vm_map_entry_t pe = pmap->entries[i];
-        vm_map_entry_t* ce = &cmap->entries[cmap->entry_count++];
-        *ce = pe;
-        thread_t* cur_thr = thread_get_current();
-        (void)cur_thr;
+        memset(ce, 0, sizeof(*ce));
+        ce->start = pe->start;
+        ce->end = pe->end;
+        ce->prot = pe->prot;
+        ce->flags = pe->flags;
+        ce->object = pe->object;
+        ce->object_offset = pe->object_offset;
         if (ce->object) {
             vm_object_ref(ce->object);
         }
+        /* Родитель сортирован — хвостовая вставка сохраняет порядок. */
+        TAILQ_INSERT_TAIL(&cmap->entries, ce, link);
+        cmap->entry_count++;
 
-        int cow = vm_entry_is_cow_candidate(&pe);
+        int cow = vm_entry_is_cow_candidate(pe);
         if (cow) {
-            pmap->entries[i].flags |= VM_MAP_F_COW;
+            pe->flags |= VM_MAP_F_COW;
             ce->flags |= VM_MAP_F_COW;
         }
 
-        for (uint64_t va = pe.start; va < pe.end; va += VM_PAGE_SIZE) {
+        for (uint64_t va = pe->start; va < pe->end; va += VM_PAGE_SIZE) {
             uint64_t phys = pmap_extract(parent->address_space, va);
             if (!phys) {
                 continue;
             }
-            uint32_t eff_prot = pe.prot;
+            uint32_t eff_prot = pe->prot;
             if (cow) {
                 eff_prot &= ~VM_PROT_WRITE;
             }
@@ -684,9 +801,15 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, pmap_t child
 
 int vm_task_fork_clone(task_t* parent, task_t* child, pmap_t child_pmap)
 {
-    vm_layer_lock();
+    if (!parent || !parent->vm_map) {
+        return RDNX_E_INVALID;
+    }
+    /* Замок родителя: его карту мы читаем и помечаем COW. Карта ребёнка
+     * строится с нуля и до конца вызова никому не видна. */
+    vm_map_t* map = (vm_map_t*)parent->vm_map;
+    vm_map_lock(map);
     int _r = vm_task_fork_clone_locked(parent, child, child_pmap);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 
@@ -698,11 +821,11 @@ static void vm_task_destroy_locked(task_t* task){
     }
     if (task->vm_map) {
         vm_map_t* map = (vm_map_t*)task->vm_map;
-        while (map->entry_count > 0) {
-            vm_map_entry_t e = map->entries[0];
+        vm_map_entry_t* e;
+        while ((e = TAILQ_FIRST(&map->entries)) != NULL) {
             (void)vm_map_remove(map,
-                                e.start,
-                                e.end - e.start,
+                                e->start,
+                                e->end - e->start,
                                 task->address_space);
         }
         vm_map_destroy(map);
@@ -720,9 +843,10 @@ static void vm_task_destroy_locked(task_t* task){
 
 void vm_task_destroy(task_t* task)
 {
-    vm_layer_lock();
+    /* Без замка: сюда приходят с мёртвой задачей — потоков, способных
+     * трогать её карту, больше нет, а kmutex нельзя держать через kfree
+     * самого себя. */
     vm_task_destroy_locked(task);
-    vm_layer_unlock();
 }
 
 
@@ -740,8 +864,11 @@ static int vm_task_msync_locked(task_t* task, uint64_t addr, uint64_t len, uint3
     }
 
     int did = 0;
-    for (uint32_t i = 0; i < map->entry_count; i++) {
-        vm_map_entry_t* me = &map->entries[i];
+    vm_map_entry_t* me;
+    TAILQ_FOREACH(me, &map->entries, link) {
+        if (me->start >= e) {
+            break;
+        }
         uint64_t rs = (s > me->start) ? s : me->start;
         uint64_t re = (e < me->end) ? e : me->end;
         if (re <= rs) {
@@ -779,9 +906,13 @@ static int vm_task_msync_locked(task_t* task, uint64_t addr, uint64_t len, uint3
 
 int vm_task_msync(task_t* task, uint64_t addr, uint64_t len, uint32_t flags)
 {
-    vm_layer_lock();
+    if (!task || !task->vm_map) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
     int _r = vm_task_msync_locked(task, addr, len, flags);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 
@@ -803,8 +934,11 @@ static int vm_task_mprotect_locked(task_t* task, uint64_t addr, uint64_t len, ui
     }
 
     int changed = 0;
-    for (uint32_t i = 0; i < map->entry_count; i++) {
-        vm_map_entry_t* me = &map->entries[i];
+    vm_map_entry_t* me;
+    TAILQ_FOREACH(me, &map->entries, link) {
+        if (me->start >= e) {
+            break;
+        }
         uint64_t rs = (s > me->start) ? s : me->start;
         uint64_t re = (e < me->end) ? e : me->end;
         if (re <= rs) {
@@ -831,9 +965,13 @@ static int vm_task_mprotect_locked(task_t* task, uint64_t addr, uint64_t len, ui
 
 int vm_task_mprotect(task_t* task, uint64_t addr, uint64_t len, uint32_t prot)
 {
-    vm_layer_lock();
+    if (!task || !task->vm_map) {
+        return RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
     int _r = vm_task_mprotect_locked(task, addr, len, prot);
-    vm_layer_unlock();
+    vm_map_unlock(map);
     return _r;
 }
 
