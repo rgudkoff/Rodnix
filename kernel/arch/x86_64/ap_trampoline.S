@@ -73,7 +73,13 @@ ap_protected:
 
     mov ecx, 0xC0000080             ; IA32_EFER
     rdmsr
-    or  eax, 1 << 8                 ; EFER.LME
+    ; LME as before, and NXE with it -- the boot processor enables both
+    ; (boot.S), and a bit the BSP considers "no execute" is, on a processor
+    ; without NXE, a *reserved* bit: the same PTE that works on cpu0 raises
+    ; a reserved-bit page fault (err bit 3) on an AP. Found as CT-043's
+    ; wired pages faulting forever, but only when the thread landed on cpu1.
+    ; Same disease as the FXSAVE hole: BSP and AP initialisation drifting.
+    or  eax, (1 << 8) | (1 << 11)   ; EFER.LME | EFER.NXE
     wrmsr
 
     mov eax, cr0
