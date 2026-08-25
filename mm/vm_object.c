@@ -37,24 +37,6 @@ static vm_page_t* vm_object_lookup_locked(const vm_object_t* obj, uint32_t pinde
     return NULL;
 }
 
-/* Вынуть страницу из цепочки её корзины. Вызывающий держит obj->lock. */
-static void vm_object_unlink_locked(vm_object_t* obj, vm_page_t* m)
-{
-    uint32_t* slot = &obj->buckets[vm_object_bucket(obj, m->pindex)];
-    while (*slot != VM_PAGE_NIL) {
-        vm_page_t* cur = vm_page_at_index(*slot);
-        if (cur == m) {
-            *slot = m->obj_next;
-            m->obj_next = 0;
-            m->object = NULL;
-            obj->resident--;
-            return;
-        }
-        slot = &cur->obj_next;
-    }
-    DEBUG_WARN("vm_object: page pindex=%u not in its bucket", m->pindex);
-}
-
 /* Вставить страницу. Вызывающий держит obj->lock, место есть. */
 static void vm_object_link_locked(vm_object_t* obj, vm_page_t* m, uint32_t pindex)
 {
@@ -253,51 +235,35 @@ uint64_t vm_object_get_resident_page(vm_object_t* obj, uint64_t page_index)
     return phys;
 }
 
-int vm_object_set_resident_page(vm_object_t* obj, uint64_t page_index, uint64_t phys)
+uint64_t vm_object_insert_or_get_page(vm_object_t* obj, uint64_t page_index, uint64_t phys)
 {
     if (!obj || page_index >= obj->page_count || !phys) {
-        return RDNX_E_INVALID;
+        return 0;
     }
     vm_page_t* m = vm_page_lookup(phys);
     if (!m) {
-        return RDNX_E_INVALID;
+        return 0;
     }
 
-    int rc = vm_object_ensure_capacity(obj);
-    if (rc != RDNX_OK) {
-        return rc;
+    if (vm_object_ensure_capacity(obj) != RDNX_OK) {
+        return 0;
     }
 
     /* Ссылка владения берётся до публикации: в индексе не бывает страницы,
-     * которую объект не держит. Лишняя (замена не понадобилась) отдаётся
-     * после. */
+     * которую объект не держит. Проигранная гонка отдаёт её обратно. */
     (void)vm_page_hold(phys);
 
-    uint64_t old_phys = 0;
     uint64_t f = spinlock_lock_irqsave(&obj->lock);
     vm_page_t* old = vm_object_lookup_locked(obj, (uint32_t)page_index);
-    if (old == m) {
+    if (old) {
+        uint64_t winner = vm_page_phys(old);
         spinlock_unlock_irqrestore(&obj->lock, f);
         (void)vm_page_drop(phys);
-        return RDNX_OK;
-    }
-    if (old) {
-        old_phys = vm_page_phys(old);
-        vm_object_unlink_locked(obj, old);
-    }
-    if (m->object && m->object != obj) {
-        /* Страница резидентна не более чем в одном объекте; нарушение —
-         * ошибка вызывающего, и молчать о ней нельзя. */
-        DEBUG_WARN("vm_object: page %llx already owned by another object",
-                   (unsigned long long)phys);
+        return winner;
     }
     vm_object_link_locked(obj, m, (uint32_t)page_index);
     spinlock_unlock_irqrestore(&obj->lock, f);
-
-    if (old_phys) {
-        (void)vm_page_drop(old_phys);
-    }
-    return RDNX_OK;
+    return phys;
 }
 
 uint32_t vm_object_resident_count(vm_object_t* obj)

@@ -10,8 +10,8 @@
  * вставка не выделяет памяти никогда — узел индекса и страница суть одно,
  * как лист radix-дерева у FreeBSD.
  *
- * Замок — свой, на объект. Пока весь VM ходит под глобальным vm_lock, он
- * дублирует защиту; нагрузку он примет на этапах 5–6, когда vm_lock умрёт.
+ * Замок — свой, на объект, и он несёт нагрузку: объект разделяется между
+ * картами (общий mmap файла, наследование при fork), а замки карт — разные.
  * Ввод-вывод под ним не делается: пейджер читает страницу до того, как она
  * вставляется в индекс.
  */
@@ -82,7 +82,13 @@ vm_object_t* vm_object_create(vm_object_type_t type, uint64_t size);
 void vm_object_ref(vm_object_t* obj);
 void vm_object_unref(vm_object_t* obj);
 uint64_t vm_object_get_resident_page(vm_object_t* obj, uint64_t page_index);
-int vm_object_set_resident_page(vm_object_t* obj, uint64_t page_index, uint64_t phys);
+/* Вставить страницу, если место pindex ещё свободно; иначе вернуть занявшую.
+ * Проверка и вставка — одна критическая секция: два отказа на одном
+ * разделяемом объекте не могут вставить две разные страницы. Возвращает
+ * физадрес страницы, резидентной по pindex после вызова (свою или чужую);
+ * 0 — ошибка. Замещений не бывает: страница объекта по данному pindex
+ * неизменна до смерти объекта. */
+uint64_t vm_object_insert_or_get_page(vm_object_t* obj, uint64_t page_index, uint64_t phys);
 uint32_t vm_object_resident_count(vm_object_t* obj);
 
 #endif /* _RODNIX_VM_OBJECT_H */

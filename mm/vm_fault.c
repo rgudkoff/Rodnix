@@ -1,28 +1,146 @@
+/**
+ * @file vm_fault.c
+ * @brief Путь отказа страницы поверх vm_map / vm_object / vm_page / pmap.
+ *
+ * Три фазы, и у каждой свой владелец:
+ *
+ *   1. Валидация — под замком карты (его берёт vm_fault_handle): запись
+ *      существует, доступ разрешён.
+ *   2. Разрешение страницы — объект отвечает под своим замком; наполнение
+ *      от пейджера (ввод-вывод!) выполняется без единого спинлока, до
+ *      публикации страницы в индексе.
+ *   3. Отображение — pmap под своим замком.
+ *
+ * Гонка, которую закрывает эта форма: два отказа на одной странице одного
+ * разделяемого объекта из двух разных карт. Замки карт разные, поэтому оба
+ * доходят до объекта; проверка и вставка в объекте — одна критическая
+ * секция (vm_object_insert_or_get_page), так что второй не вставляет свою
+ * страницу, а принимает чужую. Раньше здесь были get и set по отдельности,
+ * и два процесса, загрузившие один ELF, могли получить две разные копии
+ * одной страницы файла.
+ */
+
 #include "vm_fault.h"
 #include "vm_map.h"
 #include "vm_pager.h"
 #include "vm_page.h"
 #include "pmap.h"
 #include "../kernel/arch/config.h"
-#include "../include/console.h"
 #include "../include/common.h"
 #include "../include/error.h"
 
-static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
+static vm_fault_stats_t g_fault_stats;
+
+#define FAULT_COUNT(field) \
+    __atomic_fetch_add(&g_fault_stats.field, 1ull, __ATOMIC_RELAXED)
+
+void vm_fault_get_stats(vm_fault_stats_t* out)
 {
-    if (!e) {
-        return 0;
+    if (!out) {
+        return;
     }
-    if (!e->object) {
-        return 0;
-    }
-    if ((e->flags & VM_MAP_F_PRIVATE) == 0) {
-        return 0;
-    }
-    return 1;
+    out->faults     = __atomic_load_n(&g_fault_stats.faults, __ATOMIC_RELAXED);
+    out->zero_fill  = __atomic_load_n(&g_fault_stats.zero_fill, __ATOMIC_RELAXED);
+    out->pager_read = __atomic_load_n(&g_fault_stats.pager_read, __ATOMIC_RELAXED);
+    out->cow_copy   = __atomic_load_n(&g_fault_stats.cow_copy, __ATOMIC_RELAXED);
+    out->adopted    = __atomic_load_n(&g_fault_stats.adopted, __ATOMIC_RELAXED);
+    out->spurious   = __atomic_load_n(&g_fault_stats.spurious, __ATOMIC_RELAXED);
 }
 
-static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64_t rip){
+static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
+{
+    return e && e->object && (e->flags & VM_MAP_F_PRIVATE) != 0;
+}
+
+/*
+ * Фаза «копия при записи»: у отображения уже есть страница, но она общая.
+ * Пишущий получает собственную копию; общая теряет одну ссылку.
+ */
+static int vm_fault_cow_copy(task_t* task, const vm_map_entry_t* e,
+                             uint64_t va, uint64_t shared_phys)
+{
+    uint64_t new_phys = vm_pager_alloc_zero_page();
+    if (!new_phys) {
+        return RDNX_E_NOMEM;
+    }
+    memcpy(ARCH_PHYS_TO_VIRT(new_phys), ARCH_PHYS_TO_VIRT(shared_phys),
+           VM_PAGE_SIZE);
+    (void)pmap_enter(task->address_space, va, new_phys, e->prot,
+                     PMAP_ENTER_USER);
+    (void)vm_page_drop(shared_phys); /* ссылка этого отображения на общую */
+    FAULT_COUNT(cow_copy);
+    return RDNX_OK;
+}
+
+/*
+ * Фаза «страницы нет»: найти её в объекте или создать.
+ *
+ * Приватная запись в файловое отображение — единственный случай, когда
+ * страница остаётся личной и в объект не публикуется: пишущий обязан
+ * получить свой экземпляр, а не править общий кэш файла.
+ */
+static int vm_fault_page_absent(task_t* task, vm_map_entry_t* e,
+                                uint64_t va, int is_write)
+{
+    uint64_t phys = 0;
+    uint64_t pindex = 0;
+    int private_write = is_write && vm_entry_uses_private_object_cow(e);
+
+    if (e->object) {
+        pindex = (e->object_offset + (va - e->start)) / VM_PAGE_SIZE;
+        phys = vm_object_get_resident_page(e->object, pindex);
+        if (phys) {
+            /* Индекс объекта — только на пополнение: страница не может
+             * покинуть его, пока запись держит ссылку на объект, поэтому
+             * взять ссылку после поиска безопасно. */
+            (void)vm_page_hold(phys);
+        }
+    }
+
+    if (!phys) {
+        phys = vm_pager_alloc_zero_page();
+        if (!phys) {
+            return RDNX_E_NOMEM;
+        }
+        if (e->object && e->object->type == VM_OBJECT_FILE) {
+            vm_pager_fill_page(e->object,
+                               e->object_offset + (va - e->start), phys);
+            FAULT_COUNT(pager_read);
+        } else {
+            FAULT_COUNT(zero_fill);
+        }
+
+        if (e->object && !private_write) {
+            uint64_t winner =
+                vm_object_insert_or_get_page(e->object, pindex, phys);
+            if (winner != 0 && winner != phys) {
+                /* Гонка вставки проиграна: чужая страница уже в объекте.
+                 * Свою — отдать, чужую — держать за это отображение. Оба
+                 * отображения показывают на одну страницу, как и положено
+                 * разделяемому объекту. */
+                (void)vm_page_hold(winner);
+                (void)vm_page_drop(phys);
+                phys = winner;
+                FAULT_COUNT(adopted);
+            }
+        }
+    }
+
+    uint32_t eff_prot = e->prot;
+    if (!is_write && vm_entry_uses_private_object_cow(e) &&
+        (eff_prot & VM_PROT_WRITE)) {
+        /* Приватная файловая страница обязана снова отказать на первой
+         * записи: пишущий получит свою анонимную копию, а не будет править
+         * общую страницу объекта. */
+        eff_prot &= ~VM_PROT_WRITE;
+    }
+    return pmap_enter(task->address_space, va, phys, eff_prot,
+                      PMAP_ENTER_USER);
+}
+
+static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr,
+                                  uint64_t err_code, uint64_t rip)
+{
     (void)rip;
     if (!task || !task->vm_map || !task->address_space) {
         return RDNX_E_NOTFOUND;
@@ -55,87 +173,22 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr, uint64_t er
 
     if (current_phys != 0 && is_write &&
         ((e->flags & VM_MAP_F_COW) || vm_entry_uses_private_object_cow(e))) {
-        uint64_t new_phys = vm_pager_alloc_zero_page();
-        if (!new_phys) {
-            return RDNX_E_NOMEM;
-        }
-        memcpy(ARCH_PHYS_TO_VIRT(new_phys), ARCH_PHYS_TO_VIRT(current_phys), VM_PAGE_SIZE);
-        (void)pmap_enter(task->address_space, va, new_phys, e->prot,
-                         PMAP_ENTER_USER);
-        (void)vm_page_drop(current_phys); /* Drop this mapping's old COW reference. */
-        return RDNX_OK;
+        return vm_fault_cow_copy(task, e, va, current_phys);
     }
 
     if (current_phys == 0) {
-        uint64_t phys = 0;
-        uint64_t obj_page_idx = 0;
-        int has_obj_page = 0;
-
-        if (e->object) {
-            obj_page_idx = (e->object_offset + (va - e->start)) / VM_PAGE_SIZE;
-            phys = vm_object_get_resident_page(e->object, obj_page_idx);
-            if (phys) {
-                has_obj_page = 1;
-                (void)vm_page_hold(phys); /* New mapping reference. */
-            }
-        }
-        if (!has_obj_page) {
-            phys = vm_pager_alloc_zero_page();
-            if (!phys) {
-                return RDNX_E_NOMEM;
-            }
-            if (e->object && e->object->type == VM_OBJECT_FILE && e->object->pager_private) {
-                vm_file_backing_t* fb = (vm_file_backing_t*)e->object->pager_private;
-                uint64_t rel = va - e->start;
-                uint64_t off = fb->file_offset + e->object_offset + rel;
-                if (fb->read_page) {
-                    /* Demand-paging: load one page from the backing store. */
-                    (void)fb->read_page(fb->pager_priv, off, ARCH_PHYS_TO_VIRT(phys));
-                } else if (fb->data && fb->size > 0 && off < fb->size) {
-                    uint64_t avail = fb->size - off;
-                    uint64_t copy = (avail > VM_PAGE_SIZE) ? VM_PAGE_SIZE : avail;
-                    memcpy(ARCH_PHYS_TO_VIRT(phys), fb->data + off, (size_t)copy);
-                }
-            }
-            if (e->object && !(is_write && vm_entry_uses_private_object_cow(e))) {
-                (void)vm_object_set_resident_page(e->object, obj_page_idx, phys);
-            }
-        }
-        uint32_t eff_prot = e->prot;
-        if (!is_write && vm_entry_uses_private_object_cow(e) && (eff_prot & VM_PROT_WRITE)) {
-            /* Private file-backed pages must fault again on first write so the
-             * writing task receives its own anonymous copy instead of mutating
-             * the shared vm_object resident page. */
-            eff_prot &= ~VM_PROT_WRITE;
-        }
-        int rc = pmap_enter(task->address_space, va, phys, eff_prot,
-                            PMAP_ENTER_USER);
-        if (rc != RDNX_OK) {
-            return rc;
-        }
-        return RDNX_OK;
+        return vm_fault_page_absent(task, e, va, is_write);
     }
 
     /*
-     * A mapping is present and the access is one the entry permits -- the
-     * protection checks above already rejected the cases where it is not,
-     * and the copy-on-write case is handled higher up. So the fault has
-     * already been satisfied by somebody else between the processor taking
-     * it and this handler getting to look.
-     *
-     * That is an ordinary outcome on more than one processor, not an error:
-     * two threads touch the same page, both fault, the first installs the
-     * mapping and the second arrives to find the work done. Reporting it as
-     * a failure kills a process for having been second.
-     *
-     * The kernel-wide lock makes it more likely rather than less. The second
-     * faulter blocks on Giant, so by the time it runs the first has finished
-     * -- which is why this only started showing up once application
-     * processors began executing threads.
-     *
-     * Returning success retries the instruction, which now finds its
-     * translation.
+     * Отображение стоит, и доступ записью разрешён — значит, отказ уже
+     * решён кем-то между тем, как процессор его взял, и тем, как этот
+     * обработчик посмотрел. На нескольких процессорах это обычный исход,
+     * а не ошибка: двое трогают страницу, оба отказывают, первый ставит
+     * отображение, второй приходит к готовому. Успех повторяет
+     * инструкцию, которая теперь находит трансляцию.
      */
+    FAULT_COUNT(spurious);
     return RDNX_OK;
 }
 
@@ -143,6 +196,11 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
 {
     if (!task || !task->vm_map) {
         return RDNX_E_NOTFOUND;
+    }
+    FAULT_COUNT(faults);
+    thread_t* self = thread_get_current();
+    if (self) {
+        self->fault_count++;
     }
     /* Замок карты — спящий, и это здесь главное: пейджер под отказом читает
      * с диска, а спать на спинлоке с выключенной преемпцией мы уже мерили.
@@ -153,5 +211,3 @@ int vm_fault_handle(task_t* task, uint64_t fault_addr, uint64_t err_code, uint64
     vm_map_unlock(map);
     return _r;
 }
-
-
