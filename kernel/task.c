@@ -76,7 +76,8 @@ static spinlock_t task_registry_spin;
  */
 uint32_t task_debug_thread_snapshot(uint64_t* tid, uint64_t* task_id,
                                     int* state, uint64_t* waitq,
-                                    uint64_t* rip, uint32_t max)
+                                    uint64_t* rip, uint64_t* tmo,
+                                    uint32_t max)
 {
     uint64_t f = spinlock_lock_irqsave(&task_registry_spin);
     uint32_t n = 0;
@@ -98,6 +99,8 @@ uint32_t task_debug_thread_snapshot(uint64_t* tid, uint64_t* task_id,
                     (const interrupt_frame_t*)(uintptr_t)th->context.stack_pointer;
                 rip[n] = fr->rip;
             }
+            /* Кодировка таймаута: 0 — не армирован; иначе дедлайн в нс. */
+            tmo[n] = th->wait_timeout_armed ? th->wait_deadline_ns : 0;
             n++;
         }
     }
@@ -299,6 +302,7 @@ task_t* task_create(void)
      * умолчанию неприкосновенны» превратило бы возврат памяти в но-оп. */
     task->vm_class_default = 2; /* VM_CLASS_NORMAL; численно, чтобы task.c не тянул mm/ */
     task->mem_band = (uint8_t)MEMBAND_FOREGROUND;
+    task->doomed = 0;
     task->tls_fs_base = 0;
     task->proc = NULL;
     task->main_thread = NULL;
@@ -697,4 +701,35 @@ void task_for_each(task_iter_fn_t fn, void* ctx)
         fn(it, ctx);
     }
     task_registry_unlock(old);
+}
+
+/* Именно-эта-задача: полное состояние её потоков, для момента, когда OOM
+ * констатирует «жертва пережила окно». Печатает под замком реестра. */
+void task_debug_dump_task(uint64_t task_id)
+{
+    uint64_t f = spinlock_lock_irqsave(&task_registry_spin);
+    for (task_t* t = all_tasks_head; t; t = t->next_all) {
+        if (t->task_id != task_id) {
+            continue;
+        }
+        thread_t* th;
+        TAILQ_FOREACH(th, &t->threads, task_link) {
+            uint64_t rip = 0;
+            if (th != thread_get_current() && th->context.stack_pointer) {
+                rip = ((const interrupt_frame_t*)(uintptr_t)
+                           th->context.stack_pointer)->rip;
+            }
+            kprintf("[OOMDBG] tid=%llu st=%x wq=%s armed=%u dl=%llu oncpu=%u rip=%llx\n",
+                    (unsigned long long)th->thread_id,
+                    (unsigned)th->state,
+                    th->waitq_owner ? (th->waitq_owner->name ?
+                                       th->waitq_owner->name : "?") : "-",
+                    (unsigned)th->wait_timeout_armed,
+                    (unsigned long long)th->wait_deadline_ns,
+                    (unsigned)th->on_cpu,
+                    (unsigned long long)rip);
+        }
+        break;
+    }
+    spinlock_unlock_irqrestore(&task_registry_spin, f);
 }

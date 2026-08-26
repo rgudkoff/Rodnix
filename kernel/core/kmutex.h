@@ -70,4 +70,8 @@ bool kmutex_trylock(kmutex_t* m);
  * "caller must hold". */
 bool kmutex_owned(const kmutex_t* m);
 
+/* Диагностика: кто держит и сколько ждут. Снимок без замка — числа
+ * мгновенно устаревают, для сердцебиения этого достаточно. */
+void kmutex_debug(kmutex_t* m, uint64_t* owner_tid, uint32_t* waiters);
+
 #endif /* _RODNIX_CORE_KMUTEX_H */

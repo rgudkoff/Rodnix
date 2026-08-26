@@ -420,8 +420,15 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
                         (unsigned long long)cr2,
                         (unsigned long long)regs->err_code, frc,
                         (unsigned long long)pmm_free_pages_count());
+                /* Умереть самому, безусловно. Просьба к force-пути здесь
+                 * тихо ничего не делала для задачи с уже выставленным
+                 * exited (жертва OOM после истечения окна) — и инструкция
+                 * перезапускалась в вечный цикл отказов без единого
+                 * сисколла: чекпойнт был недостижим, поток неубиваем. Мы —
+                 * и есть тот поток; штатный выход отдаёт всё, что держит. */
                 giant_lock();
-                (void)unix_proc_oom_signal(task->task_id, 1);
+                unix_proc_exit(128u + 9u /* SIGKILL */);
+                /* не возвращается; страховка на случай возврата: */
                 giant_unlock();
                 return scheduler_switch_from_irq(regs);
             }

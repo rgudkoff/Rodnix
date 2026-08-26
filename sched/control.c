@@ -5,6 +5,7 @@
 #include "../trace/tracev2.h"
 #include "../trace/bootlog.h"
 #include "../include/debug.h"
+#include "../include/console.h"
 #include "../../include/error.h"
 
 static void scheduler_exit_wake_joiner(thread_t* exiting)

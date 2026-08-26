@@ -30,4 +30,13 @@ uint32_t vm_reclaim_run(uint32_t target);
  */
 void vm_task_mem_account(task_t* task, uint64_t* charged, uint64_t* reclaimable);
 
+/*
+ * То же, но без блокировки: занятая карта — отказ (0). Единственный
+ * законный вход для OOM: убийца зовётся из отказа, уже держащего замок
+ * СВОЕЙ карты, и блокирующий учёт чужой карты давал AB-BA-дедлок — два
+ * просителя в отказе считали карты друг друга навстречу и висли на
+ * kmutex нетаймированно. Возвращает 1, если учёт снят.
+ */
+int vm_task_mem_account_try(task_t* task, uint64_t* charged, uint64_t* reclaimable);
+
 #endif /* _RODNIX_VM_RECLAIM_H */

@@ -4,6 +4,7 @@
 #include "../kernel/fabric/spin.h"
 #include "../../arch/gdt.h"
 #include "../../../include/debug.h"
+#include "../include/console.h"
 
 void scheduler_update_tss(thread_t* thread)
 {

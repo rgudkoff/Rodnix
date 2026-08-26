@@ -83,6 +83,10 @@ int oom_kill_step(void)
         }
         kprintf("[OOM] window expired: task=%llu killed (band=%u)\n",
                 (unsigned long long)g_oom_victim_id, (unsigned)v->mem_band);
+        {
+            extern void task_debug_dump_task(uint64_t);
+            task_debug_dump_task(g_oom_victim_id);
+        }
         (void)unix_proc_oom_signal(g_oom_victim_id, 1);
         g_oom_victim_id = 0;
         return 1;
@@ -106,8 +110,13 @@ int oom_kill_step(void)
         }
     }
 
-    /* Нижняя полоса, внутри — по освобождаемому. */
+    /* Нижняя полоса, внутри — по освобождаемому. Учёт — строго trylock:
+     * занятая карта означает «кандидат сам стоит в отказе», и блокироваться
+     * на нём — это AB-BA-дедлок двух просителей, считающих карты друг
+     * друга. Если ни один учёт не снялся, выбор делается по одной полосе,
+     * и об этом говорится вслух. */
     int best = -1;
+    int best_unaccounted = -1;
     uint64_t best_rc = 0;
     for (uint8_t band = (uint8_t)MEMBAND_BACKGROUND;
          band < (uint8_t)MEMBAND_CRITICAL && best < 0; band++) {
@@ -119,13 +128,26 @@ int oom_kill_step(void)
             if (!t) {
                 continue;
             }
+            if (best_unaccounted < 0) {
+                best_unaccounted = (int)i;
+            }
             uint64_t ch = 0, rc = 0;
-            vm_task_mem_account(t, &ch, &rc);
+            if (!vm_task_mem_account_try(t, &ch, &rc)) {
+                continue;
+            }
             if (best < 0 || rc > best_rc) {
                 best = (int)i;
                 best_rc = rc;
             }
         }
+        if (best < 0 && best_unaccounted >= 0) {
+            break;
+        }
+    }
+    if (best < 0 && best_unaccounted >= 0) {
+        kprintf("[OOM] accounts unavailable (maps busy): choosing by band alone\n");
+        best = best_unaccounted;
+        best_rc = 0;
     }
     if (best < 0) {
         return 0;

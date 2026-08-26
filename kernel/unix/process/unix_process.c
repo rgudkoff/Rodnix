@@ -160,30 +160,6 @@ static int unix_signal_may_send(const task_t* sender, const task_t* target)
     return task_proc(sender)->uid == task_proc(target)->uid;
 }
 
-static void unix_force_remove_ready_thread(thread_t* thread)
-{
-    /* Под замком очереди, чужими руками не лазаем: правка списка без
-     * rq_lock рвалась тиком посреди TAILQ_REMOVE. */
-    scheduler_ready_remove(thread);
-}
-
-static void unix_force_clear_tid(thread_t* thread)
-{
-    if (!thread || !thread->clear_tid_ptr) {
-        return;
-    }
-
-    uint64_t* tidptr = thread->clear_tid_ptr;
-    if (unix_user_range_ok(tidptr, sizeof(uint32_t))) {
-        *(uint32_t*)(uintptr_t)tidptr = 0;
-        extern uint64_t unix_proc_futex(uint64_t, uint64_t, uint64_t,
-                                        uint64_t, uint64_t, uint64_t);
-        unix_proc_futex((uint64_t)(uintptr_t)tidptr,
-                        1 /* FUTEX_WAKE */, 1, 0, 0, 0);
-    }
-    thread->clear_tid_ptr = NULL;
-}
-
 static void unix_proc_force_terminate_task(task_t* target, int sig)
 {
     thread_t* thread;
@@ -196,7 +172,9 @@ static void unix_proc_force_terminate_task(task_t* target, int sig)
     unix_proc_close_fds(target);
     proc->exit_code = 128 + sig;
     proc->exited = 1;
-    proc->sig_pending = 0;
+    target->doomed = 1;
+    /* Только фатальный сигнал: смерть придёт на чекпойнте. */
+    proc->sig_pending = (1u << (uint32_t)sig);
     proc->sig_in_handler = 0;
     unix_proc_notify_waiters(target->parent_task_id);
     if (target->parent_task_id) {
@@ -206,20 +184,29 @@ static void unix_proc_force_terminate_task(task_t* target, int sig)
         }
     }
 
+    /*
+     * Никакой асинхронной пометки DEAD. Поток, бегущий в ядре, может
+     * держать спящий замок — Giant при перезахвате, замок ext2 через весь
+     * дисковый ввод-вывод, — и пометить его мёртвым со стороны значит
+     * оставить замок трупу: каждый следующий вход в сисколл повисал
+     * нетаймированным сном на очереди kmutex, и вся система вставала.
+     * Найдено по подписи «все спят с armed=0, timed=0» после истечения
+     * OOM-окна — и стало частым ровно тогда, когда замок ext2 стал спящим
+     * и окно «жертва держит kmutex» выросло с микросекунд до миллисекунд.
+     *
+     * Смерть — только в собственном контексте потока, на чекпойнте
+     * (вход в сисколл, ast), где выходной путь отдаёт всё, что держал.
+     * Спящих будим, чтобы они до чекпойнта дошли; ложное пробуждение
+     * циклы ожидания переживают по устройству.
+     */
     TAILQ_FOREACH(thread, &target->threads, task_link) {
         if (thread_is_dead(thread)) {
             continue;
         }
         if (thread->waitq_owner) {
-            (void)waitq_remove(thread->waitq_owner, thread);
+            waitq_wake_thread(thread->waitq_owner, thread);
         }
-        unix_force_remove_ready_thread(thread);
-        unix_force_clear_tid(thread);
-        scheduler_thread_set_state(thread, THREAD_STATE_DEAD, "unix_force_signal");
-        scheduler_reap_enqueue(thread);
     }
-
-    scheduler_task_set_state(target, TASK_STATE_ZOMBIE, "unix_force_signal");
 }
 
 void unix_proc_notify_waiters(uint64_t parent_task_id)

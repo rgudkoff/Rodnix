@@ -172,3 +172,14 @@ bool kmutex_owned(const kmutex_t* m)
     thread_t* self = thread_get_current();
     return self != NULL && m->owner == self;
 }
+
+void kmutex_debug(kmutex_t* m, uint64_t* owner_tid, uint32_t* waiters)
+{
+    if (owner_tid) {
+        thread_t* o = m ? m->owner : NULL;
+        *owner_tid = o ? o->thread_id : 0;
+    }
+    if (waiters) {
+        *waiters = m ? waitq_count(&m->waiters) : 0;
+    }
+}

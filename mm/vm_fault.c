@@ -57,13 +57,20 @@ void vm_fault_get_stats(vm_fault_stats_t* out)
  * Ноль — только когда сделано всё: либо жертва — сам проситель (ему положен
  * честный отказ), либо освобождать больше нечего.
  */
-static uint64_t vm_fault_alloc_page(void)
+static uint64_t vm_fault_alloc_page(task_t* task)
 {
     /* Терпение соразмерно жнецу: память жертвы возвращается только после
      * того, как жнец переработает её потоки, а он берёт мёртвых не раньше
      * REAP_GRACE_TICKS — при 100 Гц это больше секунды. Сдаваться раньше —
      * убивать просителя за то, что сборка мусора не мгновенна. */
     for (int attempt = 0; attempt < 60; attempt++) {
+        if (task && task->doomed) {
+            /* Задача приговорена: цикл нехватки не имеет права пережить
+             * приговор. Немедленный отказ — и поток умрёт штатным путём,
+             * отпустив замок карты; иначе жертва OOM крутилась в отказе
+             * неубиваемой, а убийца выбирал её снова и снова. */
+            return 0;
+        }
         uint64_t phys = vm_pager_alloc_zero_page();
         if (phys) {
             return phys;
@@ -92,6 +99,9 @@ static int vm_fault_enter(task_t* task, uint64_t va, uint64_t phys,
 {
     int rc = RDNX_E_GENERIC;
     for (int attempt = 0; attempt < 60; attempt++) {
+        if (task && task->doomed) {
+            return RDNX_E_NOMEM;
+        }
         rc = pmap_enter(task->address_space, va, phys, prot, flags);
         if (rc == RDNX_OK) {
             return rc;
@@ -119,7 +129,7 @@ static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
 static int vm_fault_cow_copy(task_t* task, const vm_map_entry_t* e,
                              uint64_t va, uint64_t shared_phys)
 {
-    uint64_t new_phys = vm_fault_alloc_page();
+    uint64_t new_phys = vm_fault_alloc_page(task);
     if (!new_phys) {
         return RDNX_E_NOMEM;
     }
@@ -162,7 +172,7 @@ static int vm_fault_page_absent(task_t* task, vm_map_entry_t* e,
     }
 
     if (!phys) {
-        phys = vm_fault_alloc_page();
+        phys = vm_fault_alloc_page(task);
         if (!phys) {
             return RDNX_E_NOMEM;
         }

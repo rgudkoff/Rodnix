@@ -51,10 +51,11 @@ uint32_t vm_reclaim_run(uint32_t target)
     return freed;
 }
 
+static void vm_task_mem_account_locked(task_t* task, vm_map_t* map,
+                                       uint64_t* charged, uint64_t* reclaimable);
+
 void vm_task_mem_account(task_t* task, uint64_t* charged, uint64_t* reclaimable)
 {
-    uint64_t ch = 0;
-    uint64_t rc = 0;
     if (charged) {
         *charged = 0;
     }
@@ -66,6 +67,35 @@ void vm_task_mem_account(task_t* task, uint64_t* charged, uint64_t* reclaimable)
     }
     vm_map_t* map = (vm_map_t*)task->vm_map;
     vm_map_lock(map);
+    vm_task_mem_account_locked(task, map, charged, reclaimable);
+    vm_map_unlock(map);
+}
+
+int vm_task_mem_account_try(task_t* task, uint64_t* charged, uint64_t* reclaimable)
+{
+    if (charged) {
+        *charged = 0;
+    }
+    if (reclaimable) {
+        *reclaimable = 0;
+    }
+    if (!task || !task->vm_map || !task->address_space) {
+        return 0;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    if (!vm_map_trylock(map)) {
+        return 0;
+    }
+    vm_task_mem_account_locked(task, map, charged, reclaimable);
+    vm_map_unlock(map);
+    return 1;
+}
+
+static void vm_task_mem_account_locked(task_t* task, vm_map_t* map,
+                                       uint64_t* charged, uint64_t* reclaimable)
+{
+    uint64_t ch = 0;
+    uint64_t rc = 0;
     vm_map_entry_t* e;
     TAILQ_FOREACH(e, &map->entries, link) {
         int sole_object_holder =
@@ -91,7 +121,6 @@ void vm_task_mem_account(task_t* task, uint64_t* charged, uint64_t* reclaimable)
             }
         }
     }
-    vm_map_unlock(map);
     if (charged) {
         *charged = ch;
     }

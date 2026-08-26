@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "../kernel/core/ktime.h"
+#include "../kernel/core/kmutex.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/core/cpu.h"
 #include "../kernel/fabric/fabric.h"
@@ -143,8 +144,9 @@ static void scheduler_heartbeat(void)
             (unsigned)p->sched_ticks_until_preempt,
             (unsigned)ready_queue_len_locked(),
             (unsigned long long)p->hb_ticks);
-    kprintf("[HB]   switches=%llu queued:",
-            (unsigned long long)stats.total_switches);
+    kprintf("[HB]   switches=%llu sc(timed=%u) queued:",
+            (unsigned long long)stats.total_switches,
+            (unsigned)waitq_timed_count());
     for (uint32_t i = 0; i < nq; i++) {
         kprintf(" tid=%llu/state=%d/bucket=%u",
                 (unsigned long long)ids[i], sts[i], (unsigned)bks[i]);
@@ -153,17 +155,24 @@ static void scheduler_heartbeat(void)
 
     if (p->index == 0) {
         extern uint32_t task_debug_thread_snapshot(uint64_t*, uint64_t*, int*,
-                                                   uint64_t*, uint64_t*, uint32_t);
-        uint64_t tids[24], tsks[24], wqs[24], rips[24];
+                                                   uint64_t*, uint64_t*,
+                                                   uint64_t*, uint32_t);
+        uint64_t tids[24], tsks[24], wqs[24], rips[24], tmos[24];
         int sts[24];
-        uint32_t n = task_debug_thread_snapshot(tids, tsks, sts, wqs, rips, 24);
+        uint32_t n = task_debug_thread_snapshot(tids, tsks, sts, wqs, rips,
+                                                tmos, 24);
+        uint64_t now_ns = ktime_ns();
         for (uint32_t i = 0; i < n; i++) {
-            kprintf("[TH] tid=%llu task=%llu state=%d waitq=%s rip=%llx\n",
+            long long dl_ms = tmos[i]
+                ? (long long)((int64_t)(tmos[i] - now_ns) / 1000000)
+                : -1;
+            kprintf("[TH] tid=%llu task=%llu state=%d waitq=%s rip=%llx tmo=%lldms\n",
                     (unsigned long long)tids[i],
                     (unsigned long long)tsks[i],
                     sts[i],
                     wqs[i] ? "yes" : "NONE",
-                    (unsigned long long)rips[i]);
+                    (unsigned long long)rips[i],
+                    dl_ms);
         }
     }
 }

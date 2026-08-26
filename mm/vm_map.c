@@ -33,6 +33,11 @@ void vm_map_lock(vm_map_t* map)
     kmutex_lock(&map->lock);
 }
 
+int vm_map_trylock(vm_map_t* map)
+{
+    return kmutex_trylock(&map->lock) ? 1 : 0;
+}
+
 void vm_map_unlock(vm_map_t* map)
 {
     kmutex_unlock(&map->lock);
