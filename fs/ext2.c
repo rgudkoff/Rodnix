@@ -7,6 +7,7 @@
  */
 
 #include "ext2.h"
+#include "../kernel/core/kmutex.h"
 #include "vfs.h"
 #include "../lib/heap.h"
 #include "../kernel/kmod.h"
@@ -120,17 +121,26 @@ typedef struct {
 } ext2_mount_ctx_t;
 
 /*
- * LOCKING: g_ext2_rw_lock (spinlock_t)
+ * LOCKING: g_ext2_rw_lock (kmutex_t — спящий, не спинлок)
  *   Protects: g_ext2_live (all fields), g_ext2_live_ready,
  *             ext2_alloc_block, ext2_free_block, ext2_sync_super_and_gdt,
  *             ext2_writeback_file, ext2_resize_file.
- *   Lock order: g_ext2_rw_lock -> (no inner locks held by ext2 code).
+ *   Lock order: Giant -> g_ext2_rw_lock -> (no inner locks held by ext2).
  *   Callers of ext2_alloc_block / ext2_free_block / ext2_trim_inode_blocks
  *   must already hold g_ext2_rw_lock (caller-holds convention).
+ *
+ * Почему спящий: под этим замком живёт блочный ввод-вывод — PIO-полинг
+ * диска, миллисекунды. Спинлок превращал каждую такую операцию в окно с
+ * выключенной преемпцией на 2–4.4 мс (худшие в системе по измерителю
+ * гигиены — в три раза больше аудио-буфера в 1.33 мс). Ожидающий kmutex
+ * спит, держатель преемптивен, процессор занят чужой работой. Все входы —
+ * сисколлы в контексте потока; из прерываний ext2 не трогает никто.
+ * Ре-захват держателем — паника kmutex, и это желанная сетка для
+ * соглашения «внутренние помощники замок не берут».
  */
 static ext2_mount_ctx_t g_ext2_live;
 static int g_ext2_live_ready = 0;
-static spinlock_t g_ext2_rw_lock;
+static kmutex_t g_ext2_rw_lock;
 static const ext2_fs_caps_t g_ext2_caps = {
     .write_in_place = 1,
     .write_extend = 1,
@@ -1278,44 +1288,44 @@ static int ext2_build_dir(ext2_mount_ctx_t* ctx,
 
 int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t len, size_t final_size)
 {
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (!node || !node->inode || !data) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_INVALID;
     }
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (len == 0) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_OK;
     }
 
     ext2_inode_t ino;
     int irc = ext2_read_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
     if (irc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return irc;
     }
     if (!ext2_is_reg(&ino)) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint64_t disk_size = ext2_inode_size_bytes(&ino);
     if ((uint64_t)off + (uint64_t)len > (uint64_t)final_size) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint8_t* blk = (uint8_t*)kmalloc(g_ext2_live.block_size);
     if (!blk) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_NOMEM;
     }
 
@@ -1338,7 +1348,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
                                                 &ino, lbn, 1, &pblk, &inode_dirty);
         if (brc != RDNX_OK || pblk == 0) {
             kfree(blk);
-            spinlock_unlock(&g_ext2_rw_lock);
+            kmutex_unlock(&g_ext2_rw_lock);
             return RDNX_E_UNSUPPORTED;
         }
 
@@ -1348,7 +1358,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
             brc = ext2_read_block(&g_ext2_live, pblk, blk);
             if (brc != RDNX_OK) {
                 kfree(blk);
-                spinlock_unlock(&g_ext2_rw_lock);
+                kmutex_unlock(&g_ext2_rw_lock);
                 return brc;
             }
         }
@@ -1357,7 +1367,7 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
                                blk, g_ext2_live.block_size);
         if (brc != RDNX_OK) {
             kfree(blk);
-            spinlock_unlock(&g_ext2_rw_lock);
+            kmutex_unlock(&g_ext2_rw_lock);
             return brc;
         }
         done += chunk;
@@ -1372,13 +1382,13 @@ int ext2_writeback_file(vfs_node_t* node, size_t off, const void* data, size_t l
         int wrc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
         if (wrc != RDNX_OK) {
             kfree(blk);
-            spinlock_unlock(&g_ext2_rw_lock);
+            kmutex_unlock(&g_ext2_rw_lock);
             return wrc;
         }
     }
 
     kfree(blk);
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     return RDNX_OK;
 }
 
@@ -1393,34 +1403,34 @@ int ext2_query_caps(ext2_fs_caps_t* out_caps)
 
 int ext2_resize_file(vfs_node_t* node, size_t new_size)
 {
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (!node || !node->inode) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_INVALID;
     }
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     ext2_inode_t ino;
     int irc = ext2_read_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
     if (irc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return irc;
     }
     if (!ext2_is_reg(&ino)) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
     uint64_t disk_size = ext2_inode_size_bytes(&ino);
     if ((uint64_t)new_size == disk_size) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_OK;
     }
 
@@ -1441,7 +1451,7 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
                     kprintf("[EXT2] resize rollback failed: alloc_err=%d trim_err=%d ino=%u\n",
                             rc, trim_rc, (uint32_t)node->inode->fs_ino);
                 }
-                spinlock_unlock(&g_ext2_rw_lock);
+                kmutex_unlock(&g_ext2_rw_lock);
                 return (rc != RDNX_OK) ? rc : RDNX_E_UNSUPPORTED;
             }
         }
@@ -1452,7 +1462,7 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
         uint32_t alloc_blocks = ext2_count_allocated_blocks(&g_ext2_live, &ino);
         ino.blocks = alloc_blocks * sectors_per_block;
         int rc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return rc;
     } else {
         /* Crash-safer shrink: size first, then free tail blocks. */
@@ -1460,11 +1470,11 @@ int ext2_resize_file(vfs_node_t* node, size_t new_size)
         ino.size_high = (uint32_t)(new_size >> 32);
         int rc = ext2_write_inode(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino);
         if (rc != RDNX_OK) {
-            spinlock_unlock(&g_ext2_rw_lock);
+            kmutex_unlock(&g_ext2_rw_lock);
             return rc;
         }
         rc = ext2_trim_inode_blocks(&g_ext2_live, (uint32_t)node->inode->fs_ino, &ino, new_blocks);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return rc;
     }
 }
@@ -1854,15 +1864,15 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
         return RDNX_E_NOMEM;
     }
 
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_UNSUPPORTED;
     }
     if (parent_node->inode->fs_tag != VFS_FS_TAG_EXT2 ||
         parent_node->inode->fs_ino == 0) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_UNSUPPORTED;
     }
@@ -1871,7 +1881,7 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
     ext2_inode_t parent_ino;
     int rc = ext2_read_inode(&g_ext2_live, parent_ino_num, &parent_ino);
     if (rc != RDNX_OK || !ext2_is_dir(&parent_ino)) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return (rc == RDNX_OK) ? RDNX_E_INVALID : rc;
     }
@@ -1879,7 +1889,7 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
     uint32_t new_ino_num = 0;
     rc = ext2_alloc_inode(&g_ext2_live, 0, &new_ino_num);
     if (rc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -1894,7 +1904,7 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
     rc = ext2_write_inode(&g_ext2_live, new_ino_num, &new_ino);
     if (rc != RDNX_OK) {
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 0);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -1903,7 +1913,7 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
                              new_ino_num, name, EXT2_FT_REG_FILE);
     if (rc != RDNX_OK) {
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 0);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -1913,12 +1923,12 @@ int ext2_create_file(vfs_node_t* parent_node, const char* name,
     if (vfs_fs_add_child(parent_node, node) != RDNX_OK) {
         (void)ext2_dir_remove_entry(&g_ext2_live, parent_ino_num, &parent_ino, name);
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 0);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_GENERIC;
     }
 
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     *out_node = node;
     return RDNX_OK;
 }
@@ -1936,15 +1946,15 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
         return RDNX_E_NOMEM;
     }
 
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_UNSUPPORTED;
     }
     if (parent_node->inode->fs_tag != VFS_FS_TAG_EXT2 ||
         parent_node->inode->fs_ino == 0) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_UNSUPPORTED;
     }
@@ -1953,7 +1963,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     ext2_inode_t parent_ino;
     int rc = ext2_read_inode(&g_ext2_live, parent_ino_num, &parent_ino);
     if (rc != RDNX_OK || !ext2_is_dir(&parent_ino)) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return (rc == RDNX_OK) ? RDNX_E_INVALID : rc;
     }
@@ -1961,7 +1971,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     uint32_t new_ino_num = 0;
     rc = ext2_alloc_inode(&g_ext2_live, 1, &new_ino_num);
     if (rc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -1971,7 +1981,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     rc = ext2_alloc_block(&g_ext2_live, &data_blk);
     if (rc != RDNX_OK) {
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -1980,7 +1990,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     if (!blk) {
         (void)ext2_free_block(&g_ext2_live, data_blk);
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_NOMEM;
     }
@@ -2010,7 +2020,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     if (rc != RDNX_OK) {
         (void)ext2_free_block(&g_ext2_live, data_blk);
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -2030,7 +2040,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
     if (rc != RDNX_OK) {
         (void)ext2_free_block(&g_ext2_live, data_blk);
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -2049,7 +2059,7 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
         (void)ext2_write_inode(&g_ext2_live, parent_ino_num, &parent_ino);
         (void)ext2_free_block(&g_ext2_live, data_blk);
         (void)ext2_free_inode(&g_ext2_live, new_ino_num, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return rc;
     }
@@ -2063,12 +2073,12 @@ int ext2_create_dir(vfs_node_t* parent_node, const char* name,
             (void)ext2_write_inode(&g_ext2_live, parent_ino_num, &parent_ino);
         }
         (void)ext2_free_inode_and_blocks(&g_ext2_live, new_ino_num, &new_ino, 1);
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         vfs_fs_free_node(node);
         return RDNX_E_GENERIC;
     }
 
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     *out_node = node;
     return RDNX_OK;
 }
@@ -2082,14 +2092,14 @@ int ext2_unlink(vfs_node_t* node)
         return RDNX_E_BUSY;
     }
 
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (!g_ext2_live_ready || !g_ext2_live.bdev || !g_ext2_live.gdt) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
     if (node->inode->fs_tag != VFS_FS_TAG_EXT2 || node->inode->fs_ino == 0 ||
         node->parent->inode->fs_tag != VFS_FS_TAG_EXT2) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return RDNX_E_UNSUPPORTED;
     }
 
@@ -2100,21 +2110,21 @@ int ext2_unlink(vfs_node_t* node)
     ext2_inode_t ino;
     int rc = ext2_read_inode(&g_ext2_live, ino_num, &ino);
     if (rc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return rc;
     }
 
     ext2_inode_t parent_ino;
     rc = ext2_read_inode(&g_ext2_live, parent_num, &parent_ino);
     if (rc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return rc;
     }
 
     rc = ext2_dir_remove_entry(&g_ext2_live, parent_num, &parent_ino,
                                 node->name);
     if (rc != RDNX_OK) {
-        spinlock_unlock(&g_ext2_rw_lock);
+        kmutex_unlock(&g_ext2_rw_lock);
         return rc;
     }
 
@@ -2133,7 +2143,7 @@ int ext2_unlink(vfs_node_t* node)
         (void)ext2_write_inode(&g_ext2_live, parent_num, &parent_ino);
     }
 
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     return rc;
 }
 
@@ -2221,13 +2231,13 @@ static int ext2_mount(const char* source, vfs_node_t** out_root)
     ext2_mark_node(root, EXT2_ROOT_INO, &root_ino);
     *out_root = root;
 
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     if (g_ext2_live_ready && g_ext2_live.gdt) {
         kfree(g_ext2_live.gdt);
     }
     g_ext2_live = ctx;
     g_ext2_live_ready = 1;
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     return RDNX_OK;
 }
 
@@ -2238,7 +2248,7 @@ int ext2_chmod(vfs_node_t* node, uint16_t mode)
     }
     uint32_t ino_num = (uint32_t)node->inode->fs_ino;
     ext2_inode_t ino;
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     int rc = ext2_read_inode(&g_ext2_live, ino_num, &ino);
     if (rc == RDNX_OK) {
         /* Preserve file-type nibble (top 4 bits), replace permission bits. */
@@ -2248,7 +2258,7 @@ int ext2_chmod(vfs_node_t* node, uint16_t mode)
             node->inode->mode = (uint16_t)(mode & 0x0FFFu);
         }
     }
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     return rc;
 }
 
@@ -2259,7 +2269,7 @@ int ext2_chown(vfs_node_t* node, uint32_t uid, uint32_t gid)
     }
     uint32_t ino_num = (uint32_t)node->inode->fs_ino;
     ext2_inode_t ino;
-    spinlock_lock(&g_ext2_rw_lock);
+    kmutex_lock(&g_ext2_rw_lock);
     int rc = ext2_read_inode(&g_ext2_live, ino_num, &ino);
     if (rc == RDNX_OK) {
         if (uid != (uint32_t)-1) ino.uid = (uint16_t)(uid & 0xFFFFu);
@@ -2270,7 +2280,7 @@ int ext2_chown(vfs_node_t* node, uint32_t uid, uint32_t gid)
             if (gid != (uint32_t)-1) node->inode->gid = gid;
         }
     }
-    spinlock_unlock(&g_ext2_rw_lock);
+    kmutex_unlock(&g_ext2_rw_lock);
     return rc;
 }
 
@@ -2281,7 +2291,13 @@ static const vfs_fs_driver_t ext2_driver = {
 
 int ext2_fs_init(void)
 {
-    spinlock_init(&g_ext2_rw_lock);
+    kmutex_init(&g_ext2_rw_lock, "ext2_rw");
     (void)kmod_register_builtin("fs.ext2", "fs", "0.1", 0);
     return vfs_register_fs(&ext2_driver);
+}
+
+/* Диагностика для сердцебиения: владелец и очередь замка ext2. */
+void ext2_debug_lock(uint64_t* owner_tid, uint32_t* waiters)
+{
+    kmutex_debug(&g_ext2_rw_lock, owner_tid, waiters);
 }
