@@ -468,12 +468,13 @@ uint64_t unix_proc_sigreturn(void)
     return unix_signal_restore_frame(task, frame);
 }
 
-uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
+uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr, uint64_t flags)
 {
-    /* CT-004/CT-005/CT-006 contract point. */
+    /* CT-004/CT-005/CT-006/CT-045 contract point. */
     task_t* self = task_get_current();
     bool wait_any_child = (pid == UINT64_MAX);
-    if (!self || pid == 0) {
+    bool nohang = (flags & UNIX_WNOHANG) != 0;
+    if (!self || pid == 0 || (flags & ~(uint64_t)UNIX_WNOHANG) != 0) {
         return (uint64_t)RDNX_E_INVALID;
     }
 
@@ -506,6 +507,10 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
             if (!proc_find_child_by_parent(self->task_id, 0, 0)) {
                 return (uint64_t)RDNX_E_NOTFOUND;
             }
+            if (nohang) {
+                /* Дети живы, зомби нет: WNOHANG велит вернуть 0 сразу. */
+                return 0;
+            }
             (void)waitq_wait(&task_proc(self)->child_waitq, 100);
             continue;
         }
@@ -519,6 +524,10 @@ uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr)
         /* Check child is still in the registry (not freed by a race) */
         if (!task_find_by_id(pid)) {
             return (uint64_t)RDNX_E_NOTFOUND;
+        }
+        if (nohang) {
+            /* Ребёнок жив: WNOHANG велит вернуть 0 сразу. */
+            return 0;
         }
         (void)waitq_wait(&task_proc(self)->child_waitq, 100);
     }

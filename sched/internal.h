@@ -71,5 +71,6 @@ uint32_t scheduler_reap_queue_len(void);
 void scheduler_reap_enqueue(thread_t* dead_thread);
 void scheduler_reap_dead_threads(void);
 void scheduler_reaper_start(void);
+void scheduler_softclock_start(void);
 
 #endif

@@ -38,11 +38,10 @@ uint64_t posix_waitpid(uint64_t a1,
                               uint64_t a5,
                               uint64_t a6)
 {
-    (void)a3;
     (void)a4;
     (void)a5;
     (void)a6;
-    return unix_proc_waitpid(a1, a2);
+    return unix_proc_waitpid(a1, a2, a3);
 }
 uint64_t posix_fork(uint64_t a1,
                            uint64_t a2,

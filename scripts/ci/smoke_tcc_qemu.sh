@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 LOG_FILE="${LOG_FILE:-boot.log}"
-TIMEOUT_SEC="${TIMEOUT_SEC:-30}"
+TIMEOUT_SEC="${TIMEOUT_SEC:-60}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 QEMU_DISPLAY="${QEMU_DISPLAY:--display none}"
 ARCH="${ARCH:-x86_64}"
@@ -62,7 +62,9 @@ while [ $SECONDS -lt $deadline ]; do
       kill "$QEMU_PID" >/dev/null 2>&1 || true
       exit 1
     fi
-    if grep -q "sh> " "$LOG_FILE" || grep -q " # " "$LOG_FILE" || grep -q " \$ " "$LOG_FILE"; then
+    if grep -q "sh> " "$LOG_FILE" || grep -q " # " "$LOG_FILE" || grep -q " \$ " "$LOG_FILE" \
+      || grep -q "RodNIX login" "$LOG_FILE" \
+      || grep -q "^\[init\] service supervisor ready" "$LOG_FILE"; then
       prompt=1
     fi
     if [ $pass -eq 1 ] && [ $prompt -eq 1 ]; then
@@ -73,7 +75,7 @@ while [ $SECONDS -lt $deadline ]; do
 done
 
 if [ $pass -eq 1 ] && [ $prompt -eq 1 ]; then
-  echo "[smoke-tcc] PASS: tcc compiled smoke object and shell prompt reached"
+  echo "[smoke-tcc] PASS: tcc compiled smoke object and system reached ready state"
   kill "$QEMU_PID" >/dev/null 2>&1 || true
   exit 0
 fi

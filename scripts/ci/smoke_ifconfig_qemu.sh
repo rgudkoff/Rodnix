@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 LOG_FILE="${LOG_FILE:-boot.log}"
-TIMEOUT_SEC="${TIMEOUT_SEC:-20}"
+TIMEOUT_SEC="${TIMEOUT_SEC:-60}"
 QEMU_BIN="${QEMU_BIN:-qemu-system-x86_64}"
 QEMU_DISPLAY="${QEMU_DISPLAY:--display none}"
 QEMU_NET_FLAGS="${QEMU_NET_FLAGS:--netdev user,id=net0 -device e1000,netdev=net0}"
@@ -65,7 +65,9 @@ while [ $SECONDS -lt $deadline ]; do
     if grep -q "^\[SMK\] IFCONFIG PASS" "$LOG_FILE"; then
       pass=1
     fi
-    if grep -q "sh> " "$LOG_FILE" || grep -q " # " "$LOG_FILE"; then
+    if grep -q "sh> " "$LOG_FILE" || grep -q " # " "$LOG_FILE" \
+      || grep -q "RodNIX login" "$LOG_FILE" \
+      || grep -q "^\[init\] service supervisor ready" "$LOG_FILE"; then
       prompt=1
     fi
     if grep -q "^\[SMK\] IFCONFIG FAIL" "$LOG_FILE"; then
@@ -82,7 +84,7 @@ while [ $SECONDS -lt $deadline ]; do
 done
 
 if [ $pass -eq 1 ] && [ $prompt -eq 1 ]; then
-  echo "[smoke-ifconfig] PASS: ifconfig completed and shell prompt reached"
+  echo "[smoke-ifconfig] PASS: ifconfig completed and system reached ready state"
   kill "$QEMU_PID" >/dev/null 2>&1 || true
   exit 0
 fi

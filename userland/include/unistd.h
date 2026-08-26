@@ -391,7 +391,7 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
 {
     enum { RDNX_E_BUSY = -5 };
     enum { SYS_TEST_SLEEP = 120 };
-    long wr = posix_waitpid((long)pid, status);
+    long wr = posix_waitpid((long)pid, status, (long)options);
     if ((options & WNOHANG) != 0) {
         if (wr == (long)RDNX_E_BUSY) {
             return 0;
@@ -407,7 +407,7 @@ static inline pid_t waitpid(pid_t pid, int* status, int options)
 
     while (wr == (long)RDNX_E_BUSY) {
         (void)rdnx_syscall1(SYS_TEST_SLEEP, 1);
-        wr = posix_waitpid((long)pid, status);
+        wr = posix_waitpid((long)pid, status, (long)options);
     }
     if (wr < 0) {
         int _e = rdnx_errno_from_status(wr);

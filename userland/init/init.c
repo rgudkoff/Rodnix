@@ -759,9 +759,8 @@ static void run_contract_mode_if_enabled(void)
         int dead_hogs = 0;
         if (ok44) {
             /* Хотя бы один обжора должен быть снят по полосе. Ждать —
-             * любого ребёнка: WNOHANG у этого ядра пока не существует
-             * (waitpid без флагов), а первым умершим ребёнком обязана быть
-             * жертва убийцы. */
+             * любого ребёнка блокирующе: первым умершим ребёнком обязана
+             * быть жертва убийцы. */
             int status = -1;
             long w = waitpid((pid_t)-1, &status, 0);
             for (int h = 0; h < CT44_HOGS; h++) {
@@ -810,6 +809,57 @@ static void run_contract_mode_if_enabled(void)
             (void)posix_munmap((void*)audio, CT44_LOCKED);
         }
         if (!ok44) {
+            ok = 0;
+        }
+    }
+
+    {
+        /* CT-045: waitpid с WNOHANG не блокируется на живом ребёнке.
+         * Ребёнок спит ~300 мс; родитель сразу опрашивает и конкретный pid,
+         * и любого ребёнка (-1): оба опроса обязаны вернуть 0 немедленно.
+         * Затем блокирующий wait забирает настоящий статус. */
+        int ok45 = 1;
+        long pid45 = fork();
+        if (pid45 == 0) {
+            struct timespec req = { 0, 300000000 };
+            (void)nanosleep(&req, 0);
+            posix_exit(7);
+        }
+        if (pid45 <= 0) {
+            ct_log("CT-045", "FAIL", "fork failed");
+            ok45 = 0;
+        } else {
+            struct timespec t0, t1;
+            int status45 = -1;
+            int64_t dt_ns = -1;
+            int have_clock = (clock_gettime(CLOCK_MONOTONIC, &t0) == 0);
+            pid_t wr = waitpid((pid_t)pid45, &status45, WNOHANG);
+            pid_t wa = waitpid((pid_t)-1, &status45, WNOHANG);
+            if (have_clock && clock_gettime(CLOCK_MONOTONIC, &t1) == 0) {
+                dt_ns = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000000000LL +
+                        (int64_t)(t1.tv_nsec - t0.tv_nsec);
+            }
+            if (wr != 0 || wa != 0) {
+                ct_log("CT-045", "FAIL", "WNOHANG did not return 0 for a live child");
+                ok45 = 0;
+            } else if (dt_ns < 0 || dt_ns >= 150000000LL) {
+                ct_log("CT-045", "FAIL", "WNOHANG poll lasted as long as the child");
+                ok45 = 0;
+            }
+            {
+                pid_t wb = waitpid((pid_t)pid45, &status45, 0);
+                if (wb != (pid_t)pid45 || status45 != 7) {
+                    if (ok45) {
+                        ct_log("CT-045", "FAIL", "blocking reap after WNOHANG broke");
+                    }
+                    ok45 = 0;
+                }
+            }
+            if (ok45) {
+                ct_log("CT-045", "PASS", "WNOHANG returns at once while child runs");
+            }
+        }
+        if (!ok45) {
             ok = 0;
         }
     }
@@ -1673,7 +1723,7 @@ static void run_contract_mode_if_enabled(void)
             } else {
                 int status = 0;
                 (void)posix_close((int)fd);   /* родитель закрывает первым */
-                if (posix_waitpid(pid, &status) < 0 || status != 0) {
+                if (posix_waitpid(pid, &status, 0) < 0 || status != 0) {
                     local_ok = 0;
                 }
             }

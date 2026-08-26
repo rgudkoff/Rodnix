@@ -171,7 +171,7 @@ int main(void)
 
     (void)write_str("tcptest: waitpid...\n");
     int status = -1;
-    long wr = posix_waitpid(pid, &status);
+    long wr = posix_waitpid(pid, &status, 0);
     if (wr != pid) {
         (void)write_str("tcptest: waitpid failed\n");
         return 1;

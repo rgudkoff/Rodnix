@@ -134,6 +134,7 @@ mkdir -p "$BUILD_DIR"
     -fno-stack-protector \
     -nostdinc -I"$USERLAND_INC" -I"$GCC_INCLUDE_DIR" \
     -nostdlib -static \
+    -Wl,-T,"$ROOT_DIR/userland/link.ld" \
     "$TCC_SRC/tcc.c" \
     -o "$TCC_OUT" \
     "$CRT0" "$USERLAND_BUILD/libc.a"

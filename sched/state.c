@@ -187,6 +187,7 @@ void scheduler_start(void)
     }
 
     scheduler_reaper_start();
+    scheduler_softclock_start();
 
     scheduler_running = true;
     ticks_until_preempt = ticks_per_slice;

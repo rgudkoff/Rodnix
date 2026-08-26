@@ -316,9 +316,9 @@ static inline long posix_spawnve(const char* path,
                          (long)(uintptr_t)envp);
 }
 
-static inline long posix_waitpid(long pid, int* status)
+static inline long posix_waitpid(long pid, int* status, long options)
 {
-    return rdnx_syscall2(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status);
+    return rdnx_syscall3(POSIX_SYS_WAITPID, pid, (long)(uintptr_t)status, options);
 }
 
 static inline long posix_readdir(const char* path, void* entries, uint64_t len)

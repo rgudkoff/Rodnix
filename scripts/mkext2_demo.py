@@ -494,10 +494,10 @@ def _ext2_inject_dir(img_path: str, staging_dir: str) -> None:
             new_ino  = alloc_inode()
             n_blocks = (len(data) + bsz - 1) // bsz if data else 0
 
-            # For simplicity support only direct blocks (12 × bsz = 12 KiB max per block).
-            # Files up to 12 * 1024 = 12 KiB fit in direct blocks.
-            # For larger files we use the single indirect block (block[12]).
+            # Direct blocks (12 × bsz), then single indirect (block[12]),
+            # then double indirect (block[13]) for larger files.
             MAX_DIRECT = 12
+            ppb = bsz // 4  # block pointers per indirect block
             block_nums: list[int] = []
             for _ in range(n_blocks):
                 block_nums.append(alloc_block())
@@ -528,13 +528,35 @@ def _ext2_inject_dir(img_path: str, staging_dir: str) -> None:
             if len(block_nums) > MAX_DIRECT:
                 ind_blk = alloc_block()
                 ind_data = bytearray(bsz)
-                for i, bn in enumerate(block_nums[MAX_DIRECT:]):
+                for i, bn in enumerate(block_nums[MAX_DIRECT:MAX_DIRECT + ppb]):
                     struct.pack_into("<I", ind_data, i * 4, bn)
                 f.seek(blk_offset(ind_blk))
                 f.write(bytes(ind_data))
                 struct.pack_into("<I", raw_ino, 40 + 12 * 4, ind_blk)
                 blocks_512 += bsz // 512
-                struct.pack_into("<I", raw_ino, 28, blocks_512)  # update i_blocks
+            # Double indirect block if needed
+            rest = block_nums[MAX_DIRECT + ppb:]
+            if rest:
+                if len(rest) > ppb * ppb:
+                    raise SystemExit(
+                        f"inject: {name} needs triple indirect blocks (unsupported)")
+                dind_blk = alloc_block()
+                dind_data = bytearray(bsz)
+                for gi in range(0, len(rest), ppb):
+                    group = rest[gi:gi + ppb]
+                    l2_blk = alloc_block()
+                    l2_data = bytearray(bsz)
+                    for i, bn in enumerate(group):
+                        struct.pack_into("<I", l2_data, i * 4, bn)
+                    f.seek(blk_offset(l2_blk))
+                    f.write(bytes(l2_data))
+                    struct.pack_into("<I", dind_data, (gi // ppb) * 4, l2_blk)
+                    blocks_512 += bsz // 512
+                f.seek(blk_offset(dind_blk))
+                f.write(bytes(dind_data))
+                struct.pack_into("<I", raw_ino, 40 + 13 * 4, dind_blk)
+                blocks_512 += bsz // 512
+            struct.pack_into("<I", raw_ino, 28, blocks_512)  # update i_blocks
 
             write_inode_raw(new_ino, bytes(raw_ino))
             dir_append_entry(parent_ino, new_ino, name.encode(), EXT2_FT_REG)

@@ -22,6 +22,84 @@ uint64_t g_heartbeat_ns = 0;
 #define USB_HOST_POLL_HZ    1u   /* host safety fallback (~1 s)  */
 
 /*
+ * Softclock: хозяйство тика уезжает из обработчика прерывания в поток.
+ *
+ * Обработчик оставляет себе только то, что обязан делать сам: счёт времени,
+ * квант, учёт текущего потока — микросекунды. Всё периодическое машинное
+ * хозяйство (таймауты ожидания, fabric, опрос USB, курсор консоли) стоит
+ * в среднем немного, но шипит до полумиллисекунды — и каждый шип жил во
+ * времени с выключенными прерываниями, на глазах у измерителя гигиены и за
+ * спиной у второго процессора, ждущего наш замок. Поток преемптивен, его
+ * шипы — обычное время потока.
+ *
+ * Механика без потерянной работы: тик атомарно поднимает биты должного и
+ * будит поток; поток засыпает только при пустых битах. Пробуждение,
+ * пришедшее во время работы, находит пустую очередь ожидания и ничего не
+ * делает — но бит уже поднят, и цикл сделает ещё круг перед сном. Это же
+ * форма softclock у FreeBSD и thread_call у XNU.
+ */
+#define SOFTCLOCK_W_WAITQ   (1u << 0)
+#define SOFTCLOCK_W_FABRIC  (1u << 1)
+#define SOFTCLOCK_W_USBCLS  (1u << 2)
+#define SOFTCLOCK_W_USBHOST (1u << 3)
+#define SOFTCLOCK_W_CONSOLE (1u << 4)
+
+static uint32_t g_softclock_pending;
+static waitq_t g_softclock_waitq;
+static thread_t* g_softclock_thread;
+
+static void softclock_main(void* arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t work = __atomic_exchange_n(&g_softclock_pending, 0u,
+                                            __ATOMIC_ACQ_REL);
+        if (work == 0u) {
+            (void)waitq_wait_until(&g_softclock_waitq, 0);
+            continue;
+        }
+        if (work & SOFTCLOCK_W_WAITQ) {
+            waitq_tick(sched_ticks);
+        }
+        if (work & SOFTCLOCK_W_FABRIC) {
+            (void)fabric_dispatcher_tick();
+        }
+        if (work & SOFTCLOCK_W_USBCLS) {
+            usb_class_poll_all();
+        }
+        if (work & SOFTCLOCK_W_USBHOST) {
+            usb_host_poll_all();
+        }
+        if (work & SOFTCLOCK_W_CONSOLE) {
+            console_tick();
+        }
+    }
+}
+
+void scheduler_softclock_start(void)
+{
+    if (g_softclock_thread) {
+        return;
+    }
+    waitq_init(&g_softclock_waitq, "softclock");
+    task_t* t = task_create();
+    if (!t) {
+        return;
+    }
+    scheduler_task_set_state(t, TASK_STATE_READY, "softclock_start");
+    g_softclock_thread = thread_create(t, softclock_main, NULL);
+    if (!g_softclock_thread) {
+        task_destroy(t);
+        return;
+    }
+    /* Высокий приоритет и интерактивный бакет: таймауты ожидания должны
+     * доставляться со скоростью планирования, а не по остаточному принципу. */
+    g_softclock_thread->priority = 220;
+    scheduler_set_bucket(g_softclock_thread, SCHED_BUCKET_INTERACTIVE);
+    scheduler_add_thread(g_softclock_thread);
+}
+
+/*
  * Say, periodically, what this processor is doing.
  *
  * The one fact a hang does not give up on its own is whether the machine is
@@ -110,7 +188,6 @@ void scheduler_tick(void)
     const bool owns_global_time = (cpu_get_id() == 0);
     if (owns_global_time) {
         sched_ticks++;
-        waitq_tick(sched_ticks);
     }
 
     thread_t* cur = thread_get_current();
@@ -142,22 +219,45 @@ void scheduler_tick(void)
 
     if (!owns_global_time) {
         /* Preemption accounting above is per-CPU and has already happened.
-         * Everything below drives machine-wide subsystems. */
+         * Everything below belongs to the machine, and cpu0 hands it to the
+         * softclock thread. */
         return;
     }
 
-    (void)fabric_dispatcher_tick();
+    /* Обработчик больше не делает хозяйство — он его называет. Биты
+     * должного и одно пробуждение: микросекунды вместо шипов до
+     * полумиллисекунды с выключенными прерываниями. */
+    uint32_t work = SOFTCLOCK_W_WAITQ | SOFTCLOCK_W_FABRIC;
 
-#define DIVIDER_FIRE(counter, target_hz, body)          \
-    do {                                                 \
-        uint32_t _p = g_tick_hz / (target_hz);          \
-        if (_p < 1u) { _p = 1u; }                       \
-        if (++(counter) >= _p) { (counter) = 0; body }  \
-    } while (0)
+#define DIVIDER_DUE(counter, target_hz)                  \
+    ({ uint32_t _p = g_tick_hz / (target_hz);            \
+       if (_p < 1u) { _p = 1u; }                         \
+       bool _due = (++(counter) >= _p);                  \
+       if (_due) { (counter) = 0; }                      \
+       _due; })
 
-    DIVIDER_FIRE(usb_class_divider, USB_CLASS_POLL_HZ, usb_class_poll_all(););
-    DIVIDER_FIRE(usb_poll_divider,  USB_HOST_POLL_HZ,  usb_host_poll_all(););
-    DIVIDER_FIRE(console_divider,   CONSOLE_TICK_HZ,   console_tick(););
+    if (DIVIDER_DUE(usb_class_divider, USB_CLASS_POLL_HZ)) {
+        work |= SOFTCLOCK_W_USBCLS;
+    }
+    if (DIVIDER_DUE(usb_poll_divider, USB_HOST_POLL_HZ)) {
+        work |= SOFTCLOCK_W_USBHOST;
+    }
+    if (DIVIDER_DUE(console_divider, CONSOLE_TICK_HZ)) {
+        work |= SOFTCLOCK_W_CONSOLE;
+    }
+
+    if (g_softclock_thread) {
+        __atomic_fetch_or(&g_softclock_pending, work, __ATOMIC_ACQ_REL);
+        (void)waitq_wake_one(&g_softclock_waitq);
+    } else {
+        /* До старта softclock (ранняя загрузка) хозяйство остаётся здесь:
+         * лучше редкий шип на старте, чем таймауты, которых никто не водит. */
+        waitq_tick(sched_ticks);
+        (void)fabric_dispatcher_tick();
+        if (work & SOFTCLOCK_W_USBCLS)  { usb_class_poll_all(); }
+        if (work & SOFTCLOCK_W_USBHOST) { usb_host_poll_all(); }
+        if (work & SOFTCLOCK_W_CONSOLE) { console_tick(); }
+    }
 }
 
 void scheduler_set_tick_rate(uint32_t hz)

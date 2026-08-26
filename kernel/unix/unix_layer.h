@@ -151,8 +151,9 @@ uint64_t unix_proc_futex(uint64_t user_uaddr_ptr,
                          uint64_t user_uaddr2_ptr,
                          uint64_t val3);
 void unix_proc_signal_checkpoint(void);
-/* CT-004/CT-005/CT-006 */
-uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr);
+/* CT-004/CT-005/CT-006/CT-045 */
+#define UNIX_WNOHANG 1u
+uint64_t unix_proc_waitpid(uint64_t pid, uint64_t user_status_ptr, uint64_t flags);
 uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr);
 void unix_proc_notify_waiters(uint64_t parent_task_id);
 void unix_proc_close_fds(task_t* task);

@@ -78,7 +78,7 @@ int main(int argc, char** argv)
             return 3;
         }
         {
-            long wr = posix_waitpid((long)target, &status);
+            long wr = posix_waitpid((long)target, &status, 0);
             if (wr == (long)RDNX_E_DENIED) {
                 return 0;
             }
