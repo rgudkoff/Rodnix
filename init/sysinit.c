@@ -356,6 +356,7 @@ sysinit_fabric(void)
     extern void usb_msc_init(void);
     extern void virtio_net_stub_init(void);
     extern void e1000_net_stub_init(void);
+    extern void ac97_audio_init(void);
     extern void vga_display_stub_init(void);
     extern void mb2_fb_init(void);
     extern void bochs_vbe_init(void);
@@ -378,6 +379,7 @@ sysinit_fabric(void)
     usb_msc_init();
     virtio_net_stub_init();
     e1000_net_stub_init();
+    ac97_audio_init();
     bochs_vbe_init();
     mb2_fb_init();
     vga_display_stub_init();

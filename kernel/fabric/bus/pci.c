@@ -121,6 +121,17 @@ static void pci_scan_capabilities(uint8_t bus,
     }
 }
 
+void pci_command_set(pci_device_info_t* info, uint16_t bits)
+{
+    if (!info) {
+        return;
+    }
+    uint16_t cmd = pci_read_config16(info->bus, info->device, info->function, PCIR_COMMAND);
+    cmd |= bits;
+    pci_write_config16(info->bus, info->device, info->function, PCIR_COMMAND, cmd);
+    info->command = cmd;
+}
+
 int pci_find_capability(fabric_device_t* dev, uint8_t cap_id, uint8_t* out_offset)
 {
     pci_device_info_t* info;

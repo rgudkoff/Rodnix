@@ -13,6 +13,7 @@ drivers/fabric/usb/usb_msc.c                 standard
 drivers/fabric/hid/hid_kbd.c                 standard
 drivers/fabric/net/virtio_net_stub.c         standard
 drivers/fabric/net/e1000_net.c               standard
+drivers/fabric/audio/ac97.c                  standard
 drivers/fabric/display/vga_display_stub.c    standard
 drivers/fabric/display/mb2_fb.c              standard
 drivers/fabric/display/bochs_vbe.c           standard

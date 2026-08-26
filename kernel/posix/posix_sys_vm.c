@@ -6,6 +6,8 @@
 #include "../../mm/vm_object.h"
 #include "../../mm/vm_fault.h"
 #include "../../mm/vm_reclaim.h"
+#include "../../include/audio.h"
+#include "../unix/unix_layer.h"
 #include "../unix/unix_layer.h"
 #include "../../include/sys/file.h"
 #include "../../lib/heap.h"
@@ -279,4 +281,76 @@ uint64_t posix_mempressure(uint64_t a1, uint64_t a2, uint64_t a3,
 {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
     return (uint64_t)vm_pressure_level();
+}
+
+/*
+ * Звуковой тракт: op 0 — открыть (отобразить кольцо и страницу состояния
+ * вызывающему; в user-структуру уходят виртуальные адреса), 1 — старт,
+ * 2 — стоп, 3 — статистика. Отсутствие устройства — честный E_NOTFOUND:
+ * набор обязан работать и на машинах без звука.
+ */
+uint64_t posix_audioctl(uint64_t a1, uint64_t a2, uint64_t a3,
+                        uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a3; (void)a4; (void)a5; (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    switch (a1) {
+    case 0: {
+        struct {
+            uint64_t ring_va;
+            uint64_t status_va;
+            uint32_t ring_bytes;
+            uint32_t period_frames;
+            uint32_t periods;
+            uint32_t rate;
+        } u;
+        audio_out_info_t inf;
+        int rc = audio_out_open(&inf);
+        if (rc != RDNX_OK) {
+            return (uint64_t)rc;
+        }
+        long rv = vm_task_mmap_dma(task, inf.ring_bytes,
+                                   VM_PROT_READ | VM_PROT_WRITE,
+                                   inf.ring_phys);
+        if (rv <= 0) {
+            return (uint64_t)rv;
+        }
+        long sv = vm_task_mmap_dma(task, 4096,
+                                   VM_PROT_READ | VM_PROT_WRITE,
+                                   inf.status_phys);
+        if (sv <= 0) {
+            return (uint64_t)sv;
+        }
+        u.ring_va = (uint64_t)rv;
+        u.status_va = (uint64_t)sv;
+        u.ring_bytes = inf.ring_bytes;
+        u.period_frames = inf.period_frames;
+        u.periods = inf.periods;
+        u.rate = inf.rate;
+        if (!a2 || unix_copy_to_user((void*)(uintptr_t)a2, &u, sizeof(u)) != RDNX_OK) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        return 0;
+    }
+    case 1:
+        return (uint64_t)audio_out_start();
+    case 2:
+        return (uint64_t)audio_out_stop();
+    case 3: {
+        audio_out_stats_t st;
+        int rc = audio_out_stats(&st);
+        if (rc != RDNX_OK) {
+            return (uint64_t)rc;
+        }
+        if (!a2 || unix_copy_to_user((void*)(uintptr_t)a2, &st, sizeof(st)) != RDNX_OK) {
+            return (uint64_t)RDNX_E_INVALID;
+        }
+        return 0;
+    }
+    default:
+        return (uint64_t)RDNX_E_INVALID;
+    }
 }

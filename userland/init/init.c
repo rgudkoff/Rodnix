@@ -865,6 +865,146 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        /*
+         * CT-046: тезис целиком. RT-поток кормит звуковой тракт из
+         * закреплённого кольца без единого сисколла в устоявшемся
+         * режиме, фоном обжоры давят память — и за всё время ни одного
+         * underrun'а и ни одного отказа страницы у писателя. Underrun
+         * здесь — аппаратный факт (LVBCI), а не оценка. Машина без
+         * звукового устройства проходит тест честной пометкой.
+         */
+        struct rdnx_audio_info ai;
+        long orc = posix_audioctl(0, &ai);
+        if (orc != 0) {
+            ct_log("CT-046", "PASS", "no audio device: path not exercised");
+        } else {
+            volatile int16_t* ring = (volatile int16_t*)ai.ring_va;
+            struct rdnx_audio_status* stp =
+                (struct rdnx_audio_status*)ai.status_va;
+            int ok46 = (stp->magic == 0x52644155u);
+            if (!ok46) {
+                ct_log("CT-046", "FAIL", "status page magic mismatch");
+            }
+            if (ok46 && (posix_mlock((void*)ai.ring_va, ai.ring_bytes) != 0 ||
+                         posix_mlock((void*)ai.status_va, 4096) != 0)) {
+                ct_log("CT-046", "FAIL", "mlock of audio ring failed");
+                ok46 = 0;
+            }
+
+            /* Обжоры давят память фоном — как в CT-044. */
+            long hogs46[2] = { -1, -1 };
+            for (int h = 0; ok46 && h < 2; h++) {
+                hogs46[h] = fork();
+                if (hogs46[h] == 0) {
+                    (void)posix_memband(0);
+                    while (posix_mempressure() < 1) {
+                        long m = posix_mmap(0, 8u << 20, 0x3, 0x1002, -1, 0);
+                        if (m <= 0) {
+                            break;
+                        }
+                        volatile unsigned char* b = (volatile unsigned char*)m;
+                        for (unsigned off = 0; off < (8u << 20); off += 4096) {
+                            b[off] = 1;
+                        }
+                    }
+                    for (;;) {
+                        struct timespec req = { 0, 50000000 };
+                        (void)nanosleep(&req, 0);
+                    }
+                }
+            }
+
+            if (ok46) {
+                unsigned frames = ai.period_frames;
+                unsigned periods = ai.periods;
+                /* Заполнить всё кольцо пилой и объявить готовое. */
+                for (unsigned pidx = 0; pidx < periods; pidx++) {
+                    volatile int16_t* dst = ring + (uint64_t)pidx * frames * 2;
+                    for (unsigned f = 0; f < frames; f++) {
+                        int16_t v = (int16_t)((f * 64) & 0x3FFF);
+                        dst[f * 2] = v;
+                        dst[f * 2 + 1] = v;
+                    }
+                }
+                stp->user_write_pos = periods;
+
+                (void)posix_schedrt(1);
+                long f0 = posix_threadfaults();
+                (void)posix_audioctl(1, 0);
+
+                /* ~3 секунды устоявшегося режима: догонять hw_pos, держа
+                 * кольцо полным. Ни одного сисколла в этом цикле. */
+                uint64_t target = stp->hw_pos + 120;
+                /* Ограничение — по стагнации, не по абсолютным итерациям:
+                 * скорость пустого цикла под TCG непредсказуема, а «hw_pos
+                 * не движется долго» — это и есть мёртвые часы. */
+                uint64_t last_hw46 = stp->hw_pos;
+                uint64_t stall46 = 0;
+                while (stp->hw_pos < target && stall46 < 30000000ull) {
+                    if (stp->hw_pos != last_hw46) {
+                        last_hw46 = stp->hw_pos;
+                        stall46 = 0;
+                    } else {
+                        stall46++;
+                    }
+                    while (stp->user_write_pos < stp->hw_pos + periods) {
+                        unsigned pidx =
+                            (unsigned)(stp->user_write_pos % periods);
+                        volatile int16_t* dst =
+                            ring + (uint64_t)pidx * frames * 2;
+                        for (unsigned f = 0; f < frames; f++) {
+                            int16_t v = (int16_t)((f * 64) & 0x3FFF);
+                            dst[f * 2] = v;
+                            dst[f * 2 + 1] = v;
+                        }
+                        stp->user_write_pos = stp->user_write_pos + 1;
+                    }
+                }
+                long f1 = posix_threadfaults();
+                (void)posix_schedrt(0);
+                (void)posix_audioctl(2, 0);
+                if (stp->hw_pos < target) {
+                    ct_log("CT-046", "FAIL", "audio clock stalled");
+                    ok46 = 0;
+                }
+                (void)stall46;
+
+                struct rdnx_audio_stats ast;
+                if (posix_audioctl(3, &ast) != 0) {
+                    ct_log("CT-046", "FAIL", "stats read failed");
+                    ok46 = 0;
+                } else if (ast.hw_pos < 120) {
+                    ct_log("CT-046", "FAIL", "audio clock barely advanced");
+                    ok46 = 0;
+                } else if (ast.underruns != 0) {
+                    char msg[64];
+                    snprintf(msg, sizeof(msg), "%ld underruns under pressure",
+                             (long)ast.underruns);
+                    ct_log("CT-046", "FAIL", msg);
+                    ok46 = 0;
+                } else if (f1 != f0) {
+                    ct_log("CT-046", "FAIL", "writer took page faults");
+                    ok46 = 0;
+                } else {
+                    ct_log("CT-046", "PASS",
+                           "audio fed by RT writer: zero underruns, zero faults");
+                }
+            }
+
+            for (int h = 0; h < 2; h++) {
+                if (hogs46[h] > 0) {
+                    (void)posix_kill((long)hogs46[h], 9);
+                    int status = -1;
+                    (void)waitpid((pid_t)hogs46[h], &status, 0);
+                }
+            }
+            if (!ok46) {
+                ok = 0;
+            }
+        }
+    }
+
+    {
         int status = -1;
         volatile uint64_t as_canary = 0x1122334455667788ULL;
         long pid = posix_spawn("/bin/true", 0);

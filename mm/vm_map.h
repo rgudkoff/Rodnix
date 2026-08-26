@@ -83,6 +83,12 @@ long vm_task_mmap_file_backing(task_t* task,
 long vm_task_mmap_phys(task_t* task, uint64_t addr_hint, uint64_t len,
                        uint32_t prot, uint64_t phys_base, uint32_t display_idx);
 
+/* Отобразить писателю DMA-память ядра (кольцо звука): кэшируемо (DMA на
+ * x86 когерентна), с честными ссылками на страницы — снятие отображения
+ * вернёт их, а базовая ссылка владельца-сервиса переживёт задачу. */
+long vm_task_mmap_dma(task_t* task, uint64_t len, uint32_t prot,
+                      uint64_t phys_base);
+
 /* Register a hook called when a VM_MAP_F_FRAMEBUFFER entry is fully removed.
  * The hook receives the display_idx stored at mmap time. */
 void vm_set_fb_release_hook(void (*fn)(uint32_t display_idx));

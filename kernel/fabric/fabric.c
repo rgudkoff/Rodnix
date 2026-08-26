@@ -1196,15 +1196,25 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     
     kprintf("[FABRIC-IRQ] Handler registered in slot %u\n", slot);
     
-    /* Register with interrupt system */
+    /* Register with interrupt system. Одного вектора может хотеть несколько
+     * устройств: разделяемая INTx-линия — норма PCI (обнаружено на QEMU,
+     * где e1000 по умолчанию и AC97 делят линию 11). Обёртка и так зовёт
+     * всех подписчиков вектора, так что «вектор уже наш» — успех, а не
+     * отказ; отказ — только когда вектором владеет чужой обработчик. */
     extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
+    static bool fabric_vector_claimed[256];
     kprintf("[FABRIC-IRQ] Registering with interrupt system...\n");
-    if (interrupt_register(vector, fabric_irq_wrapper) != 0) {
-        kputs("[FABRIC-IRQ] ERROR: Failed to register with interrupt system\n");
-        spinlock_lock(&irq_lock);
-        irq_handlers[slot].active = false;
-        spinlock_unlock(&irq_lock);
-        return -1;
+    if (!fabric_vector_claimed[vector]) {
+        if (interrupt_register(vector, fabric_irq_wrapper) != 0) {
+            kputs("[FABRIC-IRQ] ERROR: Failed to register with interrupt system\n");
+            spinlock_lock(&irq_lock);
+            irq_handlers[slot].active = false;
+            spinlock_unlock(&irq_lock);
+            return -1;
+        }
+        fabric_vector_claimed[vector] = true;
+    } else {
+        kprintf("[FABRIC-IRQ] vector %d shared: joining existing wrapper\n", vector);
     }
     
     kprintf("[FABRIC-IRQ] Successfully registered IRQ handler for vector %d\n", vector);

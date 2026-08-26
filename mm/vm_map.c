@@ -497,6 +497,45 @@ static long vm_task_mmap_object_locked(task_t* task,
     return (long)addr;
 }
 
+static long vm_task_mmap_dma_locked(task_t* task, uint64_t len, uint32_t prot,
+                                    uint64_t phys_base)
+{
+    uint64_t alen = vm_align_up(len);
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    uint64_t addr = vm_find_gap(map, task->vm_mmap_hint, alen);
+    if (!addr) {
+        return (long)RDNX_E_NOMEM;
+    }
+    int rc = vm_map_add(map, addr, alen, prot, VM_MAP_F_PRIVATE, NULL, 0);
+    if (rc != RDNX_OK) {
+        return (long)rc;
+    }
+    for (uint64_t off = 0; off < alen; off += VM_PAGE_SIZE) {
+        (void)vm_page_hold(phys_base + off);   /* ссылка отображения */
+        if (pmap_enter(task->address_space, addr + off, phys_base + off,
+                       prot, PMAP_ENTER_USER) != RDNX_OK) {
+            (void)vm_page_drop(phys_base + off);
+            (void)vm_map_remove(map, addr, alen, task->address_space);
+            return (long)RDNX_E_GENERIC;
+        }
+    }
+    task->vm_mmap_hint = addr + alen;
+    return (long)addr;
+}
+
+long vm_task_mmap_dma(task_t* task, uint64_t len, uint32_t prot,
+                      uint64_t phys_base)
+{
+    if (!task || !task->vm_map || len == 0 || phys_base == 0) {
+        return (long)RDNX_E_INVALID;
+    }
+    vm_map_t* map = (vm_map_t*)task->vm_map;
+    vm_map_lock(map);
+    long _r = vm_task_mmap_dma_locked(task, len, prot, phys_base);
+    vm_map_unlock(map);
+    return _r;
+}
+
 long vm_task_mmap_object(task_t* task,
                          uint64_t addr_hint,
                          uint64_t len,

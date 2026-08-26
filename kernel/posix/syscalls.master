@@ -107,3 +107,4 @@
 89 threadfaults    # [experimental] rodnix: page faults taken by current thread
 90 memband         # [experimental] rodnix: a1=band set current task's OOM band; a1=-1 read it
 91 mempressure     # [experimental] rodnix: memory pressure level 0/1/2
+92 audioctl        # [experimental] rodnix: audio out: a1=op(0 open,1 start,2 stop,3 stats) a2=user ptr

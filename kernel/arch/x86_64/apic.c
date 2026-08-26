@@ -1470,3 +1470,39 @@ uint32_t apic_timer_get_current_count(void)
     }
     return apic_read_register(APIC_TIMER_CURRCNT);
 }
+
+/*
+ * Линия PCI INTx: level-triggered, active-low — по спецификации, а не по
+ * умолчанию ISA (edge/high). Edge/high RTE для такой линии означает
+ * «прерывание не доставляется вовсе»: найдено на AC97, чей BDL-движок
+ * доиграл всё кольцо с неподтверждённым BCIS и ни одним входом в
+ * обработчик. MADT ISO, если задан, главнее.
+ */
+void apic_enable_irq_level_low(uint8_t irq)
+{
+    if (!ioapic_available || irq >= IOAPIC_MAX_REDIR) {
+        return;
+    }
+    uint8_t gsi = irq;
+    struct acpi_madt_iso_info iso;
+    if (acpi_madt_get_iso_for_source(irq, &iso) == 0 && iso.gsi <= 0xFFu) {
+        gsi = (uint8_t)iso.gsi;
+    }
+    if (gsi >= ioapic_max_redir) {
+        return;
+    }
+    /* Сырые биты по спецификации IOAPIC, намеренно мимо локальных
+     * определений полярности (они исторически инвертированы, и их
+     * исправление меняет поведение всех ISA-линий разом — отдельная
+     * работа): бит 15 = level, бит 13 = active low. */
+    uint32_t rte_low = (uint32_t)(irq + 32)
+                     | IOAPIC_RTE_DELIVERY_FIXED
+                     | (1u << 15)   /* level */
+                     /* Полярность: PIIX-мост QEMU подаёт INTx на пин
+                      * IOAPIC ISA-стороной, active-high (bit13 = 0). */
+                     | IOAPIC_RTE_DEST_MODE_PHYS;
+    rte_low &= ~IOAPIC_RTE_MASKED;
+    uint32_t rte_high = IOAPIC_RTE_DEST_APIC_ID((uint32_t)apic_get_lapic_id());
+    ioapic_write_register(IOAPIC_REDIR_TBL(gsi), rte_low);
+    ioapic_write_register(IOAPIC_REDIR_TBL_H(gsi), rte_high);
+}

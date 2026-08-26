@@ -590,4 +590,38 @@ static inline long posix_mempressure(void)
     return rdnx_syscall0(POSIX_SYS_MEMPRESSURE);
 }
 
+struct rdnx_audio_info {
+    uint64_t ring_va;
+    uint64_t status_va;
+    uint32_t ring_bytes;
+    uint32_t period_frames;
+    uint32_t periods;
+    uint32_t rate;
+};
+
+struct rdnx_audio_stats {
+    uint64_t hw_pos;
+    uint64_t underruns;
+    uint32_t running;
+};
+
+/* Разделяемая страница состояния тракта: ядро двигает hw_pos и считает
+ * underruns; писатель публикует user_write_pos (в периодах). */
+struct rdnx_audio_status {
+    uint32_t magic;
+    uint32_t rate;
+    uint32_t period_frames;
+    uint32_t periods;
+    volatile uint32_t running;
+    uint32_t pad;
+    volatile uint64_t hw_pos;
+    volatile uint64_t underruns;
+    volatile uint64_t user_write_pos;
+};
+
+static inline long posix_audioctl(long op, void* arg)
+{
+    return rdnx_syscall2(POSIX_SYS_AUDIOCTL, op, (long)(uintptr_t)arg);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */

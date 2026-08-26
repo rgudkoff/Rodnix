@@ -46,6 +46,7 @@ RUN_DISK_TARGET := $(if $(wildcard $(TCC_AUTO_FLAG)),tcc-disk,qemu-disk)
 # QEMU flags: enable APIC and keep the legacy PS/2 controller path available.
 # Use -machine pc for stable polling on ports 0x60/0x64.
 QEMU_FLAGS       = -m 1G -boot d -cdrom $(ISO_OUT) -serial $(QEMU_SERIAL) -no-reboot -no-shutdown \
+                   -audiodev none,id=snd0 -device AC97,audiodev=snd0 \
                    -drive file=$(QEMU_DISK_IMG),if=ide,format=raw,index=0,media=disk \
                    -machine pc -smp $(QEMU_SMP) -cpu $(QEMU_CPU) $(QEMU_NET_FLAGS)
 QEMU_DEBUG_FLAGS = -s -S

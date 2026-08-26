@@ -49,6 +49,9 @@ enum {
 };
 
 void pci_bus_init(void);
+/* Поднять биты в PCI COMMAND устройства (IO/MEM/bus-master). Драйверы
+ * включают то, что им нужно, сами — как e1000; это общая ручка для них. */
+void pci_command_set(pci_device_info_t* info, uint16_t bits);
 int pci_find_capability(fabric_device_t* dev, uint8_t cap_id, uint8_t* out_offset);
 bool pci_has_capability(fabric_device_t* dev, uint8_t cap_id);
 int pci_irq_vector(fabric_device_t* dev);

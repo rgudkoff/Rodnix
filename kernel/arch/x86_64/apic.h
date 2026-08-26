@@ -62,6 +62,7 @@ uint32_t apic_timer_get_current_count(void);
 
 /* APIC IRQ management */
 void apic_enable_irq(uint8_t irq);
+void apic_enable_irq_level_low(uint8_t irq);
 void apic_disable_irq(uint8_t irq);
 
 #endif /* _RODNIX_ARCH_X86_64_APIC_H */

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "../kernel/core/ktime.h"
 #include "../kernel/core/kmutex.h"
+#include "../include/audio.h"
 #include "../kernel/arch/percpu.h"
 #include "../kernel/core/cpu.h"
 #include "../kernel/fabric/fabric.h"
@@ -44,6 +45,7 @@ uint64_t g_heartbeat_ns = 0;
 #define SOFTCLOCK_W_USBCLS  (1u << 2)
 #define SOFTCLOCK_W_USBHOST (1u << 3)
 #define SOFTCLOCK_W_CONSOLE (1u << 4)
+#define SOFTCLOCK_W_AUDIO   (1u << 5)
 
 static uint32_t g_softclock_pending;
 static waitq_t g_softclock_waitq;
@@ -73,6 +75,9 @@ static void softclock_main(void* arg)
         }
         if (work & SOFTCLOCK_W_CONSOLE) {
             console_tick();
+        }
+        if (work & SOFTCLOCK_W_AUDIO) {
+            audio_out_poll();
         }
     }
 }
@@ -236,7 +241,7 @@ void scheduler_tick(void)
     /* Обработчик больше не делает хозяйство — он его называет. Биты
      * должного и одно пробуждение: микросекунды вместо шипов до
      * полумиллисекунды с выключенными прерываниями. */
-    uint32_t work = SOFTCLOCK_W_WAITQ | SOFTCLOCK_W_FABRIC;
+    uint32_t work = SOFTCLOCK_W_WAITQ | SOFTCLOCK_W_FABRIC | SOFTCLOCK_W_AUDIO;
 
 #define DIVIDER_DUE(counter, target_hz)                  \
     ({ uint32_t _p = g_tick_hz / (target_hz);            \
