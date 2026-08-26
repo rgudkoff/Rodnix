@@ -19,6 +19,8 @@ bool waitq_contains(const waitq_t* q, const thread_t* t);
 int waitq_enqueue(waitq_t* q, thread_t* t);
 int waitq_remove(waitq_t* q, thread_t* t);
 void waitq_wake_thread(waitq_t* q, thread_t* t);
+/* Перед kfree потока: снять его со всей машинерии ожидания, под замком. */
+void waitq_thread_teardown(thread_t* t);
 thread_t* waitq_wake_one(waitq_t* q);
 uint32_t waitq_wake_all(waitq_t* q);
 uint32_t waitq_count(const waitq_t* q);

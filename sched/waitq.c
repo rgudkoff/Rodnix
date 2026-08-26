@@ -12,6 +12,8 @@
 #include "internal.h"
 #include "../../include/error.h"
 #include <stddef.h>
+#include "../include/console.h"
+
 
 TAILQ_HEAD(waitq_timeout_head, thread);
 static struct waitq_timeout_head waitq_timeouts;
@@ -272,7 +274,6 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ns)
     if (!self) {
         return RDNX_E_INVALID;
     }
-
     self->wait_timed_out = 0;
     if (!waitq_contains(q, self)) {
         int qret = waitq_enqueue(q, self);
@@ -333,7 +334,14 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ns)
 
 int waitq_wait(waitq_t* q, uint64_t timeout_ms)
 {
-    return waitq_wait_until(q, waitq_deadline_from_timeout_ms(timeout_ms));
+    uint64_t dl = waitq_deadline_from_timeout_ms(timeout_ms);
+    if (timeout_ms != 0 && dl == 0) {
+        /* Запрошен конечный сон, а дедлайн вычислился нулевым: армирования
+         * не будет, сон станет вечным. Часы сломались — кричать. */
+        kprintf("[WQ] zero deadline for %llums sleep: clock broken?\n",
+                (unsigned long long)timeout_ms);
+    }
+    return waitq_wait_until(q, dl);
 }
 
 void waitq_tick(uint64_t now_ticks)
@@ -370,4 +378,33 @@ void waitq_tick(uint64_t now_ticks)
         resched_pending = true;
     }
     spinlock_unlock_irqrestore(&waitq_spin, tflags);
+}
+
+/*
+ * Развязать поток со всей машинерией ожидания — перед освобождением его
+ * памяти. Идемпотентно и под замком: снятие с очереди ожидания, если он в
+ * ней; разоружение таймаута, если армирован.
+ *
+ * Зачем: принудительное завершение читало waitq_owner жертвы без замка.
+ * Жертву в этот миг могло разбудить истечение её же таймаута — и она,
+ * крутясь в цикле сна, заново вставала в очередь и армировалась. Проверка
+ * заставала NULL, снятия не происходило, и жнец освобождал поток, всё ещё
+ * вшитый в глобальный таймаут-лист. kfree-узел в TAILQ рвёт цепочку: лист
+ * терял всех спящих, и ни один таймированный сон в системе больше не
+ * просыпался. Найдено по timed=0 в сердцебиении при живом softclock.
+ */
+void waitq_thread_teardown(thread_t* t)
+{
+    if (!t) {
+        return;
+    }
+    uint64_t flags = spinlock_lock_irqsave(&waitq_spin);
+    waitq_t* q = t->waitq_owner;
+    if (q) {
+        waitq_remove_locked(q, t);
+    }
+    if (t->wait_timeout_armed) {
+        waitq_disarm_timeout(t);
+    }
+    spinlock_unlock_irqrestore(&waitq_spin, flags);
 }

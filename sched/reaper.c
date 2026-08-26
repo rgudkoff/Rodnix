@@ -134,6 +134,9 @@ void scheduler_reap_dead_threads(void)
             break;
         }
         dead->reap_queued = 0;
+        /* Ни один поток не покидает бытие, оставаясь вшитым в списки
+         * ожидания: освобождённый узел в TAILQ рвёт цепочку для всех. */
+        waitq_thread_teardown(dead);
         task_t* owner = dead->task;
         if (owner) {
             TAILQ_REMOVE(&owner->threads, dead, task_link);
