@@ -3,9 +3,11 @@
 #include "../lib/heap.h"
 #include "../trace/tracev2.h"
 #include "../kernel/unix/unix_layer.h"
+#include "../mm/vm_map.h"
 #include "../kernel/core/interrupts.h"
 #include "../include/error.h"
 #include "../include/debug.h"
+#include "../include/console.h"
 
 #define REAP_QUEUE_SIZE 64
 #define REAP_GRACE_TICKS 128
@@ -170,6 +172,13 @@ void scheduler_reap_dead_threads(void)
                         task_destroy(owner);
                     } else {
                         scheduler_task_set_state(owner, TASK_STATE_ZOMBIE, "reaper_wait_parent");
+                        /* Зомби хранит статус выхода — и только его.
+                         * Адресное пространство отдаётся смертью, не
+                         * waitpid'ом: иначе жертва убийцы по полосам не
+                         * освобождает ни страницы, пока родитель не
+                         * соизволит спросить, — а родитель в этот момент
+                         * сам стоит в отказе за памятью. */
+                        vm_task_destroy(owner);
                         unix_proc_notify_waiters(owner->parent_task_id);
                     }
                 }

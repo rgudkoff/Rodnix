@@ -20,6 +20,7 @@
 #define _RODNIX_VM_OBJECT_H
 
 #include <stdint.h>
+#include <bsd/sys/queue.h>
 #include "../kernel/fabric/spin.h"
 
 #define VM_OBJECT_PAGE_SIZE 0x1000ULL
@@ -49,6 +50,12 @@ typedef enum {
 struct vm_page;
 
 typedef struct vm_object {
+    /* Узел глобального реестра объектов. Возврат памяти ходит по объектам,
+     * а не по страницам: у страницы указатель на объект нельзя безопасно
+     * разыменовать без гарантии, что объект не умирает прямо сейчас, — а
+     * реестр даёт такую гарантию (снятие с учёта — первый шаг разрушения,
+     * под замком реестра, и там же живёт try_ref). */
+    TAILQ_ENTRY(vm_object) registry_link;
     vm_object_type_t type;
     uint8_t vm_class;          /* vm_class_t; VM_CLASS_NORMAL по умолчанию */
     uint32_t ref_count;        /* атомарный; последний unref разрушает объект */
@@ -90,5 +97,16 @@ uint64_t vm_object_get_resident_page(vm_object_t* obj, uint64_t page_index);
  * неизменна до смерти объекта. */
 uint64_t vm_object_insert_or_get_page(vm_object_t* obj, uint64_t page_index, uint64_t phys);
 uint32_t vm_object_resident_count(vm_object_t* obj);
+
+/*
+ * Возврат памяти (этап 8): пройти по объектам класса vm_class и отдать
+ * аллокатору до target страниц, у которых единственный держатель — сам
+ * объект (нигде не отображены, не закреплены). Файловые страницы с
+ * материализованным задником (fb->data) переписываются в него перед
+ * освобождением; VOLATILE и CACHE выбрасываются по контракту без записи;
+ * анонимные и demand-paging файловые пропускаются — без свопа и грязных
+ * битов их не отдать честно. Возвращает число освобождённых страниц.
+ */
+uint32_t vm_object_reclaim_class(uint8_t vm_class, uint32_t target);
 
 #endif /* _RODNIX_VM_OBJECT_H */

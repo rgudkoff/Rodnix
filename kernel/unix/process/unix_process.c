@@ -162,20 +162,9 @@ static int unix_signal_may_send(const task_t* sender, const task_t* target)
 
 static void unix_force_remove_ready_thread(thread_t* thread)
 {
-    int q;
-
-    if (!thread || !thread->ready_queued) {
-        return;
-    }
-
-    q = ready_queue_index_for_thread(thread);
-    TAILQ_REMOVE(&ready_queues[q], thread, sched_link);
-    thread->sched_link.tqe_next = NULL;
-    thread->sched_link.tqe_prev = NULL;
-    thread->ready_queued = 0;
-    if (stats.ready_tasks > 0) {
-        stats.ready_tasks--;
-    }
+    /* Под замком очереди, чужими руками не лазаем: правка списка без
+     * rq_lock рвалась тиком посреди TAILQ_REMOVE. */
+    scheduler_ready_remove(thread);
 }
 
 static void unix_force_clear_tid(thread_t* thread)
@@ -566,6 +555,12 @@ uint64_t unix_proc_fork(void)
         return (uint64_t)RDNX_E_GENERIC;
     }
     task_t* child = task_create();
+    if (child) {
+        /* Память наследует политику родителя: класс объектов по умолчанию и
+         * полосу убийства. Ребёнок волен опустить себя ниже — сисколлом. */
+        child->vm_class_default = parent->vm_class_default;
+        child->mem_band = parent->mem_band;
+    }
     if (!child) {
         return (uint64_t)RDNX_E_NOMEM;
     }
@@ -895,4 +890,28 @@ uint64_t unix_proc_thread_exit(uint64_t status)
 
     scheduler_exit_current();
     return 0;
+}
+
+/*
+ * Вход для убийцы по полосам (kernel/oom.c). force=0 — вежливое SIGTERM в
+ * ожидающие сигналы: окно на сброс, приложение вправе успеть записать
+ * проект. force=1 — немедленное снятие задачи.
+ */
+int unix_proc_oom_signal(uint64_t task_id, int force)
+{
+    task_t* target = task_find_by_id(task_id);
+    if (!target || target->state == TASK_STATE_DEAD ||
+        target->state == TASK_STATE_ZOMBIE) {
+        return RDNX_E_NOTFOUND;
+    }
+    if (force) {
+        unix_proc_force_terminate_task(target, UNIX_SIGKILL);
+        return RDNX_OK;
+    }
+    proc_t* p = task_proc(target);
+    if (!p) {
+        return RDNX_E_NOTFOUND;
+    }
+    p->sig_pending |= (1u << UNIX_SIGTERM);
+    return RDNX_OK;
 }

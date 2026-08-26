@@ -981,3 +981,13 @@ int pmm_get_reserved_regions(pmm_region_t* out, uint32_t max, uint32_t* out_coun
     *out_count = count;
     return RDNX_OK;
 }
+
+uint64_t pmm_free_pages_count(void)
+{
+    return pmm_state.free_pages;
+}
+
+uint64_t pmm_total_pages_count(void)
+{
+    return pmm_state.total_pages;
+}

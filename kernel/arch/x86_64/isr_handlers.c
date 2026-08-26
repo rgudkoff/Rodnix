@@ -21,10 +21,12 @@
 #include "../../linux/linux_compat.h"
 #include "../../core/task.h"
 #include "../../../mm/vm_fault.h"
+#include "../../unix/unix_layer.h"
 #include "interrupt_frame.h"
 #include "types.h"
 #include "config.h"
 #include "pic.h"
+#include "../pmm.h"
 #include "apic.h"
 #include "lapic_regs.h"
 #include "vectors.h"
@@ -401,6 +403,27 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
             giant_unlock();
             if (frc == RDNX_OK) {
                 return regs;
+            }
+            if (task && (regs->cs & 3) == 3 && task->parent_task_id != 0) {
+                /* init и задачи ядра не убиваются отсюда: их неразрешимый
+                 * отказ — смерть системы, и честнее упасть в панику ниже,
+                 * чем тихо снять единицу, без которой ничего не живёт. */
+                /* Неразрешимый отказ пользовательского режима — смерть
+                 * процесса, не машины. Штатный случай с этапа 8: отказ
+                 * возвращает E_NOMEM, когда памяти нет и лучшая жертва
+                 * убийцы — сам проситель. До ближайшего переключения
+                 * инструкция может отказать повторно — терминация
+                 * идемпотентна, а окно ограничено тиком. */
+                kprintf("[FAULT] task=%llu killed: unresolvable user fault "
+                        "va=%llx err=%llx rc=%d free=%llu\n",
+                        (unsigned long long)task->task_id,
+                        (unsigned long long)cr2,
+                        (unsigned long long)regs->err_code, frc,
+                        (unsigned long long)pmm_free_pages_count());
+                giant_lock();
+                (void)unix_proc_oom_signal(task->task_id, 1);
+                giant_unlock();
+                return scheduler_switch_from_irq(regs);
             }
         }
         tracev2_emit(TR2_CAT_FAULT, TR2_EV_FAULT_EXCEPTION, vector, regs->err_code);

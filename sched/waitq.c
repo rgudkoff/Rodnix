@@ -281,7 +281,14 @@ int waitq_wait_until(waitq_t* q, uint64_t deadline_ns)
         }
     }
     if (deadline_ns) {
+        /* Под замком, как и всё, что трогает глобальный список таймаутов.
+         * Вставка без замка рвалась тиком, пришедшим посреди неё: узел
+         * терялся из списка, и спящий не просыпался никогда. Найдено на
+         * этапе 8 — шторм отказов с сотнями коротких снов под тиком 100 Гц
+         * сделал из редкой гонки постоянную. */
+        uint64_t tf = spinlock_lock_irqsave(&waitq_spin);
         waitq_arm_timeout(self, deadline_ns);
+        spinlock_unlock_irqrestore(&waitq_spin, tf);
     }
 
     /*

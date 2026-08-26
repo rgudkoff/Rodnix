@@ -5,6 +5,7 @@
 #include "../../mm/vm_map.h"
 #include "../../mm/vm_object.h"
 #include "../../mm/vm_fault.h"
+#include "../../mm/vm_reclaim.h"
 #include "../unix/unix_layer.h"
 #include "../../include/sys/file.h"
 #include "../../lib/heap.h"
@@ -271,4 +272,11 @@ uint64_t posix_munlock(uint64_t a1, uint64_t a2, uint64_t a3,
         return (uint64_t)RDNX_E_INVALID;
     }
     return (uint64_t)vm_task_munlock(task, a1, a2);
+}
+
+uint64_t posix_mempressure(uint64_t a1, uint64_t a2, uint64_t a3,
+                           uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    return (uint64_t)vm_pressure_level();
 }

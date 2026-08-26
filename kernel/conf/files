@@ -27,6 +27,7 @@ kernel/posix/posix_sys_vm.c                  standard
 kernel/posix/posix_sys_info.c                standard
 kernel/debug.c                               standard
 kernel/task.c                                standard
+kernel/oom.c                                 standard
 kernel/kmutex.c                              standard
 kernel/giant.c                               standard
 kernel/witness.c                             standard

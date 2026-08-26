@@ -237,3 +237,31 @@ int ready_queue_index_for_thread(const thread_t* thread)
     }
     return bucket;
 }
+
+/*
+ * Снять поток с очереди готовности — под её замком. Единственный законный
+ * способ для внешних путей (принудительное завершение): правка списка без
+ * rq_lock рвалась тиком посреди TAILQ_REMOVE, найдено NULL-записью ядра
+ * из unix_force_remove_ready_thread при снятии бегущего процесса.
+ */
+void scheduler_ready_remove(thread_t* thread)
+{
+    if (!thread) {
+        return;
+    }
+    uint64_t f = spinlock_lock_irqsave(&rq_lock);
+    if (thread->ready_queued) {
+        int q = ready_queue_index_for_thread(thread);
+        if (q < 0 || q >= READY_QUEUE_LEVELS) {
+            q = (int)SCHED_BUCKET_DEFAULT;
+        }
+        TAILQ_REMOVE(&ready_queues[q], thread, sched_link);
+        thread->sched_link.tqe_next = NULL;
+        thread->sched_link.tqe_prev = NULL;
+        thread->ready_queued = 0;
+        if (stats.ready_tasks > 0) {
+            stats.ready_tasks--;
+        }
+    }
+    spinlock_unlock_irqrestore(&rq_lock, f);
+}

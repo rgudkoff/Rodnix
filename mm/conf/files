@@ -12,3 +12,4 @@ mm/vm_phys.c                                 standard
 mm/vm_pager.c                                standard
 mm/vm_map.c                                  standard
 mm/vm_fault.c                                standard
+mm/vm_reclaim.c                              standard

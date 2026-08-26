@@ -157,6 +157,12 @@ void scheduler_block(void);
 void scheduler_wake(thread_t* thread);
 
 /**
+ * Remove a thread from the ready queue, under its lock. For forced
+ * termination paths outside the scheduler.
+ */
+void scheduler_ready_remove(thread_t* thread);
+
+/**
  * Start a thread and block until it exits.
  * Declares the wait before the thread is scheduled, so its exit
  * cannot race the join.

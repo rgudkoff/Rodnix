@@ -298,6 +298,7 @@ task_t* task_create(void)
     /* Явно, не нулём: ноль в vm_class_t — это RT, и «все объекты по
      * умолчанию неприкосновенны» превратило бы возврат памяти в но-оп. */
     task->vm_class_default = 2; /* VM_CLASS_NORMAL; численно, чтобы task.c не тянул mm/ */
+    task->mem_band = (uint8_t)MEMBAND_FOREGROUND;
     task->tls_fs_base = 0;
     task->proc = NULL;
     task->main_thread = NULL;

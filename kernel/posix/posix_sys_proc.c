@@ -176,3 +176,25 @@ uint64_t posix_threadfaults(uint64_t a1, uint64_t a2, uint64_t a3,
     }
     return self->fault_count;
 }
+
+/*
+ * Полоса убийства при нехватке памяти. Понижать себя может всякий; v0 не
+ * охраняет повышение — политика допуска придёт вместе с сессиями аудио.
+ */
+uint64_t posix_memband(uint64_t a1, uint64_t a2, uint64_t a3,
+                       uint64_t a4, uint64_t a5, uint64_t a6)
+{
+    (void)a2; (void)a3; (void)a4; (void)a5; (void)a6;
+    task_t* task = task_get_current();
+    if (!task) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    if ((int64_t)a1 == -1) {
+        return task->mem_band;
+    }
+    if (a1 > (uint64_t)MEMBAND_CRITICAL) {
+        return (uint64_t)RDNX_E_INVALID;
+    }
+    task->mem_band = (uint8_t)a1;
+    return 0;
+}

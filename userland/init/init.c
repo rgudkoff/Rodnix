@@ -660,6 +660,161 @@ static void run_contract_mode_if_enabled(void)
     }
 
     {
+        /*
+         * CT-044: под давлением аудио не прерывается. Фоновый ребёнок
+         * (полоса BACKGROUND) наедается анонимной памятью до критического
+         * давления и засыпает; родитель с закреплённым «аудио»-буфером
+         * продолжает выделять. Ожидаемое: убийца по полосам снимает
+         * ребёнка (SIGTERM-окно, затем сила), выделения родителя снова
+         * проходят, а закреплённый буфер не берёт ни одного отказа.
+         */
+        enum { CT44_LOCKED = 16 * 4096, CT44_CHUNK = 8u << 20 };
+        volatile unsigned char* audio =
+            (volatile unsigned char*)posix_mmap(0, CT44_LOCKED, 0x1 | 0x2,
+                                                0x0002 | 0x1000, -1, 0);
+        int ok44 = ((long)audio > 0);
+        if (ok44 && posix_mlock((void*)audio, CT44_LOCKED) != 0) {
+            ct_log("CT-044", "FAIL", "mlock failed");
+            ok44 = 0;
+        }
+        if (ok44) {
+            for (unsigned off = 0; off < CT44_LOCKED; off += 4096) {
+                audio[off] = 1; /* привести до шторма */
+            }
+        }
+
+        /* Пользовательское адресное пространство — 512 МБ на процесс: один
+         * обжора не съест гигабайт. Обжор трое; убийце хватит одного. */
+        enum { CT44_HOGS = 3 };
+        long hogs[CT44_HOGS] = { -1, -1, -1 };
+        for (int h = 0; ok44 && h < CT44_HOGS; h++) {
+            hogs[h] = fork();
+            if (hogs[h] == 0) {
+                /* Обжора: вниз в BACKGROUND и наедаться до критического
+                 * давления; затем спать — жертвой станет он. */
+                (void)posix_memband(0);
+                /* До WARN, не до CRITICAL: критическое плато живёт
+                 * миллисекунды (жертву снимают, память возвращается), а
+                 * полоса WARN шириной в десятую часть машины — устойчивый
+                 * ориентир и для обжор, и для опроса родителя. */
+                while (posix_mempressure() < 1) {
+                    long m = posix_mmap(0, CT44_CHUNK, 0x1 | 0x2,
+                                        0x0002 | 0x1000, -1, 0);
+                    if (m <= 0) {
+                        break;
+                    }
+                    volatile unsigned char* b = (volatile unsigned char*)m;
+                    for (unsigned off = 0; off < CT44_CHUNK; off += 4096) {
+                        b[off] = 1;
+                    }
+                }
+                for (;;) {
+                    struct timespec req = { 0, 50000000 };
+                    (void)nanosleep(&req, 0);
+                }
+            }
+            if (hogs[h] <= 0) {
+                ct_log("CT-044", "FAIL", "fork failed");
+                ok44 = 0;
+            }
+        }
+
+        if (ok44) {
+            /* Дождаться давления, созданного ребёнком. */
+            int spins = 0;
+            while (posix_mempressure() < 1 && spins++ < 600) {
+                struct timespec req = { 0, 100000000 };
+                (void)nanosleep(&req, 0);
+            }
+            if (posix_mempressure() < 1) {
+                ct_log("CT-044", "FAIL", "child never built pressure");
+                ok44 = 0;
+            }
+        }
+
+        enum { CT44_STORM = 24 };
+        long storm[CT44_STORM] = {0};
+        if (ok44) {
+            /* Шторм родителя глубже свободного остатка: эти выделения
+             * обязаны в итоге пройти — ценой обжоры. */
+            int got = 0;
+            for (int c = 0; c < CT44_STORM; c++) {
+                storm[c] = posix_mmap(0, CT44_CHUNK, 0x1 | 0x2,
+                                      0x0002 | 0x1000, -1, 0);
+                if (storm[c] <= 0) {
+                    continue;
+                }
+                volatile unsigned char* b = (volatile unsigned char*)storm[c];
+                for (unsigned off = 0; off < CT44_CHUNK; off += 4096) {
+                    b[off] = 1;
+                }
+                got++;
+            }
+            if (got < CT44_STORM - 4) {
+                ct_log("CT-044", "FAIL", "allocations kept failing under pressure");
+                ok44 = 0;
+            }
+        }
+
+        int dead_hogs = 0;
+        if (ok44) {
+            /* Хотя бы один обжора должен быть снят по полосе. Ждать —
+             * любого ребёнка: WNOHANG у этого ядра пока не существует
+             * (waitpid без флагов), а первым умершим ребёнком обязана быть
+             * жертва убийцы. */
+            int status = -1;
+            long w = waitpid((pid_t)-1, &status, 0);
+            for (int h = 0; h < CT44_HOGS; h++) {
+                if (w == hogs[h]) {
+                    hogs[h] = -1;
+                    dead_hogs++;
+                }
+            }
+            if (dead_hogs == 0) {
+                ct_log("CT-044", "FAIL", "background hogs survived the storm");
+                ok44 = 0;
+            }
+        }
+
+        if (ok44) {
+            /* Аудио-буфер: ни одного отказа за весь шторм и после него. */
+            (void)posix_schedrt(1);
+            long f0 = posix_threadfaults();
+            for (unsigned off = 0; off < CT44_LOCKED; off += 4096) {
+                audio[off] = 2;
+            }
+            long f1 = posix_threadfaults();
+            (void)posix_schedrt(0);
+            if (f1 != f0) {
+                ct_log("CT-044", "FAIL", "audio buffer faulted under pressure");
+                ok44 = 0;
+            } else {
+                ct_log("CT-044", "PASS", "audio uninterrupted while hog was killed");
+            }
+        }
+
+        for (int c = 0; c < CT44_STORM; c++) {
+            if (storm[c] > 0) {
+                (void)posix_munmap((void*)storm[c], CT44_CHUNK);
+            }
+        }
+        for (int h = 0; h < CT44_HOGS; h++) {
+            if (hogs[h] > 0) {
+                (void)posix_kill((long)hogs[h], 9);
+                int status = -1;
+                (void)waitpid((pid_t)hogs[h], &status, 0);
+            }
+        }
+        if ((long)audio > 0) {
+            (void)posix_munlock((void*)audio, CT44_LOCKED);
+            (void)posix_munmap((void*)audio, CT44_LOCKED);
+        }
+        if (!ok44) {
+            ok = 0;
+        }
+    }
+
+    {
         int status = -1;
         volatile uint64_t as_canary = 0x1122334455667788ULL;
         long pid = posix_spawn("/bin/true", 0);

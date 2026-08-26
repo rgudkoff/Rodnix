@@ -12,4 +12,9 @@
 #error "Architecture PMM interface is not wired for this target yet"
 #endif
 
+/* Датчик давления: сколько страниц свободно/всего. Читается без замка —
+ * число устаревает в момент чтения, и точность тут не нужна. */
+uint64_t pmm_free_pages_count(void);
+uint64_t pmm_total_pages_count(void);
+
 #endif /* _RODNIX_ARCH_PMM_H */

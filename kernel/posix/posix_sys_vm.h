@@ -9,6 +9,7 @@ uint64_t posix_msync(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_
 uint64_t posix_brk(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_mprotect(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_mlock(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
+uint64_t posix_mempressure(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 uint64_t posix_munlock(uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6);
 
 #endif /* _RODNIX_POSIX_SYS_VM_H */

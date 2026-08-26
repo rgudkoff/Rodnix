@@ -157,4 +157,7 @@ uint64_t unix_time_nanosleep(uint64_t user_req_ptr, uint64_t user_rem_ptr);
 void unix_proc_notify_waiters(uint64_t parent_task_id);
 void unix_proc_close_fds(task_t* task);
 
+/* OOM: сигнал задаче — SIGTERM-окно (force=0) или немедленное снятие (force=1). */
+int unix_proc_oom_signal(uint64_t task_id, int force);
+
 #endif /* _RODNIX_UNIX_LAYER_H */

@@ -29,6 +29,9 @@
 #include "../include/common.h"
 #include "../include/console.h"
 #include "../include/error.h"
+#include "vm_reclaim.h"
+#include "../kernel/core/oom.h"
+#include "../sched/scheduler.h"
 
 static vm_fault_stats_t g_fault_stats;
 
@@ -48,6 +51,62 @@ void vm_fault_get_stats(vm_fault_stats_t* out)
     out->spurious   = __atomic_load_n(&g_fault_stats.spurious, __ATOMIC_RELAXED);
 }
 
+/*
+ * Выделение страницы под отказ — с полным протоколом нехватки: возврат по
+ * классам, затем убийство по полосам с окном на сброс, затем ещё попытки.
+ * Ноль — только когда сделано всё: либо жертва — сам проситель (ему положен
+ * честный отказ), либо освобождать больше нечего.
+ */
+static uint64_t vm_fault_alloc_page(void)
+{
+    /* Терпение соразмерно жнецу: память жертвы возвращается только после
+     * того, как жнец переработает её потоки, а он берёт мёртвых не раньше
+     * REAP_GRACE_TICKS — при 100 Гц это больше секунды. Сдаваться раньше —
+     * убивать просителя за то, что сборка мусора не мгновенна. */
+    for (int attempt = 0; attempt < 60; attempt++) {
+        uint64_t phys = vm_pager_alloc_zero_page();
+        if (phys) {
+            return phys;
+        }
+        if (vm_reclaim_run(64) != 0) {
+            continue;
+        }
+        if (!oom_kill_step()) {
+            return 0;
+        }
+        /* Окно жертвы и её разборка идут в чужих контекстах: подождать. */
+        scheduler_sleep(50);
+    }
+    return 0;
+}
+
+/*
+ * Вход в pmap — с тем же протоколом нехватки, что и выделение данных:
+ * промежуточной таблице страниц тоже нужна физическая страница, и отказ в
+ * ней при пустом аллокаторе не отличается для просителя от отказа в данных.
+ * Без этого исчерпание убивало процесс (включая init) мгновенно, минуя
+ * возврат и убийцу по полосам.
+ */
+static int vm_fault_enter(task_t* task, uint64_t va, uint64_t phys,
+                          uint32_t prot, uint32_t flags)
+{
+    int rc = RDNX_E_GENERIC;
+    for (int attempt = 0; attempt < 60; attempt++) {
+        rc = pmap_enter(task->address_space, va, phys, prot, flags);
+        if (rc == RDNX_OK) {
+            return rc;
+        }
+        if (vm_reclaim_run(64) != 0) {
+            continue;
+        }
+        if (!oom_kill_step()) {
+            return rc;
+        }
+        scheduler_sleep(50);
+    }
+    return rc;
+}
+
 static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
 {
     return e && e->object && (e->flags & VM_MAP_F_PRIVATE) != 0;
@@ -60,14 +119,17 @@ static int vm_entry_uses_private_object_cow(const vm_map_entry_t* e)
 static int vm_fault_cow_copy(task_t* task, const vm_map_entry_t* e,
                              uint64_t va, uint64_t shared_phys)
 {
-    uint64_t new_phys = vm_pager_alloc_zero_page();
+    uint64_t new_phys = vm_fault_alloc_page();
     if (!new_phys) {
         return RDNX_E_NOMEM;
     }
     memcpy(ARCH_PHYS_TO_VIRT(new_phys), ARCH_PHYS_TO_VIRT(shared_phys),
            VM_PAGE_SIZE);
-    (void)pmap_enter(task->address_space, va, new_phys, e->prot,
-                     PMAP_ENTER_USER);
+    int erc = vm_fault_enter(task, va, new_phys, e->prot, PMAP_ENTER_USER);
+    if (erc != RDNX_OK) {
+        (void)vm_page_drop(new_phys);
+        return erc;
+    }
     (void)vm_page_drop(shared_phys); /* ссылка этого отображения на общую */
     vm_page_activate(new_phys);
     FAULT_COUNT(cow_copy);
@@ -100,7 +162,7 @@ static int vm_fault_page_absent(task_t* task, vm_map_entry_t* e,
     }
 
     if (!phys) {
-        phys = vm_pager_alloc_zero_page();
+        phys = vm_fault_alloc_page();
         if (!phys) {
             return RDNX_E_NOMEM;
         }
@@ -136,8 +198,7 @@ static int vm_fault_page_absent(task_t* task, vm_map_entry_t* e,
          * общую страницу объекта. */
         eff_prot &= ~VM_PROT_WRITE;
     }
-    int rc = pmap_enter(task->address_space, va, phys, eff_prot,
-                        PMAP_ENTER_USER);
+    int rc = vm_fault_enter(task, va, phys, eff_prot, PMAP_ENTER_USER);
     if (rc == RDNX_OK) {
         /* Установленная страница встаёт в ACTIVE — очередь, по которой
          * пойдёт возврат памяти (этап 8). Закреплённых это не касается:

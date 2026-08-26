@@ -774,6 +774,30 @@ static int vm_task_fork_clone_locked(task_t* parent, task_t* child, pmap_t child
             if (!phys) {
                 continue;
             }
+
+            vm_page_t* m = vm_page_lookup(phys);
+            if (cow && m && m->wire_count > 0) {
+                /* Закреплённая страница не участвует в COW: снять запись у
+                 * родителя — значит сломать обещание mlock («не берёт отказ
+                 * вообще») первым же fork'ом. Ребёнок получает жадную копию
+                 * с полными правами; PTE родителя не трогается. Так же
+                 * поступают референсы с wired-областями. */
+                uint64_t np = vm_pager_alloc_zero_page();
+                if (!np) {
+                    vm_map_destroy(cmap);
+                    return RDNX_E_NOMEM;
+                }
+                memcpy(ARCH_PHYS_TO_VIRT(np), ARCH_PHYS_TO_VIRT(phys),
+                       VM_PAGE_SIZE);
+                if (pmap_enter(child_pmap, va, np, pe->prot,
+                               PMAP_ENTER_USER) != RDNX_OK) {
+                    (void)vm_page_drop(np);
+                    vm_map_destroy(cmap);
+                    return RDNX_E_GENERIC;
+                }
+                continue;
+            }
+
             uint32_t eff_prot = pe->prot;
             if (cow) {
                 eff_prot &= ~VM_PROT_WRITE;

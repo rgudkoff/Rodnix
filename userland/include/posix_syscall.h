@@ -580,4 +580,14 @@ static inline long posix_threadfaults(void)
     return rdnx_syscall0(POSIX_SYS_THREADFAULTS);
 }
 
+static inline long posix_memband(long band)
+{
+    return rdnx_syscall1(POSIX_SYS_MEMBAND, band);
+}
+
+static inline long posix_mempressure(void)
+{
+    return rdnx_syscall0(POSIX_SYS_MEMPRESSURE);
+}
+
 #endif /* _RODNIX_USERLAND_POSIX_SYSCALL_H */
