@@ -78,6 +78,7 @@ struct spin_wait {
     uint64_t spins;
     uint64_t started;    /* TSC at the first check; 0 until then */
     uint64_t irq_base;   /* handler time on this CPU at that moment */
+    uint32_t slow_reported; /* one slow-wait line per session */
 };
 
 __attribute__((noreturn))
@@ -122,6 +123,17 @@ static inline void spin_wait_step(struct spin_wait* w, spinlock_t* lock,
         w->started = ktime_raw();
         w->irq_base = hygiene_irq_ticks();
         return;
+    }
+
+    /* A wait a thousand times longer than any legitimate hold is a finding
+     * even below the panic threshold: on one processor the holder cannot be
+     * running while this spins, and every such session is the question "who
+     * releases this, and how". Only noted here -- reported after the
+     * acquire, where taking the console lock is ordinary nesting and not a
+     * recursion onto the very lock being waited for. */
+    if (!w->slow_reported && ktime_ready() &&
+        ktime_raw_to_ns(ktime_raw() - w->started) > 2000000ULL) {
+        w->slow_reported = 1;
     }
 
     uint64_t limit = spin_timeout_ticks();
@@ -189,13 +201,24 @@ void spinlock_lock_named(spinlock_t* lock, const char* name,
     /* Before the acquire, so a reversal is reported rather than entered. */
     (void)witness_check(&lock->witness_id, name, file, line);
 
-    struct spin_wait w = { 0, 0, 0 };
+    struct spin_wait w = { 0, 0, 0, 0 };
     while (__sync_lock_test_and_set(&lock->locked, 1)) {
         spin_wait_step(&w, lock, name, file, line);
     }
     lock->owner_plus_one = me;
     witness_acquired(&lock->witness_id, lock, name, file, line);
     __asm__ volatile ("" ::: "memory");
+
+    if (w.slow_reported) {
+        static uint32_t slow_budget = 8;
+        if (slow_budget > 0) {
+            slow_budget--;
+            kprintf("[SPIN] slow wait: %s %lluus at %s:%d\n",
+                    name ? name : "?",
+                    (unsigned long long)(ktime_raw_to_ns(ktime_raw() - w.started) / 1000ULL),
+                    file, line);
+        }
+    }
 }
 
 void spinlock_unlock(spinlock_t* lock)
@@ -259,12 +282,24 @@ uint64_t spinlock_lock_irqsave_named(spinlock_t* lock, const char* name,
 
         (void)witness_check(&lock->witness_id, name, file, line);
 
-        struct spin_wait w = { 0, 0, 0 };
+        struct spin_wait w = { 0, 0, 0, 0 };
         while (__sync_lock_test_and_set(&lock->locked, 1)) {
             spin_wait_step(&w, lock, name, file, line);
         }
         lock->owner_plus_one = me;
         witness_acquired(&lock->witness_id, lock, name, file, line);
+        /* Reported with the lock held and interrupts still masked: short,
+         * and console output from here has the same shape as spin_timeout's. */
+        if (w.slow_reported) {
+            static uint32_t slow_budget_irqsave = 8;
+            if (slow_budget_irqsave > 0) {
+                slow_budget_irqsave--;
+                kprintf("[SPIN] slow wait: %s %lluus at %s:%d\n",
+                        name ? name : "?",
+                        (unsigned long long)(ktime_raw_to_ns(ktime_raw() - w.started) / 1000ULL),
+                        file, line);
+            }
+        }
     }
     __asm__ volatile ("" ::: "memory");
     return flags;

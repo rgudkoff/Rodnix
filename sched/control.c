@@ -124,6 +124,21 @@ void scheduler_block(void)
         return;
     }
 
+    /* Заснуть с ненулевым счётчиком преемпции — значит оставить его
+     * ненулевым чужому потоку: счётчик процессорный, и окно, открытое
+     * здесь, закроется неизвестно когда и запишется не на того. Тот же
+     * класс, что и спящий ext2-лок. Громко, потому что молча это
+     * выглядит как десять миллисекунд запрета преемпции из ниоткуда. */
+    if (percpu_preempt_blocked()) {
+        static int preempt_block_warns = 0;
+        if (preempt_block_warns < 8) {
+            preempt_block_warns++;
+            kprintf("[SCHED] block with preemption off (count=%u) tid=%llu\n",
+                    (unsigned)percpu_self()->preempt_count,
+                    (unsigned long long)cur->thread_id);
+        }
+    }
+
     uint64_t f = spinlock_lock_irqsave(&cur->sched_lock);
     uint32_t s = cur->state;
     if ((s & TH_WAIT) == 0u || (s & TH_DEAD) != 0u) {

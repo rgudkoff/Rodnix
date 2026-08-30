@@ -383,6 +383,8 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
          * stopped being the same question (docs/ru/irq_audit.md, F7). */
         if (interrupt_is_tick(vector)) {
             percpu_irq_selftest();
+            hygiene_preempt_tick_probe(regs->rip,
+                                       percpu_self()->preempt_count);
             scheduler_tick();
             regs = scheduler_switch_from_irq(regs);
         }

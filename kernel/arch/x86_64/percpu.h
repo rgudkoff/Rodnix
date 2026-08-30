@@ -242,8 +242,12 @@ static inline uint32_t percpu_apic_id(void)
 static inline void percpu_preempt_disable_at(const char* file, int line)
 {
     struct percpu* p = percpu_self();
-    if (p->preempt_count++ == 0 && hygiene_enabled()) {
-        hygiene_preempt_begin(file, line);
+    if (p->preempt_count++ == 0) {
+        if (hygiene_enabled()) {
+            hygiene_preempt_begin(file, line);
+        }
+    } else if (hygiene_enabled()) {
+        hygiene_preempt_nested(file, line);
     }
     __asm__ volatile ("" ::: "memory");
 }
@@ -258,11 +262,18 @@ static inline void percpu_preempt_enable(void)
     __asm__ volatile ("" ::: "memory");
     struct percpu* p = percpu_self();
     if (p->preempt_count > 0) {
-        if (--p->preempt_count == 0 && hygiene_enabled()) {
-            /* After the count has reached zero, so the reporting path may take
-             * locks of its own without re-entering this window. */
+        if (p->preempt_count == 1 && hygiene_enabled()) {
+            /* Closed while the count still pins this processor. Closing
+             * after the decrement left a gap where a tick could switch
+             * away with the window administratively open, and whoever ran
+             * next -- the idle thread included -- was billed to the lock
+             * site that had long since released. Ten milliseconds of that
+             * reported as held preemption at pmap_remove's lock.
+             * Reporting from here nests (count is 1, not 0), which opens
+             * no new window: begin() fires only on the 0-to-1 edge. */
             hygiene_preempt_end();
         }
+        --p->preempt_count;
     }
 }
 

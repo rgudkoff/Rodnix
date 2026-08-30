@@ -75,6 +75,19 @@ struct hygiene_cpu {
     int preempt_line;
     uint64_t preempt_irq_base;   /* irq_ticks when the window opened */
 
+    /* Locks taken while the window was already open. A long window with
+     * thousands of nestings is a count that never reached zero between
+     * iterations -- a different disease from one long critical section,
+     * and the report has to tell them apart. */
+    uint32_t preempt_nested;
+    const char* preempt_nested_site;
+    int preempt_nested_line;
+    /* Interrupted RIP sampled by the first tick that lands after the open
+     * window has already outlived the threshold: names the code the cpu
+     * was actually in, which the opening site alone cannot. */
+    uint64_t preempt_sample_rip;
+    uint32_t preempt_sample_count;   /* preempt_count seen at that probe */
+
     uint64_t irq_start;
     uint32_t irq_vector;
 
@@ -205,7 +218,8 @@ typedef enum { HYG_INT, HYG_PREEMPT, HYG_IRQ } hyg_kind_t;
 
 static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
                       uint64_t gross, uint64_t net,
-                      const char* site, int line, uint32_t aux)
+                      const char* site, int line, uint32_t aux,
+                      uint32_t nested, const char* nested_site, int nested_line)
 {
     struct hygiene_window* w;
     const char* what;
@@ -285,6 +299,11 @@ static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
         } else if (site) {
             kprintf("  at %s:%d", site, line);
         }
+        if (nested > 0) {
+            kprintf("  nested=%u first=%s:%d",
+                    (unsigned)nested,
+                    nested_site ? nested_site : "?", nested_line);
+        }
         kprintf("%s\n",
                 (g_report_budget == 0) ? "  [further reports suppressed]" : "");
     }
@@ -328,7 +347,8 @@ void hygiene_int_end(void)
      * whole window, so no handler can have run inside it. The distinction is
      * kept in the signature anyway so the three windows read the same.
      */
-    hyg_close(c, HYG_INT, gross, gross, c->int_site, c->int_line, 0);
+    hyg_close(c, HYG_INT, gross, gross, c->int_site, c->int_line, 0,
+              0, NULL, 0);
 }
 
 void hygiene_preempt_begin(const char* site, int line)
@@ -343,7 +363,42 @@ void hygiene_preempt_begin(const char* site, int line)
     c->preempt_site = site;
     c->preempt_line = line;
     c->preempt_irq_base = c->irq_ticks;
+    c->preempt_nested = 0;
+    c->preempt_nested_site = NULL;
+    c->preempt_nested_line = 0;
+    c->preempt_sample_rip = 0;
     c->preempt_start = hyg_now();
+}
+
+void hygiene_preempt_tick_probe(uint64_t rip, uint32_t preempt_count)
+{
+    if (!g_hygiene_on) {
+        return;
+    }
+    struct hygiene_cpu* c = hyg_cpu();
+    if (!c->preempt_start || c->preempt_sample_rip) {
+        return;
+    }
+    if (hyg_now() - c->preempt_start >= g_thr_preempt) {
+        c->preempt_sample_rip = rip;
+        c->preempt_sample_count = preempt_count;
+    }
+}
+
+void hygiene_preempt_nested(const char* site, int line)
+{
+    if (!g_hygiene_on) {
+        return;
+    }
+    struct hygiene_cpu* c = hyg_cpu();
+    if (!c->preempt_start) {
+        return;
+    }
+    c->preempt_nested++;
+    if (!c->preempt_nested_site) {
+        c->preempt_nested_site = site;
+        c->preempt_nested_line = line;
+    }
 }
 
 void hygiene_preempt_end(void)
@@ -362,7 +417,21 @@ void hygiene_preempt_end(void)
     /* Interrupts stayed enabled through this window, so handlers did run in
      * it. They are not this window's doing and are not charged to it. */
     uint64_t net = (gross > irq) ? (gross - irq) : 0;
-    hyg_close(c, HYG_PREEMPT, gross, net, c->preempt_site, c->preempt_line, 0);
+    /* Copied out before hyg_close: its report path opens a fresh window
+     * through the console lock, which resets the fields on this cpu. */
+    uint32_t nested = c->preempt_nested;
+    const char* nsite = c->preempt_nested_site;
+    int nline = c->preempt_nested_line;
+    uint64_t srip = c->preempt_sample_rip;
+    uint32_t scount = c->preempt_sample_count;
+    hyg_close(c, HYG_PREEMPT, gross, net, c->preempt_site, c->preempt_line, 0,
+              nested, nsite, nline);
+    if (srip && net >= g_thr_preempt && c->busy == 0 && g_report_budget > 0) {
+        c->busy++;
+        kprintf("[hygiene]   in-window rip=%llx preempt_count=%u\n",
+                (unsigned long long)srip, (unsigned)scount);
+        c->busy--;
+    }
 }
 
 void hygiene_irq_enter(uint32_t vector)
@@ -402,7 +471,8 @@ void hygiene_irq_exit(uint32_t vector)
      * sees the handler time it needs to subtract. */
     c->irq_ticks += gross;
 
-    hyg_close(c, HYG_IRQ, gross, gross, NULL, 0, c->irq_vector);
+    hyg_close(c, HYG_IRQ, gross, gross, NULL, 0, c->irq_vector,
+              0, NULL, 0);
 }
 
 uint64_t hygiene_irq_ticks(void)

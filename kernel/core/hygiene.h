@@ -83,6 +83,13 @@ void hygiene_int_end(void);
  * the count itself lives in one inline that every caller shares. */
 void hygiene_preempt_begin(const char* site, int line);
 void hygiene_preempt_end(void);
+/* A lock taken while this cpu's window was already open; the first such
+ * site is named in an over-limit report to separate "one long critical
+ * section" from "a count that never came back to zero". */
+void hygiene_preempt_nested(const char* site, int line);
+/* Called from the tick with the interrupted RIP; samples it once per
+ * preempt window, and only after the window has outlived the threshold. */
+void hygiene_preempt_tick_probe(uint64_t rip, uint32_t preempt_count);
 
 /* One interrupt, entry to exit. Also the source of the per-CPU handler time
  * that the other two windows subtract. */
