@@ -10,6 +10,7 @@
  */
 
 #include "../../core/interrupts.h"
+#include "../../core/ktime.h"
 #include "types.h"
 #include "idt.h"
 #include "pic.h"
@@ -438,23 +439,32 @@ int irql_selftest(void)
     const uint32_t self = percpu_index();
 #define TICKS_HERE() ((uint32_t)irqstat_get(self, VECTOR_LAPIC_TIMER))
 
-    if (!lapic_access_ready()) {
+    if (!lapic_access_ready() || !ktime_ready()) {
         return -1;
     }
 
+    /* Both windows are sized in wall-clock time, not iterations: an
+     * iteration count that spans ten timer periods on hardware spans
+     * seconds under TCG emulation. 10ms covers several periods at any
+     * plausible timer rate, which is all either verdict needs. */
+    const uint64_t window_ns = 10000000ULL;
+
     irql_t entry = set_irql(IRQL_CLOCK);
     uint32_t masked_start = TICKS_HERE();
-    for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
+    uint64_t t0 = ktime_ns();
+    while (ktime_ns() - t0 < window_ns) {
         __asm__ volatile ("pause");
     }
     uint32_t masked_end = TICKS_HERE();
 
     (void)set_irql(IRQL_PASSIVE);
     uint32_t open_start = TICKS_HERE();
-    for (volatile uint64_t i = 0; i < 20000000ULL; i++) {
+    uint32_t open_end = open_start;
+    t0 = ktime_ns();
+    while (open_end == open_start && ktime_ns() - t0 < window_ns) {
         __asm__ volatile ("pause");
+        open_end = TICKS_HERE();
     }
-    uint32_t open_end = TICKS_HERE();
 
     (void)set_irql(entry);
 

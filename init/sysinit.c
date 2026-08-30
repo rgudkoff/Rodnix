@@ -598,14 +598,25 @@ kernel_enable_runtime_interrupts(void)
         uint64_t t0 = scheduler_get_ticks();
         uint32_t ap0 = apic_timer_get_ticks();
         uint32_t cur0 = apic_timer_get_current_count();
-        for (volatile int i = 0; i < 5000000; i++) {
+        /* A live timer shows progress within microseconds (current_count
+         * decrements continuously); 5ms of wall clock is several full
+         * periods. Timed by ktime so the wait doesn't scale with host
+         * speed the way an iteration count does. */
+        uint64_t t1;
+        uint32_t ap1, cur1;
+        bool apic_progress, sched_progress;
+        uint64_t ns0 = ktime_ns();
+        uint64_t guard = 0;
+        do {
             __asm__ volatile ("pause");
-        }
-        uint64_t t1 = scheduler_get_ticks();
-        uint32_t ap1 = apic_timer_get_ticks();
-        uint32_t cur1 = apic_timer_get_current_count();
-        bool apic_progress = (ap1 > ap0) || (cur1 != cur0);
-        bool sched_progress = (t1 > t0);
+            t1 = scheduler_get_ticks();
+            ap1 = apic_timer_get_ticks();
+            cur1 = apic_timer_get_current_count();
+            apic_progress = (ap1 > ap0) || (cur1 != cur0);
+            sched_progress = (t1 > t0);
+        } while (!apic_progress && !sched_progress &&
+                 ktime_ns() - ns0 < 5000000ULL &&
+                 ++guard < 400000000ULL);
         if (!apic_progress && !sched_progress) {
             if (bootlog_is_verbose()) {
                 extern uint32_t apic_timer_get_frequency(void);
