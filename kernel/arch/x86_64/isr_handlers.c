@@ -500,6 +500,20 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
         serial_write_hex64(regs->rip);
         serial_write_str(" err=");
         serial_write_hex64(regs->err_code);
+        /* cs и task решают, ПОЧЕМУ отказ дошёл до этого дампа, а не до
+         * ветки убийства: ядерный cs с пользовательским rip — перекошенный
+         * кадр, нулевая task — отказ вне контекста задачи. */
+        serial_write_str(" cs=");
+        serial_write_hex64(regs->cs);
+        serial_write_str(" rsp=");
+        serial_write_hex64(regs->rsp);
+        {
+            task_t* dump_task = task_get_current();
+            serial_write_str(" task=");
+            serial_write_hex64(dump_task ? dump_task->task_id : 0);
+            serial_write_str(" parent=");
+            serial_write_hex64(dump_task ? dump_task->parent_task_id : 0);
+        }
         serial_write_str("\n");
         if (vector == 14) {
             uint64_t cr2;

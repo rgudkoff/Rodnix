@@ -37,6 +37,15 @@ static thread_t* sched_take_next(void)
 {
     thread_t* next = ready_dequeue();
     if (next) {
+        /* Мёртвый поток в очереди готовности — это второй билет на
+         * исполнение: его стек уже у жнеца или скоро будет. Громко и с
+         * именем, потому что молча это возобновление протухшего фрейма
+         * и падение вдалеке от причины. */
+        if (thread_is_dead(next)) {
+            kprintf("[SCHED] TRIPWIRE dead tid=%llu dequeued state=%x\n",
+                    (unsigned long long)next->thread_id,
+                    (unsigned)next->state);
+        }
         return next;
     }
     return percpu_self()->sched_idle;
@@ -244,6 +253,21 @@ interrupt_frame_t* scheduler_switch_from_irq(interrupt_frame_t* frame)
     if (bootlog_is_verbose() && log_count < 8) {
         kprintf("[SCHED] switch to tid=%llu\n",
                 (unsigned long long)next->thread_id);
+    }
+    {
+        /* Кадр, из которого поток возобновится, обязан быть кадром: CS в
+         * нём — один из двух селекторов, других не существует. Всё прочее
+         * означает, что stack_pointer показывает не на кадр прерывания, и
+         * честнее назвать это здесь, чем словить #GP на iretq. */
+        const interrupt_frame_t* nf =
+            (const interrupt_frame_t*)(uintptr_t)next->context.stack_pointer;
+        if (nf && nf->cs != 0x08 && nf->cs != (GDT_USER_CS | 0x3)) {
+            kprintf("[SCHED] TRIPWIRE tid=%llu bogus frame cs=%llx rip=%llx sp=%llx\n",
+                    (unsigned long long)next->thread_id,
+                    (unsigned long long)nf->cs,
+                    (unsigned long long)nf->rip,
+                    (unsigned long long)next->context.stack_pointer);
+        }
     }
     return (interrupt_frame_t*)(uintptr_t)next->context.stack_pointer;
 }
