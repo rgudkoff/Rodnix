@@ -34,6 +34,11 @@ static uint64_t g_oom_victim_id;
 static uint64_t g_oom_victim_deadline_ns;
 static uint8_t g_oom_victim_forced;
 
+/* Строка «ждём жнеца» уже сказана в этом эпизоде: отказ зовёт нас в цикле,
+ * и без защёлки объяснение превратилось бы в шум. Сбрасывается выбором
+ * новой жертвы. */
+static uint8_t g_oom_reap_wait_said;
+
 typedef struct {
     uint64_t id;
     uint64_t parent;
@@ -43,25 +48,29 @@ typedef struct {
 typedef struct {
     oom_cand_t c[OOM_MAX_CANDIDATES];
     uint32_t n;
+    uint32_t dying;
 } oom_scan_t;
 
 static void oom_collect(const task_t* t, void* ctx)
 {
     oom_scan_t* sc = (oom_scan_t*)ctx;
-    if (sc->n >= OOM_MAX_CANDIDATES) {
-        return;
-    }
-    if (t->state == TASK_STATE_DEAD || t->state == TASK_STATE_ZOMBIE) {
-        return;
-    }
-    /* Труп-в-процессе (выход начат, спуск смерти дорабатывает) — не
-     * кандидат: убийство его не ускорит, а окно уйдёт впустую. */
-    if (unix_proc_task_dying(t)) {
+    if (t->state == TASK_STATE_DEAD) {
         return;
     }
     /* Ядро и его резерв не участвуют: задачи без родителя — это ядро,
      * простой, жнец и init. CRITICAL не участвует по контракту полосы. */
     if (t->parent_task_id == 0 || t->mem_band == (uint8_t)MEMBAND_CRITICAL) {
+        return;
+    }
+    /* Труп-в-процессе (выход начат) или зомби (память ещё у трупа: она
+     * возвращается только со жнецом) — не кандидат: убийство не ускорит,
+     * а окно уйдёт впустую. Но и не пустота — считаем смерти в полёте:
+     * просителю, которому больше некого убить, есть чего ждать. */
+    if (t->state == TASK_STATE_ZOMBIE || unix_proc_task_dying(t)) {
+        sc->dying++;
+        return;
+    }
+    if (sc->n >= OOM_MAX_CANDIDATES) {
         return;
     }
     sc->c[sc->n].id = t->task_id;
@@ -163,8 +172,22 @@ int oom_kill_step(void)
         best_rc = 0;
     }
     if (best < 0) {
+        /* Убивать некого, но смерти уже в полёте: память умирающих и
+         * зомби вернётся со жнецом. Просителю положено ждать, а не отказ —
+         * отказ здесь превращал переходное free=0 между смертью жертв и
+         * их переработкой в неразрешимый отказ первого же невиновного
+         * (а для неубиваемого init — в останов процессора). */
+        if (sc.dying > 0) {
+            if (!g_oom_reap_wait_said) {
+                g_oom_reap_wait_said = 1;
+                kprintf("[OOM] no killable candidates: %u deaths in flight, "
+                        "waiting for reaper\n", (unsigned)sc.dying);
+            }
+            return 1;
+        }
         return 0;
     }
+    g_oom_reap_wait_said = 0;
 
     kprintf("[OOM] pressure=%d free=%llu: SIGTERM task=%llu band=%u "
             "reclaimable=%llu pages, %ums window\n",
