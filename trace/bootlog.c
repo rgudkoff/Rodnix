@@ -264,9 +264,12 @@ void klog_at(int level, const char* subsys, const char* fmt, ...)
     if (level < klog_level) {
         return;
     }
-    uint64_t ticks = scheduler_get_ticks();
-    uint64_t sec   = ticks / 100u;
-    uint64_t ms    = (ticks % 100u) * 10u;
+    /* ktime-backed monotonic clock; reads 0 only before calibration.
+     * Scheduler ticks won't do here: boot-phase klog runs entirely
+     * before the scheduler starts ticking. */
+    uint64_t us  = console_get_uptime_us();
+    uint64_t sec = us / 1000000ULL;
+    uint64_t ms  = (us % 1000000ULL) / 1000ULL;
     if (!subsys) {
         subsys = "kernel";
     }
