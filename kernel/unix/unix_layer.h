@@ -160,5 +160,7 @@ void unix_proc_close_fds(task_t* task);
 
 /* OOM: сигнал задаче — SIGTERM-окно (force=0) или немедленное снятие (force=1). */
 int unix_proc_oom_signal(uint64_t task_id, int force);
+/* Выход уже начат (свой exit или force): жертвой OOM больше не годится. */
+int unix_proc_task_dying(const task_t* task);
 
 #endif /* _RODNIX_UNIX_LAYER_H */

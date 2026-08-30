@@ -889,6 +889,24 @@ uint64_t unix_proc_thread_exit(uint64_t status)
 }
 
 /*
+ * Труп-в-процессе: выход уже начат — своим exit или force-снятием — и поток
+ * дорабатывает спуск смерти до ZOMBIE. Force по такой задаче молча ничего
+ * не делает (proc->exited уже стоит), поэтому новое OOM-окно на неё — 200 мс
+ * ожидания по трупу; отбор жертв обязан таких пропускать.
+ */
+int unix_proc_task_dying(const task_t* task)
+{
+    if (!task) {
+        return 0;
+    }
+    if (task->doomed) {
+        return 1;
+    }
+    const proc_t* proc = task_proc(task);
+    return proc && proc->exited;
+}
+
+/*
  * Вход для убийцы по полосам (kernel/oom.c). force=0 — вежливое SIGTERM в
  * ожидающие сигналы: окно на сброс, приложение вправе успеть записать
  * проект. force=1 — немедленное снятие задачи.

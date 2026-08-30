@@ -26,9 +26,13 @@
 
 /* Жертва, которой уже послан SIGTERM, и срок её окна. Одна: нехватка
  * памяти — глобальное состояние, и решать её двумя убийствами сразу
- * бессмысленно, пока первое не подействовало. */
+ * бессмысленно, пока первое не подействовало. После force таймера больше
+ * нет — приговор вынесен, ZOMBIE придёт на чекпойнте потока, и новые окна
+ * по этой же задаче были бы ожиданием по трупу (force по начатому выходу
+ * молча ничего не делает — задача выбиралась бы снова и снова). */
 static uint64_t g_oom_victim_id;
 static uint64_t g_oom_victim_deadline_ns;
+static uint8_t g_oom_victim_forced;
 
 typedef struct {
     uint64_t id;
@@ -48,6 +52,11 @@ static void oom_collect(const task_t* t, void* ctx)
         return;
     }
     if (t->state == TASK_STATE_DEAD || t->state == TASK_STATE_ZOMBIE) {
+        return;
+    }
+    /* Труп-в-процессе (выход начат, спуск смерти дорабатывает) — не
+     * кандидат: убийство его не ускорит, а окно уйдёт впустую. */
+    if (unix_proc_task_dying(t)) {
         return;
     }
     /* Ядро и его резерв не участвуют: задачи без родителя — это ядро,
@@ -75,8 +84,12 @@ int oom_kill_step(void)
     if (g_oom_victim_id != 0) {
         task_t* v = task_find_by_id(g_oom_victim_id);
         if (!v || v->state == TASK_STATE_DEAD || v->state == TASK_STATE_ZOMBIE) {
-            g_oom_victim_id = 0;  /* умерла сама: окно сработало */
+            g_oom_victim_id = 0;  /* умерла: окно или приговор сработали */
+            g_oom_victim_forced = 0;
             return 1;
+        }
+        if (g_oom_victim_forced) {
+            return 1;             /* приговор вынесен: ждать ZOMBIE, без таймера */
         }
         if (now < g_oom_victim_deadline_ns) {
             return 1;             /* окно на сброс ещё не вышло: подождать */
@@ -88,7 +101,7 @@ int oom_kill_step(void)
             task_debug_dump_task(g_oom_victim_id);
         }
         (void)unix_proc_oom_signal(g_oom_victim_id, 1);
-        g_oom_victim_id = 0;
+        g_oom_victim_forced = 1;
         return 1;
     }
 
@@ -163,6 +176,7 @@ int oom_kill_step(void)
             (unsigned)OOM_TERM_WINDOW_MS);
     g_oom_victim_id = sc.c[best].id;
     g_oom_victim_deadline_ns = now + (uint64_t)OOM_TERM_WINDOW_MS * 1000000ull;
+    g_oom_victim_forced = 0;
     (void)unix_proc_oom_signal(g_oom_victim_id, 0);
     return 1;
 }
