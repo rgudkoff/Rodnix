@@ -313,7 +313,7 @@ static int bochs_vbe_attach(fabric_device_t *dev)
     /* Verify Bochs VBE is present */
     uint16_t vbe_id = vbe_read(VBE_DISPI_INDEX_ID);
     if (vbe_id < VBE_DISPI_ID4) {
-        kprintf("[BOCHS_VBE] VBE ID 0x%x too old, expected >= 0x%x\n",
+        klog_err("display", "bochs-vbe: VBE ID 0x%x too old, expected >= 0x%x\n",
                 (uint32_t)vbe_id, (uint32_t)VBE_DISPI_ID4);
         return RDNX_E_UNSUPPORTED;
     }
@@ -322,7 +322,7 @@ static int bochs_vbe_attach(fabric_device_t *dev)
     uint32_t bar0 = pci->bars[0];
     if ((bar0 & 0x1u) != 0u) {
         /* BAR0 is an I/O BAR — unexpected */
-        kprintf("[BOCHS_VBE] BAR0 is I/O, expected memory BAR\n");
+        klog_err("display", "bochs-vbe: BAR0 is I/O, expected memory BAR\n");
         return RDNX_E_UNSUPPORTED;
     }
     uint64_t fb_phys = (uint64_t)(bar0 & ~0xFu);
@@ -331,7 +331,7 @@ static int bochs_vbe_attach(fabric_device_t *dev)
         fb_phys |= (uint64_t)pci->bars[1] << 32;
     }
     if (fb_phys == 0u) {
-        kprintf("[BOCHS_VBE] BAR0 physical address is zero\n");
+        klog_err("display", "bochs-vbe: BAR0 physical address is zero\n");
         return RDNX_E_GENERIC;
     }
 
@@ -353,7 +353,7 @@ static int bochs_vbe_attach(fabric_device_t *dev)
     /* Map framebuffer */
     rc = bochs_map_fb(d, fb_phys, fb_sz);
     if (rc != RDNX_OK) {
-        kprintf("[BOCHS_VBE] failed to map framebuffer\n");
+        klog_err("display", "bochs-vbe: failed to map framebuffer\n");
         return rc;
     }
 
@@ -385,7 +385,7 @@ static int bochs_vbe_attach(fabric_device_t *dev)
      * skips publish() when driver_state is already set, so we do it here. */
     int gfx_rc = gfx_display_register(&d->gfx);
     if (gfx_rc != RDNX_OK) {
-        kprintf("[BOCHS_VBE] gfx_display_register failed: %d\n", gfx_rc);
+        klog_err("display", "bochs-vbe: gfx_display_register failed: %d\n", gfx_rc);
         /* Non-fatal: continue without GFX subsystem registration */
     }
 

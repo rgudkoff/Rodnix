@@ -35,6 +35,7 @@
 #include "percpu.h"
 #include "syscall_fast.h"
 #include <stddef.h>
+#include "../../../trace/bootlog.h"
 
 
 /* Minimal serial output for exception diagnostics (COM1). */
@@ -157,14 +158,14 @@ static void interrupt_note_unhandled(uint32_t vector)
             pic_disable_irq((uint8_t)irq);
         }
         g_masked_unhandled[vector] = true;
-        kprintf("[IRQ] vector 0x%x (IRQ %u) fired %u times with no handler; "
+        klog_warn("irq", "vector 0x%x (IRQ %u) fired %u times with no handler; "
                 "line masked\n",
                 (unsigned)vector, (unsigned)irq,
                 (unsigned)UNHANDLED_MASK_THRESHOLD);
     } else {
         /* Latch so this reports once rather than every firing. */
         g_masked_unhandled[vector] = true;
-        kprintf("[IRQ] vector 0x%x fired %u times with no handler and cannot "
+        klog_warn("irq", "vector 0x%x fired %u times with no handler and cannot "
                 "be masked here; it will keep firing\n",
                 (unsigned)vector, (unsigned)UNHANDLED_MASK_THRESHOLD);
     }
@@ -185,7 +186,7 @@ void interrupt_unmask_if_we_masked(uint32_t vector)
         } else {
             pic_enable_irq((uint8_t)irq);
         }
-        kprintf("[IRQ] vector 0x%x (IRQ %u) unmasked: a handler registered\n",
+        klog("irq", "vector 0x%x (IRQ %u) unmasked: a handler registered\n",
                 (unsigned)vector, (unsigned)irq);
     }
 }
@@ -416,7 +417,7 @@ static interrupt_frame_t* interrupt_dispatch(interrupt_frame_t* regs)
                  * убийцы — сам проситель. До ближайшего переключения
                  * инструкция может отказать повторно — терминация
                  * идемпотентна, а окно ограничено тиком. */
-                kprintf("[FAULT] task=%llu killed: unresolvable user fault "
+                klog_warn("fault", "task=%llu killed: unresolvable user fault "
                         "va=%llx err=%llx rc=%d free=%llu\n",
                         (unsigned long long)task->task_id,
                         (unsigned long long)cr2,

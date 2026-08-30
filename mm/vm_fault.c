@@ -32,6 +32,7 @@
 #include "vm_reclaim.h"
 #include "../kernel/core/oom.h"
 #include "../sched/scheduler.h"
+#include "../trace/bootlog.h"
 
 static vm_fault_stats_t g_fault_stats;
 
@@ -264,7 +265,7 @@ static int vm_fault_handle_locked(task_t* task, uint64_t fault_addr,
          * обещание этапа 7 для этой памяти либо не давалось, либо сломано.
          * Печать — часть механизма, как защита RT-страниц у XNU, а не
          * отладка: молчаливая страховочная сетка скрывала бы поломку. */
-        kprintf("[VMRT] rt fault tid=%llu va=%llx err=%llx entry=[%llx..%llx) flags=%x extract=%llx\n",
+        klog_warn("rt", "fault tid=%llu va=%llx err=%llx entry=[%llx..%llx) flags=%x extract=%llx\n",
                 (unsigned long long)self->thread_id,
                 (unsigned long long)fault_addr,
                 (unsigned long long)err_code,

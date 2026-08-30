@@ -10,6 +10,7 @@
 #include "../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../lib/heap.h"
+#include "../../../trace/bootlog.h"
 
 typedef struct {
     uint16_t limit_low;
@@ -238,7 +239,7 @@ int cpu_ist_init(void)
     for (unsigned i = 0; i < sizeof(ist_map) / sizeof(ist_map[0]); i++) {
         void* stack = kmalloc(IST_STACK_SIZE);
         if (!stack) {
-            kprintf("[IST] cpu%u: allocation failed for %s, leaving it on IST 0\n",
+            klog_err("ist", "cpu%u: allocation failed for %s, leaving it on IST 0\n",
                     (unsigned)cpu, ist_map[i].name);
             continue;
         }

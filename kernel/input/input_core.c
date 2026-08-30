@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../trace/bootlog.h"
 
 /* ============================================================================
  * Serial Input (COM1) - optional fallback for headless QEMU
@@ -582,7 +583,7 @@ static char input_translate_scancode(uint8_t scancode, bool pressed)
 void input_init_keyboard(void)
 {
     extern void kputs(const char* str);
-    kputs("[InputCore] Initializing keyboard input subsystem\n");
+    klog_dbg("input", "initializing keyboard input subsystem\n");
     
     /* Initialize spinlock */
     spinlock_init(&input_state.lock);
@@ -600,7 +601,7 @@ void input_init_keyboard(void)
     input_state.extended = false;
     input_polling_enabled = true;
     
-    kputs("[InputCore] Initialization complete\n");
+    klog_dbg("input", "initialization complete\n");
 }
 
 /**

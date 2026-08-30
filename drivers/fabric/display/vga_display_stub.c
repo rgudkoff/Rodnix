@@ -10,6 +10,7 @@
 #include "../../../include/error.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../../trace/bootlog.h"
 
 #define PCI_CLASS_DISPLAY 0x03u
 #define PCI_SUBCLASS_VGA  0x00u
@@ -104,8 +105,8 @@ void vga_display_stub_init(void)
 {
     int rc = fabric_driver_register(&g_driver);
     if (rc == RDNX_OK) {
-        kputs("[VGA] driver registered\n");
+        klog_dbg("display", "vga: driver registered\n");
     } else {
-        kputs("[VGA] driver register failed\n");
+        klog_err("display", "vga: driver register failed\n");
     }
 }

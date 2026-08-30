@@ -9,6 +9,7 @@
 #include "../kernel/arch/pmm.h"
 #include "../include/error.h"
 #include "../include/debug.h"
+#include "../trace/bootlog.h"
 
 #define VM_PAGE_SHIFT 12
 #define VM_PAGE_BYTES (1ULL << VM_PAGE_SHIFT)
@@ -153,7 +154,7 @@ int vm_page_drop(uint64_t phys)
              * one for as long as the page is in its index. Freeing it now
              * hands the allocator a page that a hash chain still points at,
              * and the next allocation corrupts that chain. Loud, always. */
-            kprintf("[VMPAGE] freeing page %llx still indexed (pindex=%u)\n",
+            klog_err("vm", "freeing page %llx still indexed (pindex=%u)\n",
                     (unsigned long long)phys, m->pindex);
         }
         pmm_free_page(phys);

@@ -13,6 +13,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../../include/console.h"
+#include "../../../trace/bootlog.h"
 
 /* ============================================================================
  * PIC I/O Ports
@@ -220,7 +221,7 @@ void pic_set_imcr(bool apic_mode)
     /* Some platforms do not implement IMCR; reading may return 0xFF. */
     uint8_t value = imcr_read();
     if (value == 0xFF) {
-        kputs("[PIC] IMCR not present, cannot switch IRQ routing\n");
+        klog_dbg("pic", "IMCR not present, cannot switch IRQ routing\n");
         return;
     }
 

@@ -11,6 +11,7 @@
 #include "../arch/percpu.h"
 #include "../../include/debug.h"
 #include "../../include/console.h"
+#include "../../trace/bootlog.h"
 
 /*
  * How long a spin may last before it is called a deadlock rather than
@@ -213,7 +214,7 @@ void spinlock_lock_named(spinlock_t* lock, const char* name,
         static uint32_t slow_budget = 8;
         if (slow_budget > 0) {
             slow_budget--;
-            kprintf("[SPIN] slow wait: %s %lluus at %s:%d\n",
+            klog_warn("spin", "slow wait: %s %lluus at %s:%d\n",
                     name ? name : "?",
                     (unsigned long long)(ktime_raw_to_ns(ktime_raw() - w.started) / 1000ULL),
                     file, line);
@@ -294,7 +295,7 @@ uint64_t spinlock_lock_irqsave_named(spinlock_t* lock, const char* name,
             static uint32_t slow_budget_irqsave = 8;
             if (slow_budget_irqsave > 0) {
                 slow_budget_irqsave--;
-                kprintf("[SPIN] slow wait: %s %lluus at %s:%d\n",
+                klog_warn("spin", "slow wait: %s %lluus at %s:%d\n",
                         name ? name : "?",
                         (unsigned long long)(ktime_raw_to_ns(ktime_raw() - w.started) / 1000ULL),
                         file, line);

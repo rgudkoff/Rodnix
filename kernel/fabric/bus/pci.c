@@ -19,6 +19,7 @@
 #include "../../include/console.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "../../../trace/bootlog.h"
 
 #define PCI_MAX_BUSES 256u
 #define PCI_MAX_DEVICES 256u
@@ -440,7 +441,7 @@ static void pci_publish_function(uint8_t bus,
 
     (*pci_device_count)++;
 
-    kprintf("[PCI] bdf=%u:%u.%u vendor=%x device=%x class=%x:%x:%x cap=%x sec=%u sub=%u bar0=%x\n",
+    klog_dbg("pci", "bdf=%u:%u.%u vendor=%x device=%x class=%x:%x:%x cap=%x sec=%u sub=%u bar0=%x\n",
             (unsigned)info->bus,
             (unsigned)info->device,
             (unsigned)info->function,

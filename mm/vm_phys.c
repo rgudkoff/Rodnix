@@ -7,6 +7,7 @@
 #include "../include/debug.h"
 #include "../include/console.h"
 #include <stddef.h>
+#include "../trace/bootlog.h"
 
 #define VM_PHYS_PAGE_SHIFT 12
 
@@ -435,7 +436,7 @@ void vm_phys_selftest(void)
 
     uint64_t after = vm_phys_free_count(1);
 
-    kprintf("[vm_phys] selftest: %u pages, %u free blocks in the way; "
+    klog("vm", "selftest: %u pages, %u free blocks in the way; "
             "splits %u whole -> %u fragmented; merges %u / %u / %u deep; "
             "bound %u; free %llu -> %llu\n",
             (unsigned)n, (unsigned)(n / 2u),

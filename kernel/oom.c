@@ -20,6 +20,7 @@
 #include "../kernel/arch/pmm.h"
 #include "../include/console.h"
 #include "../include/error.h"
+#include "../trace/bootlog.h"
 
 #define OOM_MAX_CANDIDATES 64
 #define OOM_TERM_WINDOW_MS 200
@@ -103,7 +104,7 @@ int oom_kill_step(void)
         if (now < g_oom_victim_deadline_ns) {
             return 1;             /* окно на сброс ещё не вышло: подождать */
         }
-        kprintf("[OOM] window expired: task=%llu killed (band=%u)\n",
+        klog_warn("oom", "window expired: task=%llu killed (band=%u)\n",
                 (unsigned long long)g_oom_victim_id, (unsigned)v->mem_band);
         {
             extern void task_debug_dump_task(uint64_t);
@@ -167,7 +168,7 @@ int oom_kill_step(void)
         }
     }
     if (best < 0 && best_unaccounted >= 0) {
-        kprintf("[OOM] accounts unavailable (maps busy): choosing by band alone\n");
+        klog_warn("oom", "accounts unavailable (maps busy): choosing by band alone\n");
         best = best_unaccounted;
         best_rc = 0;
     }
@@ -180,7 +181,7 @@ int oom_kill_step(void)
         if (sc.dying > 0) {
             if (!g_oom_reap_wait_said) {
                 g_oom_reap_wait_said = 1;
-                kprintf("[OOM] no killable candidates: %u deaths in flight, "
+                klog_warn("oom", "no killable candidates: %u deaths in flight, "
                         "waiting for reaper\n", (unsigned)sc.dying);
             }
             return 1;
@@ -189,7 +190,7 @@ int oom_kill_step(void)
     }
     g_oom_reap_wait_said = 0;
 
-    kprintf("[OOM] pressure=%d free=%llu: SIGTERM task=%llu band=%u "
+    klog_warn("oom", "pressure=%d free=%llu: SIGTERM task=%llu band=%u "
             "reclaimable=%llu pages, %ums window\n",
             vm_pressure_level(),
             (unsigned long long)pmm_free_pages_count(),

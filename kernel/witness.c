@@ -10,6 +10,7 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include <stddef.h>
+#include "../trace/bootlog.h"
 
 /* Distinct lock nodes. Identity is the acquire-site name, not the address:
  * a per-connection socket lock would otherwise mint a node per connection and
@@ -256,10 +257,10 @@ static void witness_report(uint32_t held, uint32_t want,
 {
     kprintf("\n[WITNESS] lock order reversal on cpu%u\n",
             (unsigned)percpu_index());
-    kprintf("[WITNESS]   acquiring %s at %s:%d\n",
+    klog_warn("witness", "  acquiring %s at %s:%d\n",
             g_node[want - 1].name, file, line);
-    kprintf("[WITNESS]   while holding %s\n", g_node[held - 1].name);
-    kprintf("[WITNESS]   but this order is already known the other way:\n");
+    klog_warn("witness", "  while holding %s\n", g_node[held - 1].name);
+    klog_warn("witness", "  but this order is already known the other way:\n");
 
     /*
      * parent[] points back towards the lock being acquired, so the chain is
@@ -286,14 +287,14 @@ static void witness_report(uint32_t held, uint32_t want,
         uint32_t from = chain[i - 1];
         uint32_t to = chain[i - 2];
         const struct witness_edge* e = witness_find_edge(from, to);
-        kprintf("[WITNESS]     %s -> %s", g_node[from].name, g_node[to].name);
+        klog_warn("witness", "    %s -> %s", g_node[from].name, g_node[to].name);
         if (e) {
             kprintf("   (learned at %s:%d)", e->file, e->line);
         }
         kprintf("\n");
     }
     witness_raw_unlock(f);
-    kprintf("[WITNESS]   two processors on these two paths at once wedge both.\n\n");
+    klog_warn("witness", "  two processors on these two paths at once wedge both.\n\n");
 }
 
 uint32_t witness_check(uint32_t* cached_id, const char* name,
@@ -502,7 +503,7 @@ void witness_selftest(void)
 
     uint32_t after_cycle = g_reversals;
 
-    kprintf("[witness] selftest: pair %s, cycle %s (reversals %u -> %u -> %u)\n",
+    klog("witness", "selftest: pair %s, cycle %s (reversals %u -> %u -> %u)\n",
             (after_pair > before) ? "DETECTED" : "MISSED",
             (after_cycle > after_pair) ? "DETECTED" : "MISSED",
             (unsigned)before, (unsigned)after_pair, (unsigned)after_cycle);
@@ -519,7 +520,7 @@ void witness_summary(void)
     uint32_t edges = g_edge_count;
     witness_raw_unlock(f);
 
-    kprintf("[witness] %s: %u locks, %u orders learned%s\n",
+    klog("witness", "%s: %u locks, %u orders learned%s\n",
             g_mode == WITNESS_OFF ? "off" :
             g_mode == WITNESS_PANIC ? "panic on reversal" : "warn on reversal",
             (unsigned)nodes, (unsigned)edges,
@@ -533,13 +534,13 @@ void witness_dump_graph(void)
     uint32_t edges = g_edge_count;
     witness_raw_unlock(f);
 
-    kprintf("[WITNESS] mode=%s locks=%u orders=%u%s\n",
+    klog("witness", "mode=%s locks=%u orders=%u%s\n",
             g_mode == WITNESS_OFF ? "off" :
             g_mode == WITNESS_PANIC ? "panic" : "warn",
             (unsigned)nodes, (unsigned)edges,
             g_node_overflow ? " (LOCK TABLE FULL -- some locks untracked)" : "");
     for (uint32_t i = 0; i < edges && i < WITNESS_MAX_EDGES; i++) {
-        kprintf("[WITNESS]   %s -> %s   (%s:%d)\n",
+        klog("witness", "  %s -> %s   (%s:%d)\n",
                 g_node[g_edge[i].from].name,
                 g_node[g_edge[i].to].name,
                 g_edge[i].file, g_edge[i].line);

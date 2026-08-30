@@ -11,6 +11,7 @@
 #include "../../fabric/spin.h"
 #include "../../../include/console.h"
 #include <stdbool.h>
+#include "../../../trace/bootlog.h"
 
 /* One shootdown at a time. Serialising them keeps the published request and
  * the scoreboard to a single set instead of one per processor; with the
@@ -100,7 +101,7 @@ void tlb_shootdown(uint64_t va)
             while (__atomic_load_n(&tlb_ack[cpu], __ATOMIC_ACQUIRE) != gen) {
                 __asm__ volatile ("pause");
                 if (++spins == 500000000ULL) {
-                    kprintf("[TLB] cpu%u never acknowledged shootdown gen=%u\n",
+                    klog_err("tlb", "cpu%u never acknowledged shootdown gen=%u\n",
                             (unsigned)cpu, (unsigned)gen);
                     break;
                 }

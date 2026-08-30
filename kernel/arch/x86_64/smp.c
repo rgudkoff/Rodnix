@@ -21,6 +21,7 @@
 #include "../../core/task.h"
 #include "../../../sched/scheduler.h"
 #include "../../core/boot.h"
+#include "../../../trace/bootlog.h"
 
 /* Symbols inside the trampoline blob. Their addresses here are wherever the
  * linker put the blob; what matters is the offset of each from the start,
@@ -254,14 +255,14 @@ static bool start_one_ap(uint32_t slot, uint32_t apic_id)
 {
     struct thread* idle = make_ap_idle();
     if (!idle) {
-        kprintf("[SMP] no idle thread for apic_id=%u\n", (unsigned)apic_id);
+        klog_err("smp", "no idle thread for apic_id=%u\n", (unsigned)apic_id);
         return false;
     }
     g_ap_boot_idle = idle;
 
     void* stack = kmalloc(AP_STACK_SIZE);
     if (!stack) {
-        kprintf("[SMP] no stack for apic_id=%u\n", (unsigned)apic_id);
+        klog_err("smp", "no stack for apic_id=%u\n", (unsigned)apic_id);
         return false;
     }
 
@@ -363,7 +364,7 @@ int smp_start_aps(void)
 
     size_t blob_size = (size_t)(ap_trampoline_end - ap_trampoline_start);
     if (blob_size > 4096) {
-        kprintf("[SMP] trampoline is %u bytes, will not fit its page\n",
+        klog_err("smp", "trampoline is %u bytes, will not fit its page\n",
                 (unsigned)blob_size);
         return 0;
     }
@@ -373,7 +374,7 @@ int smp_start_aps(void)
 
     uint64_t tramp_pml4 = build_trampoline_pml4();
     if (!tramp_pml4) {
-        kputs("[SMP] no page for the trampoline tables\n");
+        klog_err("smp", "no page for the trampoline tables\n");
         return 0;
     }
 
@@ -400,7 +401,7 @@ int smp_start_aps(void)
             g_online_count++;
             started++;
         } else {
-            kprintf("[SMP] cpu%u (apic_id=%u) did not come online\n",
+            klog_warn("smp", "cpu%u (apic_id=%u) did not come online\n",
                     (unsigned)i, (unsigned)cpu->apic_id);
         }
     }

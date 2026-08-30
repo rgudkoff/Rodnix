@@ -11,6 +11,7 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include <stddef.h>
+#include "../trace/bootlog.h"
 
 #define HYGIENE_MAX_CPUS 64
 
@@ -201,7 +202,7 @@ void hygiene_init(void)
          * and a threshold in units nobody can name is worse than no threshold:
          * it would produce numbers that look like measurements.
          */
-        kprintf("[hygiene] no time source — latency windows unmeasured\n");
+        klog_warn("hygiene", "no time source — latency windows unmeasured\n");
         return;
     }
 
@@ -287,7 +288,7 @@ static void hyg_close(struct hygiene_cpu* c, hyg_kind_t kind,
 
     if (g_report_budget > 0) {
         g_report_budget--;
-        kprintf("[hygiene] cpu%u %s %lluus (gross %lluus, limit %lluus)",
+        klog_warn("hygiene", "cpu%u %s %lluus (gross %lluus, limit %lluus)",
                 (unsigned)percpu_index(), what,
                 (unsigned long long)hyg_us(net),
                 (unsigned long long)hyg_us(gross),
@@ -428,7 +429,7 @@ void hygiene_preempt_end(void)
               nested, nsite, nline);
     if (srip && net >= g_thr_preempt && c->busy == 0 && g_report_budget > 0) {
         c->busy++;
-        kprintf("[hygiene]   in-window rip=%llx preempt_count=%u\n",
+        klog_warn("hygiene", "  in-window rip=%llx preempt_count=%u\n",
                 (unsigned long long)srip, (unsigned)scount);
         c->busy--;
     }
@@ -491,7 +492,7 @@ static void hyg_line(const char* what, const struct hygiene_window* w,
     if (w->total_count == 0) {
         return;
     }
-    kprintf("[hygiene]   %-20s worst %lluus", what,
+    klog("hygiene", "  %-20s worst %lluus", what,
             (unsigned long long)hyg_us(w->worst_net));
     if (w->worst_gross != w->worst_net) {
         kprintf(" (gross %lluus)", (unsigned long long)hyg_us(w->worst_gross));
@@ -520,15 +521,15 @@ static void hyg_line(const char* what, const struct hygiene_window* w,
 void hygiene_report(void)
 {
     if (g_mode == HYGIENE_OFF) {
-        kprintf("[hygiene] off\n");
+        klog("hygiene", "off\n");
         return;
     }
     if (!g_hygiene_on) {
-        kprintf("[hygiene] unavailable: no calibrated TSC\n");
+        klog_warn("hygiene", "unavailable: no calibrated TSC\n");
         return;
     }
 
-    kprintf("[hygiene] mode=%s clock=%s\n",
+    klog("hygiene", "mode=%s clock=%s\n",
             g_mode == HYGIENE_PANIC ? "panic" : "trace", ktime_source());
 
     for (uint32_t i = 0; i < HYGIENE_MAX_CPUS; i++) {
@@ -537,7 +538,7 @@ void hygiene_report(void)
             c->w_irq.total_count == 0) {
             continue;
         }
-        kprintf("[hygiene] cpu%u\n", (unsigned)i);
+        klog("hygiene", "cpu%u\n", (unsigned)i);
         hyg_line("interrupts masked", &c->w_int, g_thr_int, false);
         hyg_line("preemption off", &c->w_preempt, g_thr_preempt, false);
         hyg_line("interrupt handler", &c->w_irq, g_thr_irq, true);

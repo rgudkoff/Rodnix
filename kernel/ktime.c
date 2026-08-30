@@ -8,6 +8,7 @@
 #include "../include/console.h"
 #include "../include/debug.h"
 #include <stddef.h>
+#include "../trace/bootlog.h"
 
 #define KTIME_SCALE_SHIFT 32
 
@@ -23,7 +24,7 @@ void ktime_init(void)
     const char* how = NULL;
     uint64_t hz = ktime_arch_calibrate(&how);
     if (hz == 0) {
-        kprintf("[ktime] no usable time source — durations are unmeasurable\n");
+        klog_warn("ktime", "no usable time source — durations are unmeasurable\n");
         return;
     }
 
@@ -131,7 +132,7 @@ int64_t ktime_check_rate(const char* what, uint64_t count,
      * than a machine that will not boot, provided it says so.
      */
     if (ppm > 1000 || ppm < -1000) {
-        kprintf("[ktime] %s runs at %lluHz, asked for %lluHz (%lld ppm off)\n",
+        klog_warn("ktime", "%s runs at %lluHz, asked for %lluHz (%lld ppm off)\n",
                 what ? what : "rate",
                 (unsigned long long)observed_hz,
                 (unsigned long long)expected_hz,
@@ -143,10 +144,10 @@ int64_t ktime_check_rate(const char* what, uint64_t count,
 void ktime_report(void)
 {
     if (!g_hz) {
-        kprintf("[ktime] unavailable\n");
+        klog_warn("ktime", "unavailable\n");
         return;
     }
-    kprintf("[ktime] %s at %llu.%03llu MHz, %llu ns resolution\n",
+    klog("ktime", "%s at %llu.%03llu MHz, %llu ns resolution\n",
             g_source,
             (unsigned long long)(g_hz / 1000000ULL),
             (unsigned long long)((g_hz / 1000ULL) % 1000ULL),

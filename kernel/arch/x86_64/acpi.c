@@ -130,7 +130,7 @@ int acpi_init(void)
     if (rsdp_phys == 0) {
         g_acpi.initialized = true;
         g_acpi.available = false;
-        kputs("[ACPI] RSDP not found\n");
+        klog_err("acpi", "RSDP not found\n");
         return -1;
     }
 
@@ -164,7 +164,7 @@ int acpi_init(void)
     g_acpi.available = root_ok;
 
     if (!root_ok) {
-        kputs("[ACPI] Root SDT invalid\n");
+        klog_err("acpi", "root SDT invalid\n");
         return -1;
     }
 

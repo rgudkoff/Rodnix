@@ -377,8 +377,8 @@ void ide_storage_stub_init(void)
 {
     int rc = fabric_driver_register(&g_driver);
     if (rc == RDNX_OK) {
-        kputs("[IDE] driver registered\n");
+        klog_dbg("ide", "driver registered\n");
     } else {
-        kputs("[IDE] driver register failed\n");
+        klog_err("ide", "driver register failed\n");
     }
 }

@@ -10,6 +10,7 @@
 #include "../../../include/console.h"
 #include <stdbool.h>
 #include <stddef.h>
+#include "../../../trace/bootlog.h"
 
 static inline uint64_t rdtsc_now(void)
 {
@@ -138,7 +139,7 @@ uint64_t ktime_arch_calibrate(const char** how)
             }
             return b;                           /* the longer window */
         }
-        kprintf("[ktime] 8254 calibration disagrees with itself: "
+        klog_warn("ktime", "8254 calibration disagrees with itself: "
                 "%lluHz then %lluHz — the counter may not be steady\n",
                 (unsigned long long)a, (unsigned long long)b);
         if (how) {

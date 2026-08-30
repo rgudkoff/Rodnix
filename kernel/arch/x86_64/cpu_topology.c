@@ -8,6 +8,7 @@
 #include "apic.h"
 #include "../../../include/common.h"
 #include "../../../include/console.h"
+#include "../../../trace/bootlog.h"
 
 static struct cpu_topology_entry g_cpus[X86_64_MAX_CPUS];
 static uint32_t g_cpu_count = 0;
@@ -75,14 +76,14 @@ int cpu_topology_init(void)
     uint32_t written = 0;
 
     if (acpi_madt_get_cpus(NULL, 0, &total) != 0) {
-        kputs("[CPU-TOPO] MADT unavailable, assuming uniprocessor\n");
+        klog_warn("cpu", "MADT unavailable, assuming uniprocessor\n");
         topology_synthesise_uniprocessor();
         g_ready = true;
         return 0;
     }
 
     if (acpi_madt_get_cpus(entries, X86_64_MAX_CPUS, &written) != 0) {
-        kputs("[CPU-TOPO] MADT processor list unreadable, assuming uniprocessor\n");
+        klog_warn("cpu", "MADT processor list unreadable, assuming uniprocessor\n");
         topology_synthesise_uniprocessor();
         g_ready = true;
         return 0;
@@ -119,7 +120,7 @@ int cpu_topology_init(void)
     }
 
     if (g_cpu_count == 0) {
-        kputs("[CPU-TOPO] MADT lists no usable processor, assuming uniprocessor\n");
+        klog_warn("cpu", "MADT lists no usable processor, assuming uniprocessor\n");
         topology_synthesise_uniprocessor();
         g_ready = true;
         return 0;
@@ -131,7 +132,7 @@ int cpu_topology_init(void)
         /* The running processor is not in its own MADT. Trust the hardware
          * over the table and keep index 0 as the boot processor, but say so:
          * an AP bring-up built on a table this wrong would fail obscurely. */
-        kprintf("[CPU-TOPO] WARNING: BSP APIC ID %u absent from MADT, using index 0\n",
+        klog_warn("cpu", "BSP APIC ID %u absent from MADT, using index 0\n",
                 (unsigned)bsp_apic_id);
         bsp = 0;
     }
@@ -191,23 +192,23 @@ int cpu_topology_index_for_apic_id(uint32_t apic_id)
 void cpu_topology_report(void)
 {
     if (!g_ready) {
-        kputs("[CPU-TOPO] not initialised\n");
+        klog_warn("cpu", "topology not initialised\n");
         return;
     }
 
-    kprintf("[CPU-TOPO] %u processor(s), %u startable, BSP index %u\n",
+    klog("cpu", "%u processor(s), %u startable, BSP index %u\n",
             (unsigned)g_cpu_count,
             (unsigned)cpu_topology_startable_count(),
             (unsigned)g_bsp_index);
 
     if (g_truncated) {
-        kprintf("[CPU-TOPO] WARNING: MADT lists more than %u processors, table truncated\n",
+        klog_warn("cpu", "MADT lists more than %u processors, table truncated\n",
                 (unsigned)X86_64_MAX_CPUS);
     }
 
     for (uint32_t i = 0; i < g_cpu_count; i++) {
         const struct cpu_topology_entry* e = &g_cpus[i];
-        kprintf("[CPU-TOPO]   cpu%u apic_id=%u uid=%u %s%s%s\n",
+        klog("cpu", "  cpu%u apic_id=%u uid=%u %s%s%s\n",
                 (unsigned)i,
                 (unsigned)e->apic_id,
                 (unsigned)e->acpi_uid,

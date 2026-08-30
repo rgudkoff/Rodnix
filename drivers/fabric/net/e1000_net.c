@@ -31,6 +31,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "../../../trace/bootlog.h"
 
 /* =========================================================================
  * PCI constants
@@ -463,7 +464,7 @@ static int e1000_irq_enable(e1000_dev_t* d)
         return rc;
     }
     if (d->irq.mode == PCI_IRQ_MODE_MSI) {
-        kprintf("[E1000] MSI enabled on vector=%u\n", (unsigned)d->irq.vector);
+        klog("e1000", "MSI enabled on vector=%u\n", (unsigned)d->irq.vector);
     }
 
     spinlock_lock(&d->lock);
@@ -644,13 +645,13 @@ static int e1000_attach(fabric_device_t* dev)
         }
     }
     if (io_base == 0u) {
-        kprintf("[E1000] no I/O BAR found (bars: %x %x %x %x %x %x)\n",
+        klog_err("e1000", "no I/O BAR found (bars: %x %x %x %x %x %x)\n",
                 pci->bars[0], pci->bars[1], pci->bars[2],
                 pci->bars[3], pci->bars[4], pci->bars[5]);
     }
 
     if (fabric_net_service_init() != RDNX_OK) {
-        kputs("[E1000] net service init failed\n");
+        klog_err("e1000", "net service init failed\n");
         return RDNX_E_GENERIC;
     }
 
@@ -670,12 +671,12 @@ static int e1000_attach(fabric_device_t* dev)
     }
 
     if (pci_has_capability(dev, PCIY_MSI)) {
-        kprintf("[E1000] MSI capability present\n");
+        klog_dbg("e1000", "MSI capability present\n");
     }
     {
         int legacy_vector = pci_irq_vector(dev);
         if (legacy_vector >= 0) {
-            kprintf("[E1000] legacy irq vector=%u line=%u pin=%u\n",
+            klog_dbg("e1000", "legacy irq vector=%u line=%u pin=%u\n",
                     (unsigned)legacy_vector,
                     (unsigned)pci->interrupt_line,
                     (unsigned)pci->interrupt_pin);
@@ -684,7 +685,7 @@ static int e1000_attach(fabric_device_t* dev)
 
     int rc = e1000_hw_init(d);
     if (rc != RDNX_OK) {
-        kprintf("[E1000] hw init failed: %d\n", rc);
+        klog_err("e1000", "hw init failed: %d\n", rc);
         d->used = 0;
         return rc;
     }
@@ -710,17 +711,17 @@ static int e1000_attach(fabric_device_t* dev)
 
     rc = e1000_irq_enable(d);
     if (rc != RDNX_OK) {
-        kprintf("[E1000] irq enable failed: %d (polling fallback)\n", rc);
+        klog_warn("e1000", "irq enable failed: %d (polling fallback)\n", rc);
     }
 
     if (fabric_netif_register(&d->iface) != RDNX_OK) {
-        kputs("[E1000] netif register failed\n");
+        klog_err("e1000", "netif register failed\n");
         e1000_irq_disable(d);
         d->used = 0;
         return RDNX_E_GENERIC;
     }
 
-    kprintf("[E1000] %s ready — mac=%02x:%02x:%02x:%02x:%02x:%02x "
+    klog("e1000", "%s ready — mac=%02x:%02x:%02x:%02x:%02x:%02x "
             "io=0x%x vendor=%04x device=%04x\n",
             d->iface.name,
             d->iface.mac[0], d->iface.mac[1], d->iface.mac[2],
@@ -770,8 +771,8 @@ void e1000_net_stub_init(void)
 {
     int rc = fabric_driver_register(&g_driver);
     if (rc == RDNX_OK) {
-        kputs("[E1000] driver registered\n");
+        klog_dbg("e1000", "driver registered\n");
     } else {
-        kprintf("[E1000] driver register failed: %d\n", rc);
+        klog_err("e1000", "driver register failed: %d\n", rc);
     }
 }

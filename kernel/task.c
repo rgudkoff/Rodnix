@@ -20,6 +20,7 @@
 #include "../include/common.h"
 #include <stddef.h>
 #include <stdint.h>
+#include "../trace/bootlog.h"
 
 #define KERNEL_STACK_SIZE (32 * 1024)
 #define STACK_POISON_BYTE 0xCC
@@ -761,7 +762,7 @@ void task_debug_dump_task(uint64_t task_id)
     spinlock_unlock_irqrestore(&task_registry_spin, f);
 
     for (uint32_t i = 0; i < n; i++) {
-        kprintf("[OOMDBG] tid=%llu st=%x wq=%s armed=%u dl=%llu oncpu=%u rip=%llx\n",
+        klog_warn("task", "tid=%llu st=%x wq=%s armed=%u dl=%llu oncpu=%u rip=%llx\n",
                 (unsigned long long)snap[i].tid,
                 (unsigned)snap[i].state,
                 snap[i].wq,
@@ -771,6 +772,6 @@ void task_debug_dump_task(uint64_t task_id)
                 (unsigned long long)snap[i].rip);
     }
     if (total > n) {
-        kprintf("[OOMDBG] ... %u more threads not shown\n", (unsigned)(total - n));
+        klog_warn("task", "... %u more threads not shown\n", (unsigned)(total - n));
     }
 }

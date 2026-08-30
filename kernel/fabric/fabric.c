@@ -21,6 +21,7 @@
 #include "../../include/error.h"
 #include <stddef.h>
 #include <stdarg.h>
+#include "../../trace/bootlog.h"
 
 /* Maximum number of buses, drivers, devices, services */
 #define MAX_BUSES    16
@@ -989,20 +990,20 @@ int fabric_device_publish(fabric_device_t *device)
 int fabric_service_publish(fabric_service_t *service)
 {
     if (!service || !service->name) {
-        kputs("[FABRIC-SVC] ERROR: Invalid service or name\n");
+        klog_err("fabric", "invalid service or name\n");
         return RDNX_E_INVALID;
     }
 
     if (service->hdr.abi_version != RDNX_ABI_VERSION ||
         service->hdr.size < sizeof(fabric_service_t)) {
-        kputs("[FABRIC-SVC] ERROR: Service ABI mismatch\n");
+        klog_err("fabric", "service ABI mismatch\n");
         return RDNX_E_INVALID;
     }
     if (service->ops) {
         rdnx_abi_header_t* ops_hdr = (rdnx_abi_header_t*)service->ops;
         if (ops_hdr->abi_version != RDNX_ABI_VERSION ||
             ops_hdr->size < sizeof(rdnx_abi_header_t)) {
-            kputs("[FABRIC-SVC] ERROR: Service ops ABI mismatch\n");
+            klog_err("fabric", "service ops ABI mismatch\n");
             return RDNX_E_INVALID;
         }
     }
@@ -1013,7 +1014,7 @@ int fabric_service_publish(fabric_service_t *service)
     if (service_count >= MAX_SERVICES) {
         spinlock_unlock(&fabric_lock);
         fabric_log("[fabric] ERROR: Service registry full\n");
-        kputs("[FABRIC-SVC] ERROR: Service registry full\n");
+        klog_err("fabric", "service registry full\n");
         return -1;
     }
     
@@ -1164,11 +1165,11 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     extern void kprintf(const char* fmt, ...);
     
     if (!h || vector < 0 || vector >= 256) {
-        kprintf("[FABRIC-IRQ] ERROR: Invalid parameters (vector=%d, handler=%p)\n", vector, h);
+        klog_err("fabric", "invalid irq parameters (vector=%d, handler=%p)\n", vector, h);
         return -1;
     }
     
-    kprintf("[FABRIC-IRQ] Requesting IRQ: vector=%d\n", vector);
+    klog_dbg("fabric", "requesting IRQ: vector=%d\n", vector);
     
     spinlock_lock(&irq_lock);
     
@@ -1183,7 +1184,7 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     
     if (slot >= MAX_IRQ_HANDLERS) {
         spinlock_unlock(&irq_lock);
-        kputs("[FABRIC-IRQ] ERROR: No free slots\n");
+        klog_err("fabric", "no free irq slots\n");
         return -1;
     }
     
@@ -1194,7 +1195,7 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
     
     spinlock_unlock(&irq_lock);
     
-    kprintf("[FABRIC-IRQ] Handler registered in slot %u\n", slot);
+    klog_dbg("fabric", "handler registered in slot %u\n", slot);
     
     /* Register with interrupt system. Одного вектора может хотеть несколько
      * устройств: разделяемая INTx-линия — норма PCI (обнаружено на QEMU,
@@ -1203,10 +1204,10 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
      * отказ; отказ — только когда вектором владеет чужой обработчик. */
     extern int interrupt_register(uint32_t vector, interrupt_handler_t handler);
     static bool fabric_vector_claimed[256];
-    kprintf("[FABRIC-IRQ] Registering with interrupt system...\n");
+    klog_dbg("fabric", "registering with interrupt system...\n");
     if (!fabric_vector_claimed[vector]) {
         if (interrupt_register(vector, fabric_irq_wrapper) != 0) {
-            kputs("[FABRIC-IRQ] ERROR: Failed to register with interrupt system\n");
+            klog_err("fabric", "failed to register with interrupt system\n");
             spinlock_lock(&irq_lock);
             irq_handlers[slot].active = false;
             spinlock_unlock(&irq_lock);
@@ -1214,10 +1215,10 @@ int fabric_request_irq(int vector, fabric_irq_handler_t h, void *arg)
         }
         fabric_vector_claimed[vector] = true;
     } else {
-        kprintf("[FABRIC-IRQ] vector %d shared: joining existing wrapper\n", vector);
+        klog_dbg("fabric", "vector %d shared: joining existing wrapper\n", vector);
     }
     
-    kprintf("[FABRIC-IRQ] Successfully registered IRQ handler for vector %d\n", vector);
+    klog_dbg("fabric", "registered IRQ handler for vector %d\n", vector);
     return 0;
 }
 

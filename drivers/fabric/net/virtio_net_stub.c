@@ -14,6 +14,7 @@
 #include "../../../include/error.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../../trace/bootlog.h"
 
 #define PCI_CLASS_NETWORK 0x02u
 #define VIRTIO_VENDOR_ID  0x1AF4u
@@ -70,7 +71,7 @@ static int virtio_net_attach(fabric_device_t* dev)
         return RDNX_E_INVALID;
     }
     if (fabric_net_service_init() != RDNX_OK) {
-        kputs("[VNET] net service init failed\n");
+        klog_err("vnet", "net service init failed\n");
         return RDNX_E_GENERIC;
     }
 
@@ -160,8 +161,8 @@ void virtio_net_stub_init(void)
 {
     int rc = fabric_driver_register(&g_driver);
     if (rc == 0) {
-        kputs("[VNET] driver registered\n");
+        klog_dbg("vnet", "driver registered\n");
     } else {
-        kputs("[VNET] driver register failed\n");
+        klog_err("vnet", "driver register failed\n");
     }
 }

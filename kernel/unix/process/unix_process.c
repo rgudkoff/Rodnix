@@ -255,7 +255,7 @@ uint64_t unix_proc_exit(uint64_t status)
     }
     thread_t* cur = thread_get_current();
     if (bootlog_is_verbose()) {
-        kprintf("[EXIT] thread %llu exiting\n",
+        klog("unix", "thread %llu exiting\n",
                 (unsigned long long)(cur ? cur->thread_id : 0));
     }
     scheduler_exit_current();

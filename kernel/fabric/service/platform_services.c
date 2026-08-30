@@ -7,6 +7,7 @@
 #include "service.h"
 #include "../../../include/error.h"
 #include "../../../include/console.h"
+#include "../../../trace/bootlog.h"
 
 typedef struct {
     rdnx_abi_header_t hdr;
@@ -83,5 +84,5 @@ void fabric_platform_services_init(void)
     publish_platform_service(&g_timer_service, "timer");
     publish_platform_service(&g_serial_service, "serial");
     publish_platform_service(&g_console_service, "console");
-    kputs("[FABRIC] platform services initialized\n");
+    klog_dbg("fabric", "platform services initialized\n");
 }

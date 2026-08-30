@@ -6,6 +6,7 @@
 #include "../include/debug.h"
 #include "../include/console.h"
 #include "../include/error.h"
+#include "../trace/bootlog.h"
 
 /* Реестр всех живых объектов. Снятие с учёта — первый шаг разрушения. */
 static spinlock_t vm_object_registry_spin;
@@ -65,7 +66,7 @@ static void vm_object_link_locked(vm_object_t* obj, vm_page_t* m, uint32_t pinde
          * obj_next и разорвёт ту цепочку. Единственный честный путь сюда —
          * повторное использование освобождённой страницы, которую забыли
          * вынуть, то есть чужой двойной drop. Громко и безусловно. */
-        kprintf("[VMOBJ] relink page idx=%llu: owner=%p pindex=%u -> obj=%p pindex=%u\n",
+        klog_err("vm", "relink page idx=%llu: owner=%p pindex=%u -> obj=%p pindex=%u\n",
                 (unsigned long long)vm_page_index(m),
                 (void*)m->object, m->pindex, (void*)obj, pindex);
     }

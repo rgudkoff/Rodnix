@@ -34,6 +34,7 @@
 #include "../../../include/common.h"
 #include "../../../include/console.h"
 #include "../../../include/error.h"
+#include "../../../trace/bootlog.h"
 
 /* ---- порты: NAM (микшер, BAR0 io) ---- */
 #define NAM_RESET        0x00u
@@ -229,7 +230,7 @@ int audio_out_stop(void)
     if (!d->present) {
         return RDNX_E_NOTFOUND;
     }
-    kprintf("[AC97] stop: civ=%u lvi=%u sr=%x picb=%u cr=%x glob=%x hw=%llu wr=%llu\n",
+    klog_dbg("ac97", "stop: civ=%u lvi=%u sr=%x picb=%u cr=%x glob=%x hw=%llu wr=%llu\n",
             (unsigned)nabm_r8(d, PO_CIV), (unsigned)nabm_r8(d, PO_LVI),
             (unsigned)nabm_r16(d, PO_SR), (unsigned)nabm_r16(d, PO_PICB),
             (unsigned)nabm_r8(d, PO_CR),
@@ -293,7 +294,7 @@ static int ac97_attach(fabric_device_t* dev)
     uint32_t bar0 = pci->bars[0];
     uint32_t bar1 = pci->bars[1];
     if ((bar0 & 1u) == 0 || (bar1 & 1u) == 0) {
-        kprintf("[AC97] unexpected BAR layout %x %x\n", bar0, bar1);
+        klog_err("ac97", "unexpected BAR layout %x %x\n", bar0, bar1);
         return RDNX_E_INVALID;
     }
     d->nam = (uint16_t)(bar0 & ~0x3u);
@@ -309,7 +310,7 @@ static int ac97_attach(fabric_device_t* dev)
     uint64_t meta_phys = pmm_alloc_pages(1);
     uint64_t ring_phys = pmm_alloc_pages(AUDIO_RING_BYTES / 4096u);
     if (!meta_phys || !ring_phys) {
-        kprintf("[AC97] no memory for ring\n");
+        klog_err("ac97", "no memory for ring\n");
         return RDNX_E_NOMEM;
     }
     for (uint64_t off = 0; off < AUDIO_RING_BYTES; off += 4096u) {
@@ -358,7 +359,7 @@ static int ac97_attach(fabric_device_t* dev)
     nam_w16(d, NAM_PCM_DAC_RATE, AUDIO_RATE);
 
     d->present = true;
-    kprintf("[AC97] nam=%x nabm=%x ring=%llx %u periods x %u frames @ %u Hz\n",
+    klog("ac97", "nam=%x nabm=%x ring=%llx %u periods x %u frames @ %u Hz\n",
             d->nam, d->nabm, (unsigned long long)ring_phys,
             AUDIO_RING_PERIODS, AUDIO_PERIOD_FRAMES, AUDIO_RATE);
     return RDNX_OK;
@@ -377,6 +378,6 @@ static fabric_driver_t g_driver = {
 void ac97_audio_init(void)
 {
     if (fabric_driver_register(&g_driver) == RDNX_OK) {
-        kputs("[AC97] driver registered\n");
+        klog("ac97", "driver registered\n");
     }
 }

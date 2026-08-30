@@ -204,7 +204,7 @@ static void ioapic_log_iso_routes(void)
 
         uint32_t pol = ioapic_polarity_from_iso_flags(iso.flags);
         uint32_t trg = ioapic_trigger_from_iso_flags(iso.flags);
-        kprintf("[IOAPIC-ISO] IRQ%u -> GSI%u bus=%u flags=0x%x (%s,%s)\n",
+        klog_dbg("apic", "ISO IRQ%u -> GSI%u bus=%u flags=0x%x (%s,%s)\n",
                 (unsigned)irq,
                 (unsigned)iso.gsi,
                 (unsigned)iso.bus,
@@ -429,18 +429,18 @@ int apic_init(void)
     if (acpi_madt_get_lapic_addr(&madt_lapic_addr) == 0 && madt_lapic_addr != 0) {
         uint64_t madt_base = ((uint64_t)madt_lapic_addr) & 0xFFFFF000ULL;
         if (madt_base != apic_base_phys) {
-            kprintf("[APIC-4.1] MADT LAPIC base=%llX differs from MSR=%llX (using MSR)\n",
+            klog_warn("apic", "MADT LAPIC base=%llX differs from MSR=%llX (using MSR)\n",
                     (unsigned long long)madt_base,
                     (unsigned long long)apic_base_phys);
         } else {
-            kprintf("[APIC-4.1] MADT LAPIC base matches MSR=%llX\n",
+            klog_dbg("apic", "MADT LAPIC base matches MSR=%llX\n",
                     (unsigned long long)apic_base_phys);
         }
     }
     __asm__ volatile ("" ::: "memory");
     
     kputs("[APIC-5] Setup LAPIC access backend\n");
-    kprintf("[APIC-5.1] Base phys = 0x%llx\n", (unsigned long long)apic_base_phys);
+    klog_dbg("apic", "base phys = 0x%llx\n", (unsigned long long)apic_base_phys);
     __asm__ volatile ("" ::: "memory");
 
     if (lapic_access_init(apic_base_phys, true) != 0) {
@@ -450,7 +450,7 @@ int apic_init(void)
     }
 
     apic_available = true;
-    kprintf("[APIC-5.3] LAPIC access mode: %s\n", lapic_access_mode_name());
+    klog_dbg("apic", "LAPIC access mode: %s\n", lapic_access_mode_name());
     __asm__ volatile ("" ::: "memory");
 
     kputs("[APIC-6] Reset LAPIC state\n");
@@ -473,7 +473,7 @@ int apic_init(void)
 
     {
         uint32_t ver = apic_read_register(APIC_VERSION);
-        kprintf("[APIC-7.3] LAPIC version=%x svr=%x\n", ver, svr);
+        klog_dbg("apic", "LAPIC version=%x svr=%x\n", ver, svr);
     }
     
     kputs("[APIC-8] Configure SVR\n");
@@ -509,7 +509,7 @@ int apic_init(void)
     uint64_t ioapic_addr = find_ioapic_from_madt();
     if (ioapic_addr != 0) {
         ioapic_base_addr = ioapic_addr;
-        kprintf("[APIC-11.0.1] Found I/O APIC at %llX (from MADT)\n", 
+        klog_dbg("apic", "I/O APIC at %llX (from MADT)\n", 
                 (unsigned long long)ioapic_addr);
     } else {
         kputs("[APIC-11.0.2] I/O APIC not found in MADT, using default 0xFEC00000\n");
@@ -667,14 +667,14 @@ int ioapic_init(void)
     uint64_t mmio_flags = PTE_PRESENT | PTE_RW | PTE_PCD; /* PRESENT | RW | PCD (uncached) */
     
     #if APIC_DEBUG
-    kprintf("[IOAPIC-1.1] Attempting to map I/O APIC at phys=%llX, virt=%llX\n", 
+    klog_dbg("apic", "mapping I/O APIC at phys=%llX, virt=%llX\n", 
             (unsigned long long)ioapic_phys, (unsigned long long)ioapic_virt);
     __asm__ volatile ("" ::: "memory");
     #endif
     
     int map_result = paging_map_page_4kb(ioapic_virt, ioapic_phys, mmio_flags);
     if (map_result != 0) {
-        kprintf("[IOAPIC-1.2] ERROR: Failed to map I/O APIC page (error=%d)\n", map_result);
+        klog_err("apic", "failed to map I/O APIC page (error=%d)\n", map_result);
         kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
@@ -700,7 +700,7 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
-    kprintf("[IOAPIC-2.1] I/O APIC ID register value: %x\n", id_reg);
+    klog_dbg("apic", "I/O APIC ID register value: %x\n", id_reg);
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -714,7 +714,7 @@ int ioapic_init(void)
     
     ioapic_id = (uint8_t)((id_reg >> 24) & 0xFF);
     #if APIC_DEBUG
-    kprintf("[IOAPIC-2.4] I/O APIC ID extracted: %x\n", ioapic_id);
+    klog_dbg("apic", "I/O APIC ID extracted: %x\n", ioapic_id);
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -729,7 +729,7 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
-    kprintf("[IOAPIC-3.1] I/O APIC Version register value: %x\n", ver);
+    klog_dbg("apic", "I/O APIC version register value: %x\n", ver);
     __asm__ volatile ("" ::: "memory");
     #endif
 
@@ -761,9 +761,9 @@ int ioapic_init(void)
     #if APIC_DEBUG
     kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
     __asm__ volatile ("" ::: "memory");
-    kprintf("[IOAPIC-4.1] ID=%x\n", ioapic_id);
-    kprintf("[IOAPIC-4.2] Version=%x\n", ioapic_version);
-    kprintf("[IOAPIC-4.3] Max Redir Entries=%u\n", ioapic_max_redir);
+    klog_dbg("apic", "I/O APIC ID=%x\n", ioapic_id);
+    klog_dbg("apic", "I/O APIC version=%x\n", ioapic_version);
+    klog_dbg("apic", "I/O APIC max redir entries=%u\n", ioapic_max_redir);
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -1264,7 +1264,7 @@ int apic_timer_init(uint32_t frequency)
     {
         uint32_t ver = apic_read_register(APIC_VERSION);
         if (ver == 0 || ver == 0xFFFFFFFFu) {
-            kprintf("[APIC-TIMER-INIT] LAPIC MMIO unavailable (version=%x)\n", ver);
+            klog_warn("apic", "timer: LAPIC MMIO unavailable (version=%x)\n", ver);
             return -1;
         }
     }
@@ -1330,7 +1330,7 @@ int apic_timer_init(uint32_t frequency)
         apic_write_register(APIC_TIMER_INITCNT, 0x1000u);
         if (apic_read_register(APIC_LVT_TIMER) == 0 ||
             apic_read_register(APIC_TIMER_INITCNT) == 0) {
-            kprintf("[APIC-TIMER-INIT] LAPIC timer regs unavailable\n");
+            klog_warn("apic", "timer: LAPIC timer regs unavailable\n");
             return -1;
         }
         klog("timer", "mode=periodic hz=%u ticks_per_ms=%u\n",
@@ -1384,7 +1384,7 @@ void apic_timer_start(void)
             percpu_self()->timer_deadline = first;
             wrmsr64(MSR_IA32_TSC_DEADLINE, first);
         }
-        kprintf("[APIC-TIMER-START] mode=TSC-Deadline period=%llu tsc\n",
+        klog_dbg("apic", "timer mode=TSC-Deadline period=%llu tsc\n",
                 (unsigned long long)apic_timer_tsc_per_period);
     } else {
         /* Periodic LAPIC mode */
@@ -1400,7 +1400,7 @@ void apic_timer_start(void)
         apic_write_register(APIC_LVT_TIMER, lvt);
         apic_write_register(APIC_TIMER_INITCNT, initial_count);
         __asm__ volatile ("" ::: "memory");
-        kprintf("[APIC-TIMER-START] mode=periodic init=%u\n", initial_count);
+        klog_dbg("apic", "timer mode=periodic init=%u\n", initial_count);
     }
 }
 

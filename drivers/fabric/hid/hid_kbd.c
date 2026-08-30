@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../../trace/bootlog.h"
 
 
 static inline uint8_t kbd_read_status(void)
@@ -130,17 +131,17 @@ static bool hid_kbd_probe(fabric_device_t *dev)
     extern void kprintf(const char* fmt, ...);
     
     if (!dev) {
-        kputs("[HID-KBD] probe: dev is NULL\n");
+        klog_dbg("hid", "probe: dev is NULL\n");
         return false;
     }
     
-    kprintf("[HID-KBD] probe: checking device '%s' (class=%x, subclass=%x)\n",
+    klog_dbg("hid", "probe: checking device '%s' (class=%x, subclass=%x)\n",
             dev->name ? dev->name : "(null)", dev->class_code, dev->subclass);
     
     /* Match HID keyboard class (PCI or PS/2) */
     if (dev->class_code == PCI_CLASS_HID && 
         dev->subclass == PCI_SUBCLASS_HID_KBD) {
-        kputs("[HID-KBD] probe: MATCH (HID class)\n");
+        klog_dbg("hid", "probe: MATCH (HID class)\n");
         return true;
     }
     
@@ -148,11 +149,11 @@ static bool hid_kbd_probe(fabric_device_t *dev)
     if (dev->name && dev->name[0] == 'p' && dev->name[1] == 's' && 
         dev->name[2] == '2' && dev->name[3] == '-') {
         /* PS/2 device */
-        kputs("[HID-KBD] probe: MATCH (PS/2 by name)\n");
+        klog_dbg("hid", "probe: MATCH (PS/2 by name)\n");
         return true;
     }
     
-    kputs("[HID-KBD] probe: NO MATCH\n");
+    klog_dbg("hid", "probe: NO MATCH\n");
     return false;
 }
 
@@ -249,7 +250,7 @@ static void keyboard_irq_handler(int vector, void *arg)
 static int hid_kbd_attach(fabric_device_t *dev)
 {
     (void)dev;
-    kputs("[HID-KBD] Attaching keyboard driver\n");
+    klog_dbg("hid", "attaching keyboard driver\n");
     
     /* Initialize lock-free queue */
     scancode_queue_head = 0;
@@ -260,7 +261,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     input_init_keyboard();
     
     /* Initialize PS/2 controller + keyboard */
-    kputs("[HID-KBD] Initializing PS/2 keyboard hardware\n");
+    klog_dbg("hid", "initializing PS/2 keyboard hardware\n");
 
     /* Enable keyboard interface on controller */
     kbd_wait_input_empty();
@@ -273,7 +274,7 @@ static int hid_kbd_attach(fabric_device_t *dev)
     uint8_t config = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config read: %x\n", (unsigned)config);
+        klog_dbg("hid", "controller config read: %x\n", (unsigned)config);
     }
 
     /* Ensure IRQ1 enabled, system flag set, keyboard interface enabled */
@@ -289,11 +290,11 @@ static int hid_kbd_attach(fabric_device_t *dev)
     kbd_write_data(config);
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Controller config written: %x\n", (unsigned)config);
+        klog_dbg("hid", "controller config written: %x\n", (unsigned)config);
     }
 
     /* Flush any pending data */
-    kputs("[HID-KBD] Clearing keyboard buffer\n");
+    klog_dbg("hid", "clearing keyboard buffer\n");
     for (int i = 0; i < 16; i++) {
         if (kbd_read_status() & 0x01) {
             (void)kbd_read_data();
@@ -305,72 +306,72 @@ static int hid_kbd_attach(fabric_device_t *dev)
     /* Enable keyboard scanning (0xF4) */
     kbd_wait_input_empty();
     kbd_write_data(0xF4);
-    kputs("[HID-KBD] Keyboard enable command sent (0xF4)\n");
+    klog_dbg("hid", "keyboard enable command sent (0xF4)\n");
 
     /* Drain ACK if present */
     kbd_wait_output_full();
     uint8_t ack = kbd_read_data();
     {
         extern void kprintf(const char* fmt, ...);
-        kprintf("[HID-KBD] Keyboard ACK: %x\n", (unsigned)ack);
+        klog_dbg("hid", "keyboard ACK: %x\n", (unsigned)ack);
     }
     
     /* Register IRQ1 through Fabric and enable it if possible */
     int irq_vector = 32 + 1; /* IRQ1 -> vector 33 */
     if (fabric_request_irq(irq_vector, keyboard_irq_handler, NULL) != 0) {
-        kputs("[HID-KBD] WARNING: IRQ1 registration failed; keeping polling fallback\n");
+        klog_warn("hid", "IRQ1 registration failed; keeping polling fallback\n");
         input_set_polling_enabled(true);
     } else {
         if (apic_is_available()) {
             if (ioapic_is_available()) {
-                kputs("[HID-KBD] IRQ1 routed via I/O APIC\n");
+                klog_dbg("hid", "IRQ1 routed via I/O APIC\n");
                 apic_enable_irq(1);
             } else {
-                kputs("[HID-KBD] IRQ1 routed via PIC (LAPIC EOI)\n");
-                kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (IOAPIC unavailable)\n");
+                klog_dbg("hid", "IRQ1 routed via PIC (LAPIC EOI)\n");
+                klog_warn("hid", "DEGRADED: keyboard IRQ uses PIC fallback (IOAPIC unavailable)\n");
                 pic_enable_irq(1);
             }
         } else {
-            kputs("[HID-KBD] IRQ1 routed via PIC\n");
-            kputs("[DEGRADED] Keyboard IRQ uses PIC fallback (APIC unavailable)\n");
+            klog_dbg("hid", "IRQ1 routed via PIC\n");
+            klog_warn("hid", "DEGRADED: keyboard IRQ uses PIC fallback (APIC unavailable)\n");
             pic_enable_irq(1);
         }
         /* IRQ path is active; disable polling to avoid duplicate reads */
         input_set_polling_enabled(false);
-        kputs("[HID-KBD] IRQ1 enabled via Fabric (polling disabled)\n");
+        klog_dbg("hid", "IRQ1 enabled via fabric (polling disabled)\n");
     }
-    kputs("[HID-KBD] Keyboard driver attached successfully\n");
+    klog_dbg("hid", "keyboard driver attached\n");
     
     /* Initialize keyboard ops */
-    kputs("[HID-KBD] Initializing keyboard ops...\n");
+    klog_dbg("hid", "initializing keyboard ops\n");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     keyboard_ops.hdr = RDNX_ABI_INIT(keyboard_ops_t);
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Setting read_event pointer...\n");
+    klog_dbg("hid", "setting read_event pointer\n");
     keyboard_ops.read_event = keyboard_read_event;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Setting has_event pointer...\n");
+    klog_dbg("hid", "setting has_event pointer\n");
     keyboard_ops.has_event = keyboard_has_event;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Keyboard ops initialized\n");
+    klog_dbg("hid", "keyboard ops initialized\n");
     
     /* Initialize keyboard service */
-    kputs("[HID-KBD] Initializing keyboard service...\n");
+    klog_dbg("hid", "initializing keyboard service\n");
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
     keyboard_service.hdr = RDNX_ABI_INIT(fabric_service_t);
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Setting service name...\n");
+    klog_dbg("hid", "setting service name\n");
     keyboard_service.name = "keyboard0";
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Setting service ops pointer...\n");
+    klog_dbg("hid", "setting service ops pointer\n");
     keyboard_service.ops = &keyboard_ops;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Setting service context...\n");
+    klog_dbg("hid", "setting service context\n");
     keyboard_service.context = NULL;
     __asm__ volatile ("" ::: "memory"); /* Memory barrier */
-    kputs("[HID-KBD] Keyboard service initialized\n");
+    klog_dbg("hid", "keyboard service initialized\n");
     
-    kputs("[HID-KBD] hid_kbd_attach() returning 0\n");
+    klog_dbg("hid", "hid_kbd_attach() returning 0\n");
     return 0;
 }
 
@@ -379,13 +380,13 @@ static int hid_kbd_publish(fabric_device_t* dev)
     if (!dev) {
         return -1;
     }
-    kputs("[HID-KBD] Publishing keyboard service...\n");
+    klog_dbg("hid", "publishing keyboard service\n");
     if (fabric_service_publish(&keyboard_service) != 0) {
-        kputs("[HID-KBD] ERROR: Failed to publish keyboard service\n");
+        klog_err("hid", "failed to publish keyboard service\n");
         return -1;
     }
     (void)fabric_publish_input_node("keyboard0", dev);
-    kputs("[HID-KBD] Keyboard service published successfully\n");
+    klog_dbg("hid", "keyboard service published\n");
     return 0;
 }
 
@@ -430,12 +431,12 @@ static fabric_driver_t hid_kbd_driver = {
 void hid_kbd_init(void)
 {
     extern void kputs(const char* str);
-    kputs("[HID-KBD] Initializing HID keyboard driver\n");
-    kputs("[HID-KBD] Calling fabric_driver_register...\n");
+    klog_dbg("hid", "initializing HID keyboard driver\n");
+    klog_dbg("hid", "calling fabric_driver_register\n");
     int result = fabric_driver_register(&hid_kbd_driver);
-    kputs("[HID-KBD] fabric_driver_register returned\n");
+    klog_dbg("hid", "fabric_driver_register returned\n");
     if (result != 0) {
-        kputs("[HID-KBD] ERROR: fabric_driver_register failed\n");
+        klog_err("hid", "fabric_driver_register failed\n");
     }
-    kputs("[HID-KBD] Driver registered\n");
+    klog_dbg("hid", "driver registered\n");
 }
