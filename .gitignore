@@ -18,6 +18,10 @@ userland/build/
 *~
 .DS_Store
 
+# Transient boot flags, created and removed by CI scripts
+userland/rootfs/etc/contract.auto
+userland/rootfs/etc/tcc.auto
+
 # Temporary files
 *.tmp
 *.log
