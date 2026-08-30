@@ -112,13 +112,6 @@ uint64_t syscall_dispatch(uint64_t num,
                           uint64_t a5,
                           uint64_t a6)
 {
-    static int logged = 0;
-    if (!logged) {
-        extern void kputs(const char* str);
-        kputs("[SYSCALL] trap received\n");
-        logged = 1;
-    }
-
     task_t* task = task_get_current();
     task_abi_t abi = task_get_abi(task);
 

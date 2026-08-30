@@ -357,10 +357,6 @@ static void run_tcc_smoke_if_enabled(void)
         "}\n";
 
     if (!file_exists("/etc/tcc.auto")) {
-        (void)write_str("[SMK] TCC SKIP flag missing file=");
-        (void)write_str(file_exists("/etc/tcc.auto") ? "1" : "0");
-        (void)write_str(" dir=");
-        (void)write_str(dir_has_entry("/etc", "tcc.auto") ? "1\n" : "0\n");
         return;
     }
 
