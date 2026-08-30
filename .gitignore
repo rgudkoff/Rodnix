@@ -22,6 +22,7 @@ userland/build/
 *.tmp
 *.log
 *.d
+!userland/rootfs/etc/profile.d/
 *.dSYM/
 
 # ISO and boot files
