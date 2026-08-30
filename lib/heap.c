@@ -12,9 +12,18 @@
 #include "../kernel/core/config.h"
 #include "../kernel/core/interrupts.h"
 
+/* Заголовок несёт magic вместо булевого free: то же слово отвечает и на
+ * "свободен ли", и на "заголовок ли это вообще". kfree проверяет его за
+ * O(1) — раньше та же гарантия покупалась обходом всего списка под
+ * замаскированными прерываниями, и на нагретой куче обход стоил больше
+ * лимита hygiene. Заголовок остаётся 32 байта — полезная нагрузка
+ * по-прежнему выровнена на 16. */
+#define HEAP_MAGIC_ALLOC 0x48454150u  /* 'HEAP' */
+#define HEAP_MAGIC_FREE  0x46524545u  /* 'FREE' */
+
 typedef struct heap_block {
     size_t size;
-    bool free;
+    uint32_t magic;
     struct heap_block* next;
     struct heap_block* prev;
 } heap_block_t;
@@ -34,24 +43,6 @@ static inline uint64_t heap_lock(void)
 static inline void heap_unlock(uint64_t flags)
 {
     spinlock_unlock_irqrestore(&heap_spin, flags);
-}
-
-static bool heap_block_in_list(const heap_block_t* needle)
-{
-    if (!needle) {
-        return false;
-    }
-    uint32_t guard = 0;
-    for (heap_block_t* cur = heap_head; cur; cur = cur->next) {
-        if (cur == needle) {
-            return true;
-        }
-        guard++;
-        if (guard > 1000000u) {
-            break;
-        }
-    }
-    return false;
 }
 
 static size_t heap_align(size_t size)
@@ -78,7 +69,7 @@ static void heap_merge_if_possible(heap_block_t* block)
         return;
     }
 
-    if (block->next && block->next->free) {
+    if (block->next && block->next->magic == HEAP_MAGIC_FREE) {
         uint8_t* end = (uint8_t*)block + sizeof(heap_block_t) + block->size;
         if (end == (uint8_t*)block->next) {
             heap_block_t* next = block->next;
@@ -89,10 +80,14 @@ static void heap_merge_if_possible(heap_block_t* block)
             } else {
                 heap_tail = block;
             }
+            /* Поглощённый заголовок — теперь просто байты полезной
+             * нагрузки; обнулённый magic валит устаревший kfree по нему
+             * как invalid, а не как тихую порчу списка. */
+            next->magic = 0;
         }
     }
 
-    if (block->prev && block->prev->free) {
+    if (block->prev && block->prev->magic == HEAP_MAGIC_FREE) {
         uint8_t* end = (uint8_t*)block->prev + sizeof(heap_block_t) + block->prev->size;
         if (end == (uint8_t*)block) {
             heap_block_t* prev = block->prev;
@@ -103,6 +98,7 @@ static void heap_merge_if_possible(heap_block_t* block)
             } else {
                 heap_tail = prev;
             }
+            block->magic = 0;
         }
     }
 }
@@ -110,7 +106,7 @@ static void heap_merge_if_possible(heap_block_t* block)
 static heap_block_t* heap_find_fit(size_t size)
 {
     for (heap_block_t* cur = heap_head; cur; cur = cur->next) {
-        if (cur->free && cur->size >= size) {
+        if (cur->magic == HEAP_MAGIC_FREE && cur->size >= size) {
             return cur;
         }
     }
@@ -127,7 +123,7 @@ static void heap_split_block(heap_block_t* block, size_t size)
     uint8_t* next_addr = (uint8_t*)block + sizeof(heap_block_t) + aligned;
     heap_block_t* next = (heap_block_t*)next_addr;
     next->size = block->size - aligned - sizeof(heap_block_t);
-    next->free = true;
+    next->magic = HEAP_MAGIC_FREE;
     next->prev = block;
     next->next = block->next;
     if (block->next) {
@@ -156,12 +152,12 @@ static heap_block_t* heap_grow(size_t min_size)
 
     heap_block_t* block = (heap_block_t*)mem;
     block->size = pages * PAGE_SIZE - sizeof(heap_block_t);
-    block->free = true;
+    block->magic = HEAP_MAGIC_FREE;
     block->next = NULL;
     block->prev = NULL;
     heap_insert_block(block);
 
-    if (block->prev && block->prev->free) {
+    if (block->prev && block->prev->magic == HEAP_MAGIC_FREE) {
         uint8_t* prev_end = (uint8_t*)block->prev + sizeof(heap_block_t) + block->prev->size;
         if (prev_end == (uint8_t*)block) {
             heap_merge_if_possible(block->prev);
@@ -192,7 +188,7 @@ int heap_init(size_t initial_pages)
 
     heap_block_t* block = (heap_block_t*)mem;
     block->size = initial_pages * PAGE_SIZE - sizeof(heap_block_t);
-    block->free = true;
+    block->magic = HEAP_MAGIC_FREE;
     block->next = NULL;
     block->prev = NULL;
     heap_head = block;
@@ -220,7 +216,7 @@ void* kmalloc(size_t size)
     }
 
     heap_split_block(block, aligned);
-    block->free = false;
+    block->magic = HEAP_MAGIC_ALLOC;
     void* ptr = (uint8_t*)block + sizeof(heap_block_t);
     heap_unlock(old);
     return ptr;
@@ -235,15 +231,15 @@ void kfree(void* ptr)
     }
 
     heap_block_t* block = (heap_block_t*)((uint8_t*)ptr - sizeof(heap_block_t));
-    if (!heap_block_in_list(block)) {
-        heap_unlock(old);
-        PANIC("kfree: invalid pointer %p block=%p ra=%p", ptr, block, __builtin_return_address(0));
-    }
-    if (block->free) {
+    if (block->magic == HEAP_MAGIC_FREE) {
         heap_unlock(old);
         PANIC("kfree: double free ptr=%p block=%p ra=%p", ptr, block, __builtin_return_address(0));
     }
-    block->free = true;
+    if (block->magic != HEAP_MAGIC_ALLOC) {
+        heap_unlock(old);
+        PANIC("kfree: invalid pointer %p block=%p ra=%p", ptr, block, __builtin_return_address(0));
+    }
+    block->magic = HEAP_MAGIC_FREE;
     heap_merge_if_possible(block);
     heap_unlock(old);
 }

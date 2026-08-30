@@ -704,9 +704,23 @@ void task_for_each(task_iter_fn_t fn, void* ctx)
 }
 
 /* Именно-эта-задача: полное состояние её потоков, для момента, когда OOM
- * констатирует «жертва пережила окно». Печатает под замком реестра. */
+ * констатирует «жертва пережила окно». Под замком реестра — только сбор
+ * снимка: печать в serial стоит миллисекунды, и с ней под irqsave этот
+ * дамп сам становился нарушением, о котором дальше рапортовал hygiene. */
 void task_debug_dump_task(uint64_t task_id)
 {
+    struct {
+        uint64_t tid;
+        uint32_t state;
+        char wq[16];
+        uint32_t armed;
+        uint64_t deadline;
+        uint32_t oncpu;
+        uint64_t rip;
+    } snap[12];
+    uint32_t n = 0;
+    uint32_t total = 0;
+
     uint64_t f = spinlock_lock_irqsave(&task_registry_spin);
     for (task_t* t = all_tasks_head; t; t = t->next_all) {
         if (t->task_id != task_id) {
@@ -714,22 +728,49 @@ void task_debug_dump_task(uint64_t task_id)
         }
         thread_t* th;
         TAILQ_FOREACH(th, &t->threads, task_link) {
+            total++;
+            if (n >= ARRAY_SIZE(snap)) {
+                continue;
+            }
             uint64_t rip = 0;
             if (th != thread_get_current() && th->context.stack_pointer) {
                 rip = ((const interrupt_frame_t*)(uintptr_t)
                            th->context.stack_pointer)->rip;
             }
-            kprintf("[OOMDBG] tid=%llu st=%x wq=%s armed=%u dl=%llu oncpu=%u rip=%llx\n",
-                    (unsigned long long)th->thread_id,
-                    (unsigned)th->state,
-                    th->waitq_owner ? (th->waitq_owner->name ?
-                                       th->waitq_owner->name : "?") : "-",
-                    (unsigned)th->wait_timeout_armed,
-                    (unsigned long long)th->wait_deadline_ns,
-                    (unsigned)th->on_cpu,
-                    (unsigned long long)rip);
+            const char* wq = th->waitq_owner
+                ? (th->waitq_owner->name ? th->waitq_owner->name : "?")
+                : "-";
+            /* Имя копируется: после отпускания замка очередь ожидания
+             * жертвы может не пережить её смерть. */
+            uint32_t k = 0;
+            while (wq[k] && k + 1 < sizeof(snap[n].wq)) {
+                snap[n].wq[k] = wq[k];
+                k++;
+            }
+            snap[n].wq[k] = '\0';
+            snap[n].tid = th->thread_id;
+            snap[n].state = th->state;
+            snap[n].armed = th->wait_timeout_armed;
+            snap[n].deadline = th->wait_deadline_ns;
+            snap[n].oncpu = th->on_cpu;
+            snap[n].rip = rip;
+            n++;
         }
         break;
     }
     spinlock_unlock_irqrestore(&task_registry_spin, f);
+
+    for (uint32_t i = 0; i < n; i++) {
+        kprintf("[OOMDBG] tid=%llu st=%x wq=%s armed=%u dl=%llu oncpu=%u rip=%llx\n",
+                (unsigned long long)snap[i].tid,
+                (unsigned)snap[i].state,
+                snap[i].wq,
+                (unsigned)snap[i].armed,
+                (unsigned long long)snap[i].deadline,
+                (unsigned)snap[i].oncpu,
+                (unsigned long long)snap[i].rip);
+    }
+    if (total > n) {
+        kprintf("[OOMDBG] ... %u more threads not shown\n", (unsigned)(total - n));
+    }
 }

@@ -646,6 +646,7 @@ static uint64_t pmm_alloc_page_in_zone_locked(pmm_zone_t zone);
 static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count);
 static void pmm_free_page_locked(uint64_t phys);
 static void pmm_free_pages_locked(uint64_t phys, uint32_t count);
+static void pmm_zero_pages(uint64_t phys, uint32_t count);
 
 static uint64_t pmm_alloc_page_locked(void){
     uint64_t phys = pmm_alloc_page_in_zone_locked(PMM_ZONE_NORMAL);
@@ -660,6 +661,9 @@ uint64_t pmm_alloc_page(void)
     uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
     uint64_t _r = pmm_alloc_page_locked();
     spinlock_unlock_irqrestore(&pmm_spin, _f);
+    if (_r) {
+        pmm_zero_pages(_r, 1);
+    }
     return _r;
 }
 
@@ -674,6 +678,9 @@ uint64_t pmm_alloc_page_in_zone(pmm_zone_t zone)
     uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
     uint64_t _r = pmm_alloc_page_in_zone_locked(zone);
     spinlock_unlock_irqrestore(&pmm_spin, _f);
+    if (_r) {
+        pmm_zero_pages(_r, 1);
+    }
     return _r;
 }
 
@@ -727,6 +734,9 @@ uint64_t pmm_alloc_pages(uint32_t count)
     uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
     uint64_t _r = pmm_alloc_pages_locked(count);
     spinlock_unlock_irqrestore(&pmm_spin, _f);
+    if (_r) {
+        pmm_zero_pages(_r, count);
+    }
     return _r;
 }
 
@@ -761,10 +771,18 @@ static uint64_t pmm_alloc_pages_in_zone_locked(pmm_zone_t zone, uint32_t count){
         pmm_state.zones[zone].used_pages += count;
     }
 
+    /* Zeroing happens in the public wrappers, outside the lock: the pages
+     * are already claimed, nobody else can be handed them, and a memset is
+     * linear in count -- exactly the unbounded work this allocator was
+     * rebuilt to keep out of the masked section. */
+    return phys;
+}
+
+static void pmm_zero_pages(uint64_t phys, uint32_t count)
+{
     for (uint32_t i = 0; i < count; i++) {
         pmm_zero_page(phys + ((uint64_t)i * PAGE_SIZE));
     }
-    return phys;
 }
 
 uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
@@ -772,6 +790,9 @@ uint64_t pmm_alloc_pages_in_zone(pmm_zone_t zone, uint32_t count)
     uint64_t _f = spinlock_lock_irqsave(&pmm_spin);
     uint64_t _r = pmm_alloc_pages_in_zone_locked(zone, count);
     spinlock_unlock_irqrestore(&pmm_spin, _f);
+    if (_r) {
+        pmm_zero_pages(_r, count);
+    }
     return _r;
 }
 
