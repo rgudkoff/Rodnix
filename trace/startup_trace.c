@@ -34,6 +34,8 @@ void startup_trace_init(const char* cmdline)
         cmdline_has_substr(cmdline, "bootlog=verbose") ||
         cmdline_has_substr(cmdline, "startup_debug=verbose")) {
         g_bootverbose = true;
+        /* Подробный режим — это DEBUG-порог klog, другого фильтра нет. */
+        klog_set_level(KLOG_DEBUG);
     }
     if (cmdline_has_substr(cmdline, "verbose_sysinit") ||
         cmdline_has_substr(cmdline, "debug.verbose_sysinit=1")) {

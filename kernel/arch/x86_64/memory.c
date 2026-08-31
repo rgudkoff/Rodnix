@@ -92,24 +92,24 @@ int memory_init(void)
     extern void kputs(const char* str);
     extern boot_info_t* boot_get_info(void);
     
-    kputs("[MEM-1] Start\n");
+    klog_dbg("mem", "init: start\n");
     tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_ENTER, 0, 0);
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[MEM-2] Call paging_init\n");
+    klog_dbg("mem", "init: paging_init\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize paging first (uses existing page tables from boot.S) */
     if (paging_init() != 0) {
-        kputs("[MEM-ERR] paging_init failed\n");
+        klog_err("mem", "paging_init failed\n");
         tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 1, 0);
         return -1;
     }
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[MEM-3] paging_init OK\n");
+    klog_dbg("mem", "init: paging_init ok\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[MEM-4] Setup PMM params\n");
+    klog_dbg("mem", "init: setup PMM params\n");
     __asm__ volatile ("" ::: "memory");
     /* For PMM, we need to allocate a bitmap. For now, use a fixed location
      * in low memory that's already identity-mapped.
@@ -156,7 +156,7 @@ int memory_init(void)
     void* bitmap_virt = X86_64_PHYS_TO_VIRT(bitmap_phys);
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[MEM-5] Call pmm_init\n");
+    klog_dbg("mem", "init: pmm_init\n");
     __asm__ volatile ("" ::: "memory");
     /* Disable interrupts during early PMM init to avoid reentrancy */
     __asm__ volatile ("cli");
@@ -165,13 +165,13 @@ int memory_init(void)
         if (pmm_init_from_mmap(PMM_MEMORY_START, mem_end, bitmap_virt,
                                bitmap_phys, bi->mmap_addr,
                                bi->mmap_size, bi->mmap_entry_size) != 0) {
-            kputs("[MEM-ERR] pmm_init_from_mmap failed\n");
+            klog_err("mem", "pmm_init_from_mmap failed\n");
             tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 2, 0);
             __asm__ volatile ("sti");
             return -1;
         }
     } else if (pmm_init(PMM_MEMORY_START, mem_end, bitmap_virt) != 0) {
-        kputs("[MEM-ERR] pmm_init failed\n");
+        klog_err("mem", "pmm_init failed\n");
         tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 3, 0);
         __asm__ volatile ("sti");
         return -1;
@@ -198,11 +198,11 @@ int memory_init(void)
             physmap_max = (initrd_end + 0x1FFFFFULL) & ~0x1FFFFFULL;
         }
     }
-    kputs("[MEM-6] Bootstrap physmap\n");
+    klog_dbg("mem", "init: bootstrap physmap\n");
     __asm__ volatile ("" ::: "memory");
     extern int paging_bootstrap_physmap(uint64_t max_phys);
     if (paging_bootstrap_physmap(physmap_max) != 0) {
-        kputs("[MEM-ERR] bootstrap physmap failed\n");
+        klog_err("mem", "bootstrap physmap failed\n");
         tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 4, 0);
         return -1;
     }
@@ -220,7 +220,7 @@ int memory_init(void)
     /* Initialize simple kernel heap */
     extern int heap_init(size_t initial_pages);
     if (heap_init(16) != 0) {
-        kputs("[MEM-ERR] heap_init failed\n");
+        klog_err("mem", "heap_init failed\n");
         tracev2_emit(TR2_CAT_MEMORY, TR2_EV_MEM_INIT_FAIL, 5, 0);
         return -1;
     }

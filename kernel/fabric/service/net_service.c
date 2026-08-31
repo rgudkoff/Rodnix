@@ -121,7 +121,7 @@ int fabric_net_service_init(void)
     }
     (void)fabric_node_set_state("/fabric/subsystems/net/ifmgr", FABRIC_STATE_ACTIVE);
     g_net_inited = 1;
-    fabric_log("[fabric-net] service ready: %s\n", g_service.name);
+    fabric_log("net: service ready: %s\n", g_service.name);
     return RDNX_OK;
 }
 
@@ -148,7 +148,7 @@ int fabric_netif_register(fabric_netif_t* iface)
     }
     g_ifaces[g_iface_count++] = iface;
     spinlock_unlock(&g_net_lock);
-    fabric_log("[fabric-net] iface registered: %s mtu=%u\n",
+    fabric_log("net: iface registered: %s mtu=%u\n",
                iface->name, iface->mtu);
     return RDNX_OK;
 }

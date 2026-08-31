@@ -454,14 +454,14 @@ int loader_load_image(const void* image, size_t size)
 int loader_enter_user_stub(void)
 {
     if (bootlog_is_verbose()) {
-        kputs("[LOADER] enter_user_stub\n");
+        klog_dbg("loader", "enter_user_stub\n");
     }
     void* entry = NULL;
     void* user_stack = NULL;
     uint64_t rsp0 = 0;
     if (usermode_prepare_stub(&entry, &user_stack, &rsp0) != 0) {
         if (bootlog_is_verbose()) {
-            kputs("[LOADER] prepare_stub failed\n");
+            klog_dbg("loader", "prepare_stub failed\n");
         }
         return RDNX_E_GENERIC;
     }
@@ -471,7 +471,7 @@ int loader_enter_user_stub(void)
     }
     if (!rsp0) {
         if (bootlog_is_verbose()) {
-            kputs("[LOADER] rsp0 missing\n");
+            klog_dbg("loader", "rsp0 missing\n");
         }
         return RDNX_E_INVALID;
     }
@@ -525,7 +525,7 @@ int loader_execve_ex(const char* path,
     int ret = loader_read_file(path, &buf, &size);
     if (ret != RDNX_OK) {
         if (bootlog_is_verbose()) {
-            kputs("[LOADER] file not found\n");
+            klog_dbg("loader", "file not found\n");
         }
         return ret;
     }
@@ -535,7 +535,7 @@ int loader_execve_ex(const char* path,
     kfree(buf);
     if (ret != RDNX_OK) {
         if (bootlog_is_verbose()) {
-            kputs("[LOADER] ELF load failed\n");
+            klog_dbg("loader", "ELF load failed\n");
         }
         return ret;
     }
@@ -610,7 +610,7 @@ int loader_execve_ex(const char* path,
     percpu_set_tls_fs_base(0);
 
     if (bootlog_is_verbose()) {
-        kputs("[LOADER] entering userland\n");
+        klog_dbg("loader", "entering userland\n");
     }
     usermode_enter((void*)(uintptr_t)img.entry,
                    (void*)(uintptr_t)img.user_stack,

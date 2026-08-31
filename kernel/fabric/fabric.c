@@ -425,7 +425,7 @@ static int fabric_finalize_driver_attach(fabric_device_t* dev, fabric_driver_t* 
     fabric_node_path_for_provider_locked(dev, node_path, sizeof(node_path));
     spinlock_unlock(&fabric_lock);
 
-    fabric_log("[fabric] driver attached: %s -> %s\n",
+    fabric_log("driver attached: %s -> %s\n",
                driver->name, dev->name);
     fabric_event_emit(FABRIC_EVENT_DRIVER_ATTACHED,
                      node_path,
@@ -475,7 +475,7 @@ uint32_t fabric_dispatcher_tick(void)
 
     matched = fabric_dispatcher_run();
     if (matched > 0) {
-        fabric_log("[fabric] dispatcher tick attached=%u\n", matched);
+        fabric_log("dispatcher tick attached=%u\n", matched);
     }
     return matched;
 }
@@ -649,7 +649,7 @@ void fabric_init(void)
     next_node_id = 1;
     fabric_node_bootstrap_locked();
     
-    fabric_log("[fabric] Fabric initialized\n");
+    fabric_log("Fabric initialized\n");
     fabric_initialized = true;
 }
 
@@ -866,7 +866,7 @@ int fabric_bus_register(fabric_bus_t *bus)
     
     spinlock_unlock(&fabric_lock);
     
-    fabric_log("[fabric] bus registered: %s\n", bus->name);
+    fabric_log("bus registered: %s\n", bus->name);
     
     /* Enumerate devices immediately */
     if (bus->enumerate) {
@@ -896,13 +896,13 @@ int fabric_driver_register(fabric_driver_t *driver)
     
     spinlock_unlock(&fabric_lock);
     
-    fabric_log("[fabric] driver registered: %s\n", driver->name);
+    fabric_log("driver registered: %s\n", driver->name);
     
     /* Try to match with existing devices through the dispatcher. */
-    fabric_log("[fabric] Dispatch driver %s across current devices\n", driver->name);
+    fabric_log("Dispatch driver %s across current devices\n", driver->name);
     (void)fabric_dispatcher_run();
     
-    fabric_log("[fabric] Driver registration complete\n");
+    fabric_log("Driver registration complete\n");
     return 0;
 }
 
@@ -972,7 +972,7 @@ int fabric_device_publish(fabric_device_t *device)
     
     spinlock_unlock(&fabric_lock);
     
-    fabric_log("[fabric] device found: vendor=%x device=%x class=%x\n",
+    fabric_log("device found: vendor=%x device=%x class=%x\n",
                device->vendor_id, device->device_id, device->class_code);
     fabric_event_emit(FABRIC_EVENT_DEVICE_ADDED,
                      path,
@@ -1008,12 +1008,12 @@ int fabric_service_publish(fabric_service_t *service)
         }
     }
     
-    fabric_log("[fabric] Publishing service: %s\n", service->name);
+    fabric_log("Publishing service: %s\n", service->name);
     spinlock_lock(&fabric_lock);
     
     if (service_count >= MAX_SERVICES) {
         spinlock_unlock(&fabric_lock);
-        fabric_log("[fabric] ERROR: Service registry full\n");
+        klog_err("fabric", "service registry full\n");
         klog_err("fabric", "service registry full\n");
         return -1;
     }
@@ -1059,7 +1059,7 @@ int fabric_service_publish(fabric_service_t *service)
                      node_class,
                      node_flags);
     
-    fabric_log("[fabric] service published: %s (count=%u)\n", service->name, service_count);
+    fabric_log("service published: %s (count=%u)\n", service->name, service_count);
     
     return 0;
 }
@@ -1243,15 +1243,11 @@ void fabric_free_irq(int vector, fabric_irq_handler_t h)
     spinlock_unlock(&irq_lock);
 }
 
-/* Logging */
+/* Журнал фабрики — служебная болтовня, живёт на уровне DEBUG. */
 void fabric_log(const char *fmt, ...)
 {
-    /* Logging with variadic arguments */
-    /* Forward variadic arguments to kprintf using va_list */
-    extern void kvprintf(const char *fmt, va_list args);
-    
     va_list args;
     va_start(args, fmt);
-    kvprintf(fmt, args);
+    klog_vat(KLOG_DEBUG, "fabric", fmt, args);
     va_end(args);
 }

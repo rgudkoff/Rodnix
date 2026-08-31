@@ -679,59 +679,6 @@ static void serial_write_char(char c)
     outb(SERIAL_COM1_BASE + SERIAL_DATA, (uint8_t)c);
 }
 
-static bool line_matches_prefix(const char* s, const char* p)
-{
-    if (!s || !p) {
-        return false;
-    }
-    while (*p) {
-        if (*s != *p) {
-            return false;
-        }
-        s++;
-        p++;
-    }
-    return true;
-}
-
-static bool line_filter_is_noisy_prefix(const char* s)
-{
-    static const char* noisy[] = {
-        "[INT-",
-        "[IDT-",
-        "[MEM-",
-        "[APIC-",
-        "[IOAPIC-",
-        "[PIC]",
-        "[PCI]",
-        "[PS2-BUS]",
-        "[HID-KBD]",
-        "[FABRIC-IRQ]",
-        "[fabric]",
-        "[fabric-",
-        "[FABRIC]",
-        "[InputCore]",
-        "[VNET]",
-        "[E1000]",
-        "[VGA]",
-        "[IDE]",
-        "[NET]",
-        "[VFS] initrd: entries=",
-        "[VFS] initrd entry:"
-    };
-    for (uint32_t i = 0; i < (uint32_t)(sizeof(noisy) / sizeof(noisy[0])); i++) {
-        if (line_matches_prefix(s, noisy[i])) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static bool console_verbose_mode(void)
-{
-    return startup_trace_bootverbose() || bootlog_is_verbose();
-}
-
 /**
  * @function update_cursor
  * @brief Update VGA text mode cursor position
@@ -1180,10 +1127,6 @@ void kputc(char c)
 
 void kputs(const char* str)
 {
-    if (!console_verbose_mode() && str && line_filter_is_noisy_prefix(str)) {
-        return;
-    }
-
     /* Prevent recursive calls from exception handlers */
     if (kputs_in_progress) {
         /* If already in kputs, just write directly to VGA to avoid recursion.
@@ -1292,7 +1235,7 @@ void kprintf(const char* fmt, ...)
     va_end(args);
 }
 
-/* Write exactly len chars from buf via kputc (avoids kputs noisy-prefix filter). */
+/* Write exactly len chars from buf via kputc. */
 static void kvprintf_write(const char* buf, int len)
 {
     for (int i = 0; i < len; i++) {
@@ -1302,10 +1245,6 @@ static void kvprintf_write(const char* buf, int len)
 
 void kvprintf(const char* fmt, va_list args)
 {
-    if (!console_verbose_mode() && fmt && line_filter_is_noisy_prefix(fmt)) {
-        return;
-    }
-
     /* Held across the whole format so a line from one processor does not end
      * up spliced into a line from another -- which is what happened during
      * AP bring-up debugging, character by character. */

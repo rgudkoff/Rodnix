@@ -127,7 +127,7 @@ uint32_t fabric_dispatcher_poll(fabric_device_t* const* devices,
                 continue;
             }
 
-            fabric_log("[fabric-dispatch] match %s -> %s score=%d\n",
+            fabric_log("dispatch: match %s -> %s score=%d\n",
                        driver->name ? driver->name : "(driver)",
                        dev->name ? dev->name : "(device)",
                        score);
@@ -136,7 +136,7 @@ uint32_t fabric_dispatcher_poll(fabric_device_t* const* devices,
         }
 
         if (best_driver) {
-            fabric_log("[fabric-dispatch] attach %s -> %s score=%d\n",
+            fabric_log("dispatch: attach %s -> %s score=%d\n",
                        best_driver->name ? best_driver->name : "(driver)",
                        dev->name ? dev->name : "(device)",
                        best_score);
@@ -146,7 +146,7 @@ uint32_t fabric_dispatcher_poll(fabric_device_t* const* devices,
 
             if (!best_driver->attach || best_driver->attach(dev) != 0) {
                 dev->dispatch_state = FABRIC_DEV_DISPATCH_FAILED;
-                fabric_log("[fabric-dispatch] attach failed %s -> %s\n",
+                fabric_log("dispatch: attach failed %s -> %s\n",
                            best_driver->name ? best_driver->name : "(driver)",
                            dev->name ? dev->name : "(device)");
             } else {

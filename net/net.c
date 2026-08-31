@@ -7,6 +7,7 @@
 #include "../../include/console.h"
 #include "../../include/common.h"
 #include "../../include/error.h"
+#include "../trace/bootlog.h"
 
 typedef struct net_node {
     net_packet_t pkt;
@@ -41,7 +42,7 @@ static void net_register_loopback_iface_once(void)
         return;
     }
     if (fabric_net_service_init() != RDNX_OK) {
-        kputs("[NET] Fabric net service init failed\n");
+        klog_err("net", "fabric net service init failed\n");
         return;
     }
 
@@ -67,12 +68,12 @@ static void net_register_loopback_iface_once(void)
     loopback_iface.context = NULL;
 
     if (fabric_netif_register(&loopback_iface) != RDNX_OK) {
-        kputs("[NET] Fabric net iface register failed: lo0\n");
+        klog_err("net", "fabric net iface register failed: lo0\n");
         return;
     }
 
     net_service_registered = 1;
-    kputs("[NET] Fabric net interface ready: lo0\n");
+    klog_dbg("net", "fabric net interface ready: lo0\n");
 }
 
 static net_queue_t* net_queue_create(void)
@@ -144,18 +145,18 @@ static int net_queue_pop(net_queue_t* q, net_packet_t* out)
 int net_init(void)
 {
     if (net_stack_bootstrap() != RDNX_OK) {
-        kputs("[NET] Stack bootstrap failed\n");
+        klog_err("net", "stack bootstrap failed\n");
         return -1;
     }
     if (!loopback_queue) {
         loopback_queue = net_queue_create();
         if (!loopback_queue) {
-            kputs("[NET] Loopback init failed\n");
+            klog_err("net", "loopback init failed\n");
             return -1;
         }
     }
     net_register_loopback_iface_once();
-    kputs("[NET] Loopback ready\n");
+    klog_dbg("net", "loopback ready\n");
     return 0;
 }
 

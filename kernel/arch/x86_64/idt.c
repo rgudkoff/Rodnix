@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../../trace/bootlog.h"
 
 /* ============================================================================
  * IDT Entry Structure (x86_64)
@@ -175,14 +176,14 @@ int idt_init(void)
     extern void kputs(const char* str);
     
     /* Step 1: Setup IDT pointer */
-    kputs("[IDT-1] Setup pointer\n");
+    klog_dbg("idt", "setup pointer\n");
     __asm__ volatile ("" ::: "memory");
     idt_pointer.limit = sizeof(idt) - 1;
     idt_pointer.base = (uint64_t)&idt;
     __asm__ volatile ("" ::: "memory");
     
     /* Step 2: Clear IDT entries */
-    kputs("[IDT-2] Clear entries\n");
+    klog_dbg("idt", "clear entries\n");
     __asm__ volatile ("" ::: "memory");
     for (int i = 0; i < 256; i++) {
         idt_set_entry(i, 0, 0, 0, 0);
@@ -192,7 +193,7 @@ int idt_init(void)
     /* Step 3: Setup exception handlers (vectors 0-31)
      * call idt_set_entry directly for each handler
      */
-    kputs("[IDT-3] Setup ISR 0-31\n");
+    klog_dbg("idt", "setup ISR 0-31\n");
     __asm__ volatile ("" ::: "memory");
     idt_set_entry(0, (uint64_t)isr0, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
     idt_set_entry(1, (uint64_t)isr1, 0x08, IDT_TYPE_INTERRUPT_GATE, 0);
@@ -229,7 +230,7 @@ int idt_init(void)
     __asm__ volatile ("" ::: "memory");
     
     /* Step 4: Setup hardware interrupt handlers (vectors 32-255) */
-    kputs("[IDT-4] Setup IRQ 32-255\n");
+    klog_dbg("idt", "setup IRQ 32-255\n");
     __asm__ volatile ("" ::: "memory");
     for (int vector = 32; vector < 256; vector++) {
         idt_set_entry((uint8_t)vector,
@@ -241,18 +242,18 @@ int idt_init(void)
     __asm__ volatile ("" ::: "memory");
 
     /* Step 4.1: Setup syscall handler (vector 128 / 0x80, DPL=3) */
-    kputs("[IDT-4.1] Setup syscall 0x80\n");
+    klog_dbg("idt", "setup syscall 0x80\n");
     __asm__ volatile ("" ::: "memory");
     idt_set_entry(128, (uint64_t)isr128, 0x08, IDT_TYPE_TRAP_GATE_USER, 0);
     __asm__ volatile ("" ::: "memory");
     
     /* Step 5: Load IDT */
-    kputs("[IDT-5] Load IDT\n");
+    klog_dbg("idt", "load IDT\n");
     __asm__ volatile ("" ::: "memory");
     idt_load();
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[IDT-OK] Complete\n");
+    klog_dbg("idt", "complete\n");
     return 0;
 }
 

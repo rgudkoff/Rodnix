@@ -237,7 +237,7 @@ static uint64_t apic_read_msr(uint32_t msr)
     extern void kputs(const char* str);
     
     #if APIC_DEBUG
-    kputs("[APIC-RDMSR-1] Before RDMSR\n");
+    klog_dbg("apic", "before RDMSR\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -246,7 +246,7 @@ static uint64_t apic_read_msr(uint32_t msr)
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
-    kputs("[APIC-RDMSR-2] After RDMSR\n");
+    klog_dbg("apic", "after RDMSR\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -254,7 +254,7 @@ static uint64_t apic_read_msr(uint32_t msr)
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
-    kputs("[APIC-RDMSR-3] Return\n");
+    klog_dbg("apic", "RDMSR return\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     return result;
@@ -317,7 +317,7 @@ static bool apic_check_cpuid(void)
     
     #if APIC_DEBUG
     #if APIC_DEBUG
-    kputs("[APIC-CPUID-1] Before CPUID\n");
+    klog_dbg("apic", "before CPUID\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     #endif
@@ -326,7 +326,7 @@ static bool apic_check_cpuid(void)
     
     #if APIC_DEBUG
     #if APIC_DEBUG
-    kputs("[APIC-CPUID-2] Execute CPUID\n");
+    klog_dbg("apic", "execute CPUID\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     #endif
@@ -337,7 +337,7 @@ static bool apic_check_cpuid(void)
     
     #if APIC_DEBUG
     #if APIC_DEBUG
-    kputs("[APIC-CPUID-3] Check bit\n");
+    klog_dbg("apic", "CPUID check bit\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     #endif
@@ -347,7 +347,7 @@ static bool apic_check_cpuid(void)
     
     #if APIC_DEBUG
     #if APIC_DEBUG
-    kputs("[APIC-CPUID-4] Return\n");
+    klog_dbg("apic", "CPUID return\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     #endif
@@ -400,29 +400,29 @@ int apic_init(void)
 {
     extern void kputs(const char* str);
     
-    kputs("[APIC-1] Check CPUID\n");
+    klog_dbg("apic", "init: check CPUID\n");
     __asm__ volatile ("" ::: "memory");
     /* Trust platform firmware and the virtual machine monitor enough to try
      * LAPIC initialization even if CPUID does not advertise APIC support.
      * Some virtualized environments get this flag wrong; CPUID is log-only. */
     bool cpuid_has_apic = apic_check_cpuid();
     if (!cpuid_has_apic) {
-        kputs("[APIC-1.1] WARNING: CPUID reports no APIC, forcing APIC init (QEMU/firmware quirk?)\n");
+        klog_warn("apic", "CPUID reports no APIC, forcing APIC init (QEMU/firmware quirk?)\n");
         __asm__ volatile ("" ::: "memory");
     } else {
-        kputs("[APIC-1.2] CPUID reports APIC present\n");
+        klog_dbg("apic", "CPUID reports APIC present\n");
         __asm__ volatile ("" ::: "memory");
     }
     
-    kputs("[APIC-2] APIC availability pending init\n");
+    klog_dbg("apic", "init: availability pending\n");
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-3] Read MSR\n");
+    klog_dbg("apic", "init: read MSR\n");
     __asm__ volatile ("" ::: "memory");
     uint64_t apic_base_msr = apic_read_msr(APIC_BASE_MSR);
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-4] Extract base\n");
+    klog_dbg("apic", "init: extract base\n");
     __asm__ volatile ("" ::: "memory");
     uint64_t apic_base_phys = apic_base_msr & 0xFFFFF000;
     uint32_t madt_lapic_addr = 0;
@@ -439,12 +439,12 @@ int apic_init(void)
     }
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-5] Setup LAPIC access backend\n");
+    klog_dbg("apic", "init: setup LAPIC access backend\n");
     klog_dbg("apic", "base phys = 0x%llx\n", (unsigned long long)apic_base_phys);
     __asm__ volatile ("" ::: "memory");
 
     if (lapic_access_init(apic_base_phys, true) != 0) {
-        kputs("[APIC-5.2] Failed to initialize LAPIC access backend\n");
+        klog_err("apic", "failed to initialize LAPIC access backend\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
@@ -453,22 +453,22 @@ int apic_init(void)
     klog_dbg("apic", "LAPIC access mode: %s\n", lapic_access_mode_name());
     __asm__ volatile ("" ::: "memory");
 
-    kputs("[APIC-6] Reset LAPIC state\n");
+    klog_dbg("apic", "init: reset LAPIC state\n");
     __asm__ volatile ("" ::: "memory");
     apic_reset_local();
     __asm__ volatile ("" ::: "memory");
 
-    kputs("[APIC-7] Read SVR\n");
+    klog_dbg("apic", "init: read SVR\n");
     __asm__ volatile ("" ::: "memory");
     /* Enable APIC (set SVR enable bit) */
     /* NOTE: This may cause page fault if APIC is not properly mapped */
     /* If it fails, we'll fallback to PIC */
     uint32_t svr;
-    kputs("[APIC-7.1] Before read SVR\n");
+    klog_dbg("apic", "before read SVR\n");
     __asm__ volatile ("" ::: "memory");
     svr = apic_read_register(APIC_SVR);
     __asm__ volatile ("" ::: "memory");
-    kputs("[APIC-7.2] After read SVR\n");
+    klog_dbg("apic", "after read SVR\n");
     __asm__ volatile ("" ::: "memory");
 
     {
@@ -476,35 +476,35 @@ int apic_init(void)
         klog_dbg("apic", "LAPIC version=%x svr=%x\n", ver, svr);
     }
     
-    kputs("[APIC-8] Configure SVR\n");
+    klog_dbg("apic", "init: configure SVR\n");
     __asm__ volatile ("" ::: "memory");
     svr |= APIC_SVR_ENABLE;
     svr &= ~0xFF; /* Clear spurious vector */
     svr |= APIC_SVR_SPURIOUS_VECTOR; /* Set spurious vector to 0xFF */
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-9] Write SVR\n");
+    klog_dbg("apic", "init: write SVR\n");
     __asm__ volatile ("" ::: "memory");
     apic_write_register(APIC_SVR, svr);
     __asm__ volatile ("" ::: "memory");
 
     /* Keep legacy ExtINT path enabled until I/O APIC verdict is known. */
-    kputs("[APIC-9.1] Configure LINT0 for temporary ExtINT fallback\n");
+    klog_dbg("apic", "configure LINT0 for temporary ExtINT fallback\n");
     __asm__ volatile ("" ::: "memory");
     apic_write_register(APIC_LVT_LINT0, (0x7u << 8));
     apic_write_register(APIC_LVT_LINT1, (1u << 16));
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-10] Set initialized\n");
+    klog_dbg("apic", "init: set initialized\n");
     __asm__ volatile ("" ::: "memory");
     apic_initialized = true;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[APIC-11] Init I/O APIC\n");
+    klog_dbg("apic", "init: I/O APIC\n");
     __asm__ volatile ("" ::: "memory");
     
     /* Find I/O APIC address from ACPI MADT */
-    kputs("[APIC-11.0] Searching for I/O APIC in ACPI MADT...\n");
+    klog_dbg("apic", "searching for I/O APIC in ACPI MADT\n");
     __asm__ volatile ("" ::: "memory");
     uint64_t ioapic_addr = find_ioapic_from_madt();
     if (ioapic_addr != 0) {
@@ -512,7 +512,7 @@ int apic_init(void)
         klog_dbg("apic", "I/O APIC at %llX (from MADT)\n", 
                 (unsigned long long)ioapic_addr);
     } else {
-        kputs("[APIC-11.0.2] I/O APIC not found in MADT, using default 0xFEC00000\n");
+        klog_dbg("apic", "I/O APIC not found in MADT, using default 0xFEC00000\n");
         ioapic_base_addr = IOAPIC_BASE_ADDR_DEFAULT;
     }
     __asm__ volatile ("" ::: "memory");
@@ -520,26 +520,26 @@ int apic_init(void)
     /* Initialize I/O APIC for external IRQ routing */
     int ioapic_result = ioapic_init();
     if (ioapic_result == 0) {
-        kputs("[APIC-11.1] I/O APIC initialized successfully\n");
-        kputs("[APIC-11.2] Switching external IRQ routing to I/O APIC\n");
+        klog_dbg("apic", "I/O APIC initialized\n");
+        klog_dbg("apic", "switching external IRQ routing to I/O APIC\n");
         /* Stop accepting ExtINT from 8259 via LAPIC LINT0. */
         apic_write_register(APIC_LVT_LINT0, APIC_LVT_MASKED);
         /* Route legacy IRQs away from PIC and fully mask PIC lines. */
         pic_set_imcr(true);
         pic_disable();
-        kputs("[APIC-11.3] PIC masked and detached (APIC/IOAPIC mode)\n");
+        klog_dbg("apic", "PIC masked and detached (APIC/IOAPIC mode)\n");
         __asm__ volatile ("" ::: "memory");
     } else {
-        kputs("[APIC-11.2] I/O APIC init failed (error code above)\n");
-        kputs("[APIC-11.3] Will use PIC for external IRQ routing\n");
-        kputs("[APIC-11.4] Check [IOAPIC-*] logs above for failure details\n");
+        klog_warn("apic", "I/O APIC init failed (error code above)\n");
+        klog_warn("apic", "will use PIC for external IRQ routing\n");
+        klog_warn("apic", "check earlier apic errors for failure details\n");
         /* Route external IRQs to PIC (IMCR PIC mode) */
         pic_set_imcr(false);
         /* Keep ExtINT path on LINT0 for PIC fallback mode. */
         __asm__ volatile ("" ::: "memory");
     }
     
-    kputs("[APIC-OK] Done\n");
+    klog_dbg("apic", "init: done\n");
     __asm__ volatile ("" ::: "memory");
     
     return 0;
@@ -656,7 +656,7 @@ int ioapic_init(void)
     extern int paging_map_page_4kb(uint64_t virt, uint64_t phys, uint64_t flags);
     
     #if APIC_DEBUG
-    kputs("[IOAPIC-1] Starting I/O APIC initialization\n");
+    klog_dbg("apic", "I/O APIC: starting initialization\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -675,13 +675,13 @@ int ioapic_init(void)
     int map_result = paging_map_page_4kb(ioapic_virt, ioapic_phys, mmio_flags);
     if (map_result != 0) {
         klog_err("apic", "failed to map I/O APIC page (error=%d)\n", map_result);
-        kputs("[IOAPIC-1.3] I/O APIC will not be available, using PIC for external IRQ\n");
+        klog_warn("apic", "I/O APIC unavailable, using PIC for external IRQ\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
     
     #if APIC_DEBUG
-    kputs("[IOAPIC-1.4] I/O APIC page mapped successfully\n");
+    klog_dbg("apic", "I/O APIC page mapped\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -689,7 +689,7 @@ int ioapic_init(void)
     __asm__ volatile ("" ::: "memory");
     
     #if APIC_DEBUG
-    kputs("[IOAPIC-2] Reading I/O APIC ID register\n");
+    klog_dbg("apic", "reading I/O APIC ID register\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -706,8 +706,8 @@ int ioapic_init(void)
     
     /* Only 0xFFFFFFFF is a hard failure. ID==0 can be valid (e.g. QEMU). */
     if (id_reg == 0xFFFFFFFF) {
-        kputs("[IOAPIC-2.2] WARNING: I/O APIC ID register returns invalid value\n");
-        kputs("[IOAPIC-2.3] I/O APIC may not be present at this address; using PIC for external IRQs\n");
+        klog_warn("apic", "I/O APIC ID register returns invalid value\n");
+        klog_warn("apic", "I/O APIC may not be present at this address; using PIC for external IRQs\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
@@ -719,7 +719,7 @@ int ioapic_init(void)
     #endif
     
     #if APIC_DEBUG
-    kputs("[IOAPIC-3] Reading I/O APIC Version register\n");
+    klog_dbg("apic", "reading I/O APIC version register\n");
     __asm__ volatile ("" ::: "memory");
     #endif
     
@@ -737,19 +737,19 @@ int ioapic_init(void)
     
     /* Check if Version register is readable */
     if (ver == 0xFFFFFFFF) {
-        kputs("[IOAPIC-3.2] ERROR: I/O APIC Version register returns 0xFFFFFFFF\n");
-        kputs("[IOAPIC-3.3] This usually means I/O APIC is not present or not accessible\n");
-        kputs("[IOAPIC-3.4] Possible causes:\n");
-        kputs("[IOAPIC-3.5]   1. I/O APIC not enabled in QEMU (use -machine q35)\n");
-        kputs("[IOAPIC-3.6]   2. Wrong base address (check ACPI/MADT)\n");
-        kputs("[IOAPIC-3.7]   3. Page mapping failed (check [IOAPIC-1.2] above)\n");
+        klog_err("apic", "I/O APIC version register returns 0xFFFFFFFF\n");
+        klog_err("apic", "I/O APIC is not present or not accessible\n");
+        klog_err("apic", "possible causes:\n");
+        klog_err("apic", "  1. I/O APIC not enabled in QEMU (use -machine q35)\n");
+        klog_err("apic", "  2. wrong base address (check ACPI/MADT)\n");
+        klog_err("apic", "  3. page mapping failed (see map error above)\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
     
     if (ver == 0x00000000) {
-        kputs("[IOAPIC-3.2] ERROR: I/O APIC Version register returns 0x00000000\n");
-        kputs("[IOAPIC-3.3] I/O APIC may not be initialized or not present\n");
+        klog_err("apic", "I/O APIC version register returns 0x00000000\n");
+        klog_err("apic", "I/O APIC may not be initialized or not present\n");
         __asm__ volatile ("" ::: "memory");
         return -1;
     }
@@ -759,7 +759,7 @@ int ioapic_init(void)
     ioapic_max_redir = (uint8_t)(((ver >> 16) & 0xFF) + 1u);
     
     #if APIC_DEBUG
-    kputs("[IOAPIC-4] I/O APIC initialized successfully\n");
+    klog_dbg("apic", "I/O APIC initialized\n");
     __asm__ volatile ("" ::: "memory");
     klog_dbg("apic", "I/O APIC ID=%x\n", ioapic_id);
     klog_dbg("apic", "I/O APIC version=%x\n", ioapic_version);
@@ -770,7 +770,7 @@ int ioapic_init(void)
     /* Validate extracted values */
     if (ioapic_max_redir == 0 || ioapic_max_redir > IOAPIC_MAX_REDIR) {
         #if APIC_DEBUG
-        kputs("[IOAPIC-4.4] WARNING: Invalid max redir entries, using default 24\n");
+        klog_warn("apic", "invalid max redir entries, using default 24\n");
         #endif
         ioapic_max_redir = IOAPIC_MAX_REDIR;
     }
@@ -820,7 +820,7 @@ int ioapic_init(void)
     ioapic_available = true;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[IOAPIC-OK] I/O APIC is now available for interrupt routing\n");
+    klog_dbg("apic", "I/O APIC available for interrupt routing\n");
     __asm__ volatile ("" ::: "memory");
     
     return 0;

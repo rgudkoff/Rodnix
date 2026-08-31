@@ -32,6 +32,9 @@ int  klog_get_level(void);
 void klog_at(int level, const char* subsys, const char* fmt, ...)
     __attribute__((format(printf, 3, 4)));
 
+/* va_list-вариант для обёрток вроде fabric_log. */
+void klog_vat(int level, const char* subsys, const char* fmt, va_list ap);
+
 /* Convenience wrappers — keep klog() as INFO alias for backward compat. */
 #define klog(subsys, fmt, ...)  klog_at(KLOG_INFO,  (subsys), fmt, ##__VA_ARGS__)
 #define klog_dbg(subsys, fmt, ...) klog_at(KLOG_DEBUG, (subsys), fmt, ##__VA_ARGS__)

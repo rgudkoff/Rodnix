@@ -27,6 +27,7 @@ void interrupt_unmask_if_we_masked(uint32_t vector);
 #include "interrupt_frame.h"
 #include <stddef.h>
 #include <stdbool.h>
+#include "../../../trace/bootlog.h"
 
 /* ============================================================================
  * Global State
@@ -133,7 +134,7 @@ int interrupts_init(void)
 {
     extern void kputs(const char* str);
     
-    kputs("[INT-1] Clear handlers\n");
+    klog_dbg("interrupts", "init: clear handlers\n");
     __asm__ volatile ("" ::: "memory");
     /* Clear all interrupt handler registrations */
     for (int i = 0; i < 256; i++) {
@@ -154,25 +155,25 @@ int interrupts_init(void)
     }
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-2] Set IRQL\n");
+    klog_dbg("interrupts", "init: set IRQL\n");
     __asm__ volatile ("" ::: "memory");
     /* Set initial IRQL to PASSIVE (lowest level, interrupts allowed) */
     current_irql = IRQL_PASSIVE;
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-4] Init PIC (early, will disable if APIC works)\n");
+    klog_dbg("interrupts", "init: PIC (early, will disable if APIC works)\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize PIC early (required for boot) */
     pic_init();
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-5] Mask all PIC IRQ\n");
+    klog_dbg("interrupts", "init: mask all PIC IRQ\n");
     __asm__ volatile ("" ::: "memory");
     /* Mask all PIC IRQs initially */
     pic_disable();
     __asm__ volatile ("" ::: "memory");
     
-    kputs("[INT-6] Init IDT\n");
+    klog_dbg("interrupts", "init: IDT\n");
     __asm__ volatile ("" ::: "memory");
     /* Initialize IDT: set up exception and IRQ handlers */
     if (idt_init() != 0) {
@@ -180,7 +181,7 @@ int interrupts_init(void)
     }
     __asm__ volatile ("" ::: "memory");
 
-    kputs("[INT-OK] Done\n");
+    klog_dbg("interrupts", "init: done\n");
     __asm__ volatile ("" ::: "memory");
     
     return 0;

@@ -47,13 +47,13 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
 
     extern void kputs(const char* str);
     if (bootlog_is_verbose()) {
-        kputs("[USERMODE] prepare_stub\n");
+        klog_dbg("usermode", "prepare_stub\n");
     }
 
     user_pml4_phys = paging_create_user_pml4();
     if (!user_pml4_phys) {
         if (bootlog_is_verbose()) {
-            kputs("[USERMODE] create_pml4 failed\n");
+            klog_dbg("usermode", "create_pml4 failed\n");
         }
         return RDNX_E_NOMEM;
     }
@@ -62,20 +62,20 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     uint64_t stack_phys = pmm_alloc_page_in_zone(PMM_ZONE_LOW);
     if (!code_phys || !stack_phys) {
         if (bootlog_is_verbose()) {
-            kputs("[USERMODE] alloc pages failed\n");
+            klog_dbg("usermode", "alloc pages failed\n");
         }
         return RDNX_E_NOMEM;
     }
 
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_CODE_VA, code_phys, PTE_PRESENT | PTE_USER) != 0) {
         if (bootlog_is_verbose()) {
-            kputs("[USERMODE] map code failed\n");
+            klog_dbg("usermode", "map code failed\n");
         }
         return RDNX_E_GENERIC;
     }
     if (paging_map_page_4kb_pml4(user_pml4_phys, USER_STACK_VA, stack_phys, PTE_PRESENT | PTE_RW | PTE_USER) != 0) {
         if (bootlog_is_verbose()) {
-            kputs("[USERMODE] map stack failed\n");
+            klog_dbg("usermode", "map stack failed\n");
         }
         return RDNX_E_GENERIC;
     }
@@ -83,7 +83,7 @@ int usermode_prepare_stub(void** entry, void** user_stack, uint64_t* rsp0_out)
     memcpy(X86_64_PHYS_TO_VIRT(code_phys), user_stub_code, sizeof(user_stub_code));
     memset(X86_64_PHYS_TO_VIRT(stack_phys), 0, X86_64_PAGE_SIZE);
     if (bootlog_is_verbose()) {
-        kputs("[USERMODE] stub mapped\n");
+        klog_dbg("usermode", "stub mapped\n");
     }
 
     *entry = (void*)(uintptr_t)USER_CODE_VA;
@@ -97,14 +97,14 @@ void usermode_enter(void* entry, void* user_stack, uint64_t rsp0, uint64_t arg0,
     tss_set_rsp0(rsp0);
     extern void kputs(const char* str);
     if (bootlog_is_verbose()) {
-        kputs("[USERMODE] switching CR3\n");
+        klog_dbg("usermode", "switching CR3\n");
     }
     if (user_pml4_phys) {
         paging_switch_pml4(user_pml4_phys);
     }
     if (bootlog_is_verbose()) {
-        kputs("[USERMODE] switched CR3\n");
-        kputs("[USERMODE] about to iretq\n");
+        klog_dbg("usermode", "switched CR3\n");
+        klog_dbg("usermode", "about to iretq\n");
     }
 
     /* This is a one-way door: the thread leaves kernel code here and will

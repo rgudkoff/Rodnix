@@ -192,6 +192,12 @@ void bootlog_init(void)
         }
     }
 
+    /* Единственный механизм гашения — уровни klog: подробный режим — это
+     * просто DEBUG-порог, а не отдельный фильтр в консоли. */
+    if (bootlog_verbose) {
+        klog_set_level(KLOG_DEBUG);
+    }
+
     bootlog_initialized = true;
     bootlog_mark("startup", "bootlog_init");
 }
@@ -259,7 +265,7 @@ static const char* klog_level_name(int level)
     }
 }
 
-void klog_at(int level, const char* subsys, const char* fmt, ...)
+void klog_vat(int level, const char* subsys, const char* fmt, va_list ap)
 {
     if (level < klog_level) {
         return;
@@ -278,8 +284,13 @@ void klog_at(int level, const char* subsys, const char* fmt, ...)
             (unsigned long long)ms,
             klog_level_name(level),
             subsys);
+    kvprintf(fmt, ap);
+}
+
+void klog_at(int level, const char* subsys, const char* fmt, ...)
+{
     va_list ap;
     va_start(ap, fmt);
-    kvprintf(fmt, ap);
+    klog_vat(level, subsys, fmt, ap);
     va_end(ap);
 }

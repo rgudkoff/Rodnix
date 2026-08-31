@@ -19,6 +19,7 @@
 #include "../../include/console.h"
 #include "../../include/error.h"
 #include "../../include/debug.h"
+#include "../trace/bootlog.h"
 
 #define VFS_CACHE_SIZE 64
 
@@ -671,7 +672,7 @@ static int vfs_import_initrd(void)
         kputs("[VFS] initrd: bad magic\n");
         return -1;
     }
-    kprintf("[VFS] initrd: entries=%u\n", (unsigned)hdr->entry_count);
+    klog_dbg("vfs", "initrd: entries=%u\n", (unsigned)hdr->entry_count);
 
     const uint8_t* base = (const uint8_t*)vfs_initrd_data;
     size_t entries_size = hdr->entry_count * sizeof(initrd_entry_t);
@@ -686,7 +687,7 @@ static int vfs_import_initrd(void)
         if (e->path[0] == '\0') {
             continue;
         }
-        kprintf("[VFS] initrd entry: %s (%u bytes)\n", e->path, (unsigned)e->size);
+        klog_dbg("vfs", "initrd entry: %s (%u bytes)\n", e->path, (unsigned)e->size);
         size_t end = (size_t)e->offset + (size_t)e->size;
         if (end > vfs_initrd_size) {
             continue;

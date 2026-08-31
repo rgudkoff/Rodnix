@@ -81,7 +81,7 @@ int fabric_block_service_init(void)
     }
     (void)fabric_node_set_state("/fabric/subsystems/storage/blkmgr", FABRIC_STATE_ACTIVE);
     g_block_inited = 1;
-    fabric_log("[fabric-block] service ready: %s\n", g_service.name);
+    fabric_log("block: service ready: %s\n", g_service.name);
     return RDNX_OK;
 }
 
@@ -111,7 +111,7 @@ int fabric_blockdev_register(fabric_blockdev_t* dev)
     g_blockdevs[g_blockdev_count++] = dev;
     spinlock_unlock(&g_block_lock);
     (void)devfs_register_blockdev(dev->name);
-    fabric_log("[fabric-block] device registered: %s sectors=%llu size=%u\n",
+    fabric_log("block: device registered: %s sectors=%llu size=%u\n",
                dev->name,
                (unsigned long long)dev->sector_count,
                dev->sector_size);
